@@ -1,0 +1,16 @@
+.env
+*.env.*
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+logs/
+*.log
+*.gsheet
+encode_service_account.py
+get_oauth_token.py
+get_telegram_id.py
+setup.py
+setup_admin.py
+.DS_Store
