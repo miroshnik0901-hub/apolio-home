@@ -1,11 +1,12 @@
 """Envelope creation tool — creates Google Sheets file from template"""
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any
 
 import gspread
-from sheets import SheetsClient, get_credentials
+from sheets import SheetsClient, get_credentials  # get_credentials: SA fallback only
 from auth import AuthManager, SessionContext
 
 
@@ -78,6 +79,19 @@ DEFAULT_CATEGORIES_POLINA = [
 ]
 
 
+async def tool_list_envelopes(params: dict, session: SessionContext,
+                              sheets: SheetsClient, auth: AuthManager) -> Any:
+    """Return all active envelopes with Google Sheets links."""
+    envelopes = sheets.list_envelopes_with_links()
+    if not envelopes:
+        return {"status": "ok", "envelopes": [], "message": "No envelopes registered yet."}
+    return {
+        "status": "ok",
+        "count": len(envelopes),
+        "envelopes": envelopes,
+    }
+
+
 async def tool_create_envelope(params: dict, session: SessionContext,
                                 sheets: SheetsClient, auth: AuthManager) -> Any:
     if not auth.is_admin(session.user_id):
@@ -90,18 +104,23 @@ async def tool_create_envelope(params: dict, session: SessionContext,
     owner_id = params.get("owner_id") or session.user_id
     viewer_ids = params.get("viewer_ids", [])
 
-    # Generate envelope ID from name
-    env_id = name.upper().replace(" ", "_")[:10]
+    # Generate envelope ID from name — ASCII only, no Cyrillic/special chars
+    raw_id = name.upper().replace(" ", "_")
+    env_id = re.sub(r"[^A-Z0-9_]", "", raw_id)[:10].strip("_") or "ENV"
 
-    # Create Google Sheets file
-    creds = get_credentials()
-    gc = gspread.authorize(creds)
-
-    spreadsheet = gc.create(f"Apolio Home — {name}")
-
-    # Share with owner and viewers
-    spreadsheet.share(None, perm_type="anyone", role="reader")  # optional
-    # For specific users, you'd share by email (requires email lookup)
+    # Create Google Sheets file in Mikhail's Drive via OAuth (not service account).
+    # This ensures the file appears in his Drive folder, not the SA's hidden storage.
+    # Falls back to service account if OAuth env vars are not set.
+    try:
+        file_id = sheets.create_spreadsheet_as_owner(f"Apolio Home — {name}")
+        creds = get_credentials()
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open_by_key(file_id)
+    except RuntimeError:
+        # OAuth not configured — fall back to service account
+        creds = get_credentials()
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.create(f"Apolio Home — {name}")
 
     # Build sheets from template
     for sheet_name, headers in ENVELOPE_TEMPLATE.items():

@@ -1,133 +1,332 @@
-# Apolio Home — Setup Report
-**Date:** 2026-03-31
-**Completed by:** Cowork AI Agent
+# Apolio Home — SETUP REPORT
+**Last updated:** 2026-03-31
+**Maintained by:** Cowork AI Agent
+
+This document is a complete technical handoff for any Claude session continuing work on this project. Read this before touching any code.
 
 ---
 
-## Results
+## 1. What This Is
 
-### Bot
-- **Username:** @ApolioHomeBot
-- **Link:** https://t.me/ApolioHomeBot
-- **Status:** Running (polling mode)
+**Apolio Home** is a Telegram bot + AI agent for Mikhail Miro's personal/family budget management. Built on: Python 3.12, python-telegram-bot 20.7, Anthropic Claude API (claude-sonnet-4-20250514), Google Sheets API, Google Drive API. Deployed on Railway (worker process, polling mode).
 
-### Admin Sheets
-- **File:** Apolio Home — Admin
-- **URL:** https://docs.google.com/spreadsheets/d/1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk
-- **Sheets:** Envelopes, Users, Config (seeded), Audit_Log
-
-### MM Budget Envelope
-- **File:** Apolio Home — MM Budget
-- **URL:** https://docs.google.com/spreadsheets/d/1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ
-- **Envelope ID:** MM_BUDGET
-- **Limit:** 2500 EUR / month
-- **Rule:** solo
-- **Sheets:** Transactions, Summary, Categories (seeded), FX_Rates, Config
+**Owner:** Mikhail Miro (`miroshnik0901@gmail.com`), Telegram ID: `360466156`
+**Bot:** [@ApolioHomeBot](https://t.me/ApolioHomeBot)
+**Bot token:** stored in `TELEGRAM_BOT_TOKEN` env var on Railway
 
 ---
 
-## Issues Encountered & Workarounds
+## 2. Project Folder Location
 
-### 1. Service Account Drive Storage Quota Exceeded
-**Problem:** The service account `apolio-home-bot@apolio-home.iam.gserviceaccount.com` has exceeded its Google Drive storage quota. Any operation that creates a new Google Sheets file via the service account fails with `storageQuotaExceeded`.
-
-**Affected flows:**
-- `setup_admin.py` — can't create Admin file
-- `tools/envelope_tools.py` → `tool_create_envelope` — bot can't create envelope files
-
-**Workaround applied:** Both the Admin file and the MM Budget envelope were created manually via Mikhail's Google account (miroshnik0901@gmail.com), then shared with the service account as Editor. Structure was set up via a Python script using the service account credentials after sharing.
-
-**What needs to be done manually (or fixed):** The service account's Drive quota needs to be resolved before the bot can create new envelopes on its own. Options:
-- Free up space in the service account's Drive
-- Switch to Mikhail's OAuth credentials for file creation (requires OAuth2 flow implementation)
-- Create envelopes manually using the workaround script above
-
-### 2. Missing Classes in Codebase
-**Problem:** `sheets.py` was missing the `SheetsClient` class and `get_credentials()` function, both imported by bot.py, agent.py, and all tool files. `auth.py` was missing `SessionContext`, `LastAction`, and `get_session()`.
-
-**Fix:** Added the missing code to `sheets.py` (appended `get_credentials()` + `SheetsClient`) and `auth.py` (appended `LastAction`, `SessionContext`, `get_session()`).
-
-### 3. Anthropic Library Version Too Old
-**Problem:** Installed version was 0.20.0, which doesn't support the `tools` parameter in `messages.create()`. The agent uses tool calling, so all AI interactions failed.
-
-**Fix:** Upgraded to `anthropic>=0.87.0`.
-
-### 4. MarkdownV2 Formatting in Bot Replies
-**Problem:** `bot.py` sends all replies with `parse_mode="MarkdownV2"`, but the agent's responses contain unescaped characters (dots, hyphens in URLs, etc.). Telegram rejects the message with `BadRequest: Can't parse entities`.
-
-**Status:** Not fixed (would require modifying bot.py). Bot processes requests correctly but the reply fails to send when the response contains unescaped MarkdownV2 characters. Plain text messages (like `/start`) work fine.
-
-**What needs to be done:** Either change `parse_mode="MarkdownV2"` to `parse_mode="Markdown"` in bot.py, or add an escaping utility to the agent's response formatting.
-
-### 5. Users Sheet Bootstrap
-**Problem:** On first run, Users sheet is empty. The bot's `get_user()` check denies access to everyone, including Mikhail, even though `is_admin()` correctly recognizes MIKHAIL_TELEGRAM_ID from env.
-
-**Fix:** Added Mikhail (telegram_id=360466156, role=admin) to the Users sheet directly via Python.
+Mac local path: `Google Drive > My Drive > Personal > AI > apolio-home`
+Contains: `.py` files, `tools/`, `.env`, `requirements.txt`, `Procfile`, `.python-version`
+Also contains `.gsheet` shortcuts to Google Sheets files (these are 178-byte Drive Desktop aliases, not the actual sheets).
 
 ---
 
-## Additional Fixes Applied (Session 2)
-
-### 6. Envelopes Column `sheet_id` vs `file_id` Mismatch
-**Problem:** The Envelopes sheet had a column named `sheet_id` (written during setup), but all tools (`transactions.py`, `summary.py`, `wise.py`) referenced `envelope["file_id"]`. Every tool call failed with `KeyError: 'file_id'`.
-
-**Fix:**
-- Renamed the column header in the Envelopes sheet from `sheet_id` → `file_id` via Python
-- Updated `SheetsClient.register_envelope()` in `sheets.py` to write `"file_id"` key
-
-### 7. `add_transaction` List vs Dict Interface Mismatch
-**Problem:** `tools/transactions.py` builds a pre-formatted list (already includes tx_id, timestamp) and passes it to `SheetsClient.add_transaction()`, but `EnvelopeSheets.add_transaction()` expected a dict and generated its own tx_id. Result: `'list' object has no attribute 'get'`.
-
-**Fix:** Updated `SheetsClient.add_transaction()` to detect list vs dict — if list, calls `ws.append_row(row)` directly and returns `row[0]` as tx_id; if dict, delegates to `EnvelopeSheets.add_transaction()` as before.
-
-### 8. parse_mode Removed from bot.py
-**Fix (applied in previous session):** Removed `parse_mode` argument from all `reply_text()` calls to avoid Telegram MarkdownV2/Markdown parse errors.
-
----
-
-## Transaction Flow — VERIFIED WORKING ✓
-- `/envelope MM_BUDGET` → sets active envelope
-- "потратил 45 EUR на продукты сегодня" → agent calls `add_transaction` → row written to Transactions sheet
-- "покажи расходы за март" → agent calls summary tool → returns formatted breakdown
-
----
-
-## Additional Fixes Applied (Session 3)
-
-### 9. `tool_create_envelope` — Wrong Calling Convention
-**Problem:** `tools/envelopes.py` used the old 3-arg signature `(params, user_context: dict, app_context: dict)` but `agent.py` calls all tools as `(params, session: SessionContext, sheets: SheetsClient, auth: AuthManager)`. The function also accessed `app_context["admin_sheets"]`, `app_context["auth_manager"]`, etc. which don't exist in the new calling pattern.
-
-**Fix:** Rewrote `tool_create_envelope` with the correct 4-arg signature matching all other tools. Also fixed the `"sheet_id"` → `"file_id"` key bug in the `register_envelope` call.
-
-### 10. OAuth Envelope Creation — Fully Working
-**Status:** ✅ Verified. `tool_create_envelope` with `name="Семья"` created a new Google Sheets file in Mikhail's Drive via OAuth, built all sheets from template, seeded Config, and registered in Admin.
-
-**Test sheet:** https://docs.google.com/spreadsheets/d/1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So
-
-### 11. Cyrillic Slug Support in `_slugify()`
-**Problem:** `_slugify("Семья")` returned `"_____"` — all Cyrillic characters were stripped.
-
-**Fix:** Added full Russian + Ukrainian Cyrillic transliteration table (а→a, б→b, ... я→ya, і→i, ї→yi, є→ye, ґ→g) before the ASCII-only regex filter.
-
----
-
-## What Still Needs to Be Done
-
-1. **Deploy to Railway** — bot currently runs in local polling mode. Deployment to Railway (or Hetzner) with a webhook URL is needed for production.
-
-2. **Set WEBHOOK_URL in .env** — leave empty for local polling, set for production deployment.
-
----
-
-## .env Summary
+## 3. File Structure
 
 ```
-TELEGRAM_BOT_TOKEN=✓ set
-ANTHROPIC_API_KEY=✓ set
-OPENAI_API_KEY=✓ set
-GOOGLE_SERVICE_ACCOUNT=✓ set (apolio-home-bot@apolio-home.iam.gserviceaccount.com)
-ADMIN_SHEETS_ID=1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk
-MIKHAIL_TELEGRAM_ID=360466156
-WEBHOOK_URL=(empty — polling mode)
-PORT=8080
+apolio-home/
+├── bot.py                    # Telegram bot entry point, all handlers
+├── agent.py                  # Claude AI agent with tool loop
+├── auth.py                   # AuthManager + SessionContext
+├── sheets.py                 # SheetsClient (facade over AdminSheets + EnvelopeSheets)
+├── reports.py                # (placeholder, unused for now)
+├── tools/
+│   ├── transactions.py       # add / edit / delete / find transactions
+│   ├── summary.py            # get_summary + get_budget_status
+│   ├── envelope_tools.py     # create_envelope + list_envelopes
+│   ├── wise.py               # Wise CSV import
+│   ├── fx.py                 # FX rate tools (ECB auto-fetch)
+│   ├── config_tools.py       # update_config, add_user, remove_user
+│   └── envelopes.py          # (old/legacy, replaced by envelope_tools.py — IGNORE)
+├── setup.py                  # one-off setup script (creates Admin sheets structure)
+├── setup_admin.py            # one-off Admin sheet seeder
+├── encode_service_account.py # utility: base64-encode SA credentials for env var
+├── get_oauth_token.py        # utility: get OAuth refresh token for Mikhail's Google
+├── get_telegram_id.py        # utility: print own Telegram user ID
+├── test_bot.py               # manual test script
+├── requirements.txt
+├── Procfile                  # "worker: python bot.py"
+├── .python-version           # "3.12"
+├── .env                      # local secrets (NOT committed)
+├── .env.example              # template (no secrets)
+└── Apolio Home — Admin.gsheet     # Drive shortcut to Admin sheet
+└── Apolio Home — MM Budget.gsheet # Drive shortcut to MM Budget sheet
 ```
+
+**Note:** `tools/envelopes.py` is legacy and not imported anywhere. Active envelope logic is in `tools/envelope_tools.py`.
+
+---
+
+## 4. Google Sheets Structure
+
+### 4a. Admin Sheet
+**File:** Apolio Home — Admin
+**URL:** https://docs.google.com/spreadsheets/d/1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk
+**Owner:** miroshnik0901@gmail.com
+**Service account has Editor access:** apolio-home-bot@apolio-home.iam.gserviceaccount.com
+
+Sheets/tabs:
+- **Envelopes** — registry of all envelope files. Columns: `ID, Name, file_id, Owner_TG, Currency, Monthly_Cap, Split_Rule, Active, Created_At`
+- **Users** — authorized Telegram users. Columns: `telegram_id, name, role, envelopes, created_at`
+- **Config** — key/value config. Relevant keys: `alert_threshold_pct` (default 80), `budget_<ENV_ID>_monthly`
+- **Audit_Log** — log of all state-changing bot operations. Columns: `timestamp, user_id, user_name, action, details`
+
+### 4b. MM Budget Envelope
+**File:** Apolio Home — MM Budget
+**URL:** https://docs.google.com/spreadsheets/d/1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ
+**Envelope ID in Admin:** `MM_BUDGET`
+**Monthly cap:** 2500 EUR
+
+Sheets/tabs:
+- **Transactions** — main ledger. Columns: `ID, Date, Envelope, Amount_Orig, Currency_Orig, Amount_EUR, Category, Subcategory, Who, Account, Type, Note, Source, Wise_ID, Created_At, Deleted`
+- **Summary** — monthly summary rows. Columns: `Month, Total_Expenses, Total_Income, Balance, Top_Category, Note`
+- **Categories** — category list with Type (Fixed/Variable/Income/Transfer). Columns: `Category, Subcategory, Type`
+- **FX_Rates** — monthly FX rates. Columns: `Month, PLN, UAH, GBP, USD, Source`
+- **Config** — per-envelope config (optional overrides)
+
+### 4c. Семья (SEMYA) Envelope
+**File:** Apolio Home — Семья
+**URL:** https://docs.google.com/spreadsheets/d/1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So
+**Envelope ID in Admin:** `SEMYA`
+**⚠️ ISSUE:** No `.gsheet` shortcut exists in the `apolio-home` Mac/Drive folder for this file.
+**Reason:** The SEMYA file was created via `tool_create_envelope` which used the service account's Drive context. The SA's Drive folder (`Apolio Home`) is separate from Mikhail's Drive folder. The file itself is owned by the SA, not by Mikhail.
+
+---
+
+## 5. Environment Variables
+
+These must be set in Railway (Settings → Variables) and in local `.env`:
+
+| Variable | Value / Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `OPENAI_API_KEY` | OpenAI API key (for Whisper voice transcription) |
+| `GOOGLE_SERVICE_ACCOUNT` | **Base64-encoded** JSON of the SA credentials file. Use `encode_service_account.py` to generate. SA email: `apolio-home-bot@apolio-home.iam.gserviceaccount.com` |
+| `ADMIN_SHEETS_ID` | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
+| `MIKHAIL_TELEGRAM_ID` | `360466156` — bootstrap admin bypass (works even if Users sheet is empty) |
+| `WEBHOOK_URL` | Leave empty for polling mode. Set to public HTTPS URL for webhook mode. |
+| `PORT` | `8080` (used only in webhook mode) |
+| `GOOGLE_OAUTH_CLIENT_ID` | OAuth2 client ID (for creating files as Mikhail, not SA) |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth2 client secret |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | OAuth2 refresh token (get with `get_oauth_token.py`) |
+
+OAuth credentials (`GOOGLE_OAUTH_*`) are used only by `sheets.py::create_spreadsheet_as_owner()` — for creating new Google Sheets files that appear in Mikhail's Drive, not the SA's.
+
+---
+
+## 6. Railway Deployment
+
+**Project:** Apolio Home
+**Service:** apolio-home-bot
+**Process type:** `worker` (from Procfile: `worker: python bot.py`)
+**Runtime:** Python 3.12 (from `.python-version`)
+**Branch:** main
+**Status:** Active, polling mode
+
+**CRITICAL:** Python 3.13 breaks python-telegram-bot 20.7 with `AttributeError: __slots__`. The `.python-version` file pins 3.12. Do NOT upgrade.
+
+To trigger a deploy: push a commit to `main`. Railway picks it up automatically.
+If Railway doesn't pick up the latest commit: use Railway CLI or API with `latestCommit: true`.
+
+---
+
+## 7. How the Bot Works
+
+### 7a. Startup
+`bot.py::main()` builds a PTB Application, registers all handlers, calls `post_init` which registers bot commands in Telegram (the slash-command menu).
+
+### 7b. Auth Flow
+Every handler calls `_require_user(update)` which:
+1. Gets `user.id` from the Telegram update
+2. Calls `auth.get_user(user.id)`
+3. If `user.id == MIKHAIL_TELEGRAM_ID` env var → always returns admin (bootstrap bypass)
+4. Otherwise checks the Users sheet (cached 5 min)
+5. Returns `(tg_user, session)` or `(None, None)` if not authorized
+
+### 7c. Session
+`SessionContext` (per user, in-memory dict) holds:
+- `user_id`, `user_name`, `role`
+- `current_envelope_id` — which envelope is "active" for this user
+- `last_action` — for undo support (records last tx_id + snapshot)
+
+Session persists as long as the bot process is running. **Restarts reset all sessions** — users must re-select their envelope.
+
+### 7d. Commands
+
+| Command | Handler | Description |
+|---|---|---|
+| `/start` | `cmd_start` | Welcome message + 4-button inline keyboard |
+| `/menu` | `cmd_menu` | Same keyboard + shows current envelope |
+| `/envelopes` | `cmd_envelopes` | Lists all active envelopes with links + select buttons |
+| `/envelope [ID]` | `cmd_envelope` | No args: show list with buttons; with arg: set active envelope |
+| `/status` | `cmd_status` | Budget status for current month (calls agent) |
+| `/report` | `cmd_report` | Category breakdown for current month (calls agent) |
+| `/help` | `cmd_help` | Usage examples in Russian |
+
+### 7e. Inline Callbacks
+`callback_handler` handles:
+- `cb_envelopes` — show envelope list
+- `cb_status` — show budget status
+- `cb_report` — show monthly report
+- `cb_help` — show help
+- `cb_env_<ID>` — set current envelope to `<ID>`
+
+### 7f. Message Handler
+`handle_message` processes everything that isn't a command:
+- Text → passed directly to agent
+- Voice/Audio → transcribed via Whisper, echoed back, passed to agent
+- Photo → passed to agent as base64 image (for receipt scanning)
+- CSV document → passed to agent as text (for Wise import)
+
+---
+
+## 8. How the AI Agent Works
+
+`agent.py::ApolioAgent.run()` implements a Claude tool-use loop:
+1. Build system prompt with today's date, user info, active envelope
+2. Send user message (with optional image) to `claude-sonnet-4-20250514`
+3. If Claude calls a tool → `_execute_tool()` dispatches to the appropriate handler
+4. Tool result is fed back as a `tool_result` message
+5. Loop up to 5 iterations, then return final text response
+
+**Available tools (13 total):**
+
+| Tool | File | Description |
+|---|---|---|
+| `add_transaction` | transactions.py | Record expense/income/transfer |
+| `edit_transaction` | transactions.py | Edit one field of existing tx |
+| `delete_transaction` | transactions.py | Soft-delete (sets Deleted=TRUE) |
+| `find_transactions` | transactions.py | Search with filters |
+| `get_summary` | summary.py | Category/who breakdown for a period |
+| `get_budget_status` | summary.py | Month snapshot: spent/remaining/% |
+| `import_wise_csv` | wise.py | Parse and import Wise CSV export |
+| `set_fx_rate` | fx.py | Set ECB FX rate for month + currency |
+| `update_config` | config_tools.py | Update Admin Config key/value |
+| `add_authorized_user` | config_tools.py | Grant bot access to user |
+| `remove_authorized_user` | config_tools.py | Revoke bot access |
+| `list_envelopes` | envelope_tools.py | List all active envelopes with links |
+| `create_envelope` | envelope_tools.py | Create new envelope (Google Sheets + register) |
+
+**Agent system prompt behavior:**
+- Auto-selects envelope: mentions of Polina/Поліна/дочка/Bergamo/liceo → switch to Polina envelope; everything else → current envelope
+- Missing date → today
+- Missing category → best guess (stated in reply)
+- Missing currency → EUR
+- Responds in the user's language (RU/UK/EN/IT all supported)
+
+---
+
+## 9. Transaction Data Flow
+
+1. User writes "потратил 45 EUR на продукты" in Telegram
+2. `handle_message` → `agent.run(text, session)`
+3. Claude interprets: amount=45, currency=EUR, category=Food/Groceries, type=expense
+4. Claude calls `add_transaction` tool
+5. `tool_add_transaction` in `transactions.py`:
+   - Resolves envelope file_id from Admin sheet
+   - Generates tx_id (8-char hex)
+   - For EUR: amount_eur = amount directly
+   - For non-EUR: looks up FX_Rates sheet for current month, calculates
+   - Builds row list and calls `sheets.add_transaction(file_id, row)`
+6. `SheetsClient.add_transaction()` detects list input → `ws.append_row(row)` directly
+7. Row written to Transactions sheet in the envelope file
+8. Audit log entry written to Admin sheet
+9. `last_action` saved on session (for undo support)
+10. Claude returns confirmation text → bot sends to user
+
+---
+
+## 10. Known Issues & Pending Tasks
+
+### Issue 1: SEMYA file not in Mikhail's Drive folder
+The `apolio-home` Drive folder (Mac: `My Drive > Personal > AI > apolio-home`) contains `.gsheet` shortcuts for Admin and MM Budget, but NOT for SEMYA.
+
+**Root cause:** `tool_create_envelope` creates files using the service account's `gspread.create()`. SA-created files live in the SA's Drive root, invisible in Mikhail's Drive. The `get_or_create_drive_folder()` function in `sheets.py` also uses SA credentials → creates an "Apolio Home" folder in SA's Drive, not Mikhail's.
+
+**Correct approach:** New envelope files should be created with `sheets.create_spreadsheet_as_owner()` which uses Mikhail's OAuth credentials. This is already implemented in `sheets.py`. `tool_create_envelope` needs to call this instead of `gc.create()`.
+
+**For SEMYA specifically:** The file already exists. Mikhail needs to manually add it to the `apolio-home` Drive folder (or just keep the direct link). The file URL is: https://docs.google.com/spreadsheets/d/1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So
+
+### Issue 2: tool_create_envelope uses SA for file creation
+`tools/envelope_tools.py::tool_create_envelope()` calls `gspread.authorize(creds)` and `gc.create()` with SA credentials. New files end up in SA's Drive.
+
+**Fix needed:** Replace `gc.create(f"Apolio Home — {name}")` with `sheets.create_spreadsheet_as_owner(f"Apolio Home — {name}")` and then populate via `gc.open_by_key(file_id)`.
+
+**Prerequisite:** OAuth env vars must be set (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`). These are already in `.env` locally but need to be added to Railway.
+
+### Issue 3: Envelope sessions reset on restart
+`current_envelope_id` lives in `_sessions` dict (in-memory). After Railway restarts (deploy, crash, etc.), all users must re-select their envelope with `/envelope` or `/envelopes`. For Mikhail, the default should auto-set to `MM_BUDGET`.
+
+**Possible fix:** Auto-set `current_envelope_id = "MM_BUDGET"` in `get_session()` if no envelope is set and user is admin.
+
+### Issue 4: FX rates for non-EUR transactions not auto-populated
+`auto_update_fx_rates()` in `fx.py` is never called automatically. It must be triggered manually or via a cron job. Without FX rates, all non-EUR transactions have `Amount_EUR = ""` which breaks reporting.
+
+### Issue 5: Polina envelope not created yet
+The agent's system prompt auto-routes Polina/Bergamo/liceo keywords to the "Polina" envelope, but this envelope doesn't exist in the Admin sheet yet. Creating it will require `create_envelope` tool call or manual setup.
+
+---
+
+## 11. Fixes Applied Across All Sessions
+
+1. **Python 3.12 pin** — `.python-version` added. PTB 20.7 incompatible with 3.13's `__slots__` change.
+2. **Bootstrap admin in `get_user()`** — `auth.py` returns admin user for `MIKHAIL_TELEGRAM_ID` even if Sheets unavailable.
+3. **Budget status field fix** — `summary.py::tool_get_budget_status` reads `Monthly_Cap` column directly, not a nonexistent JSON `settings` field.
+4. **Amount_EUR filled in Python** — `transactions.py::tool_add_transaction` calculates EUR value before `append_row` (gspread doesn't evaluate formulas).
+5. **Cyrillic envelope ID** — `envelope_tools.py` uses `re.sub(r"[^A-Z0-9_]", "", raw_id)` to strip non-ASCII. SEMYA Admin row was manually patched from `_____` to `SEMYA`.
+6. **list vs dict in `add_transaction`** — `SheetsClient.add_transaction()` detects list input and calls `append_row` directly.
+7. **`file_id` column name** — Envelopes sheet column renamed from `sheet_id` to `file_id`. `register_envelope()` updated to match.
+8. **parse_mode = Markdown (not MarkdownV2)** — All `reply_text()` calls use `ParseMode.MARKDOWN` to avoid entity parse errors.
+9. **Bot command menu** — `post_init` calls `set_my_commands` on startup; menu visible in Telegram.
+10. **Inline keyboards** — `/start`, `/menu`, `/envelopes`, `/envelope` all return inline buttons.
+11. **`tool_list_envelopes`** — Added to tools, agent.py dispatch, and TOOLS schema.
+12. **Railway deploy** — `Procfile` uses `worker:` type; `serviceInstanceDeploy` with `latestCommit: true` needed to pick up latest commit.
+
+---
+
+## 12. How to Add a New Envelope (Manual Process)
+
+Until `tool_create_envelope` is fixed to use OAuth, follow this process:
+1. Create a Google Sheets file manually in Mikhail's Drive, inside the `apolio-home` folder
+2. Share it with the SA as Editor: `apolio-home-bot@apolio-home.iam.gserviceaccount.com`
+3. Add sheets: Transactions, Summary, Categories, FX_Rates (headers from `ENVELOPE_TEMPLATE` in `envelope_tools.py`)
+4. Add a row to the Admin Envelopes sheet: `ID, Name, file_id, Owner_TG, Currency, Monthly_Cap, Split_Rule, Active, Created_At`
+5. Alternatively, ask the bot: "создай конверт <Name> лимит <N> EUR" — it will work IF OAuth env vars are set
+
+---
+
+## 13. Quick Reference: Admin Sheet IDs
+
+| Item | Google Sheets ID |
+|---|---|
+| Admin file | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
+| MM Budget | `1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ` |
+| Семья (SEMYA) | `1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So` |
+
+---
+
+## 14. Testing Locally
+
+```bash
+cd apolio-home
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # fill in all values
+python bot.py          # runs in polling mode
+```
+
+Send `/start` to the bot in Telegram, then test a transaction: "потратил 10 EUR на кофе"
+
+---
+
+## 15. Service Account Info
+
+**Email:** `apolio-home-bot@apolio-home.iam.gserviceaccount.com`
+**GCP Project:** `apolio-home`
+**Credential format:** JSON key file, base64-encoded for `GOOGLE_SERVICE_ACCOUNT` env var
+**Scopes needed:** `spreadsheets`, `drive`
+**Current Drive status:** SA's Drive quota may be near limit — avoid creating files via SA. Use OAuth (Mikhail's account) for all new Google Sheets files.
