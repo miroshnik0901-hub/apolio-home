@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
@@ -8,6 +9,33 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build as google_build
 from datetime import datetime
 from typing import Optional
+
+
+class SheetsCache:
+    """Simple TTL cache for Google Sheets reads (default 60s)."""
+
+    def __init__(self, ttl_seconds: int = 60):
+        self._cache: dict = {}
+        self._timestamps: dict = {}
+        self.ttl = ttl_seconds
+
+    def get(self, key: str):
+        if key in self._cache:
+            if time.time() - self._timestamps[key] < self.ttl:
+                return self._cache[key]
+        return None
+
+    def set(self, key: str, value):
+        self._cache[key] = value
+        self._timestamps[key] = time.time()
+
+    def invalidate(self, key: str = None):
+        if key:
+            self._cache.pop(key, None)
+            self._timestamps.pop(key, None)
+        else:
+            self._cache.clear()
+            self._timestamps.clear()
 
 SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -129,26 +157,30 @@ class EnvelopeSheets:
     # ── Transactions ──────────────────────────────────────────────────────
 
     def add_transaction(self, row: dict) -> str:
+        """Add a transaction from a dict (legacy/manual path). Uses new column order."""
         ws = self._ws("Transactions")
         import uuid
         tx_id = uuid.uuid4().hex[:8]
         now = datetime.utcnow().isoformat()
+        # New column order: Date, Amount_Orig, Currency_Orig, Category, Subcategory,
+        # Note, Who, Amount_EUR, Type, Account, ID, Envelope, Source, Wise_ID, Created_At, Deleted
         ws.append_row([
-            tx_id,
-            row.get("date", datetime.utcnow().strftime("%Y-%m-%d")),
-            row.get("amount_orig", ""),
-            row.get("currency_orig", "EUR"),
-            "",  # Amount_EUR — filled by formula
-            row.get("category", ""),
-            row.get("subcategory", ""),
-            row.get("who", ""),
-            row.get("account", ""),
-            row.get("type", "expense"),
-            row.get("note", ""),
-            row.get("source", "bot"),
-            row.get("wise_id", ""),
-            now,
-            "FALSE",  # Deleted
+            row.get("date", datetime.utcnow().strftime("%Y-%m-%d")),  # A
+            row.get("amount_orig", ""),                                # B
+            row.get("currency_orig", "EUR"),                           # C
+            row.get("category", ""),                                   # D
+            row.get("subcategory", ""),                                # E
+            row.get("note", ""),                                       # F
+            row.get("who", ""),                                        # G
+            row.get("amount_eur", ""),                                 # H
+            row.get("type", "expense"),                                # I
+            row.get("account", ""),                                    # J
+            tx_id,                                                     # K
+            row.get("envelope", ""),                                   # L
+            row.get("source", "bot"),                                  # M
+            row.get("wise_id", ""),                                    # N
+            now,                                                       # O
+            "FALSE",                                                   # P
         ])
         return tx_id
 
@@ -214,6 +246,39 @@ def get_credentials() -> Credentials:
     return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
 
+_drive_folder_cache: Optional[str] = None
+
+
+def get_or_create_drive_folder(creds: Credentials,
+                                folder_name: str = "Apolio Home") -> Optional[str]:
+    """Return the Drive folder ID for the project, creating it if needed.
+    Uses the service-account Drive — files are visible to the SA, not Mikhail.
+    Returns None on any error so callers can fall back gracefully."""
+    global _drive_folder_cache
+    if _drive_folder_cache:
+        return _drive_folder_cache
+    try:
+        from googleapiclient.discovery import build as google_build
+        drive = google_build("drive", "v3", credentials=creds, cache_discovery=False)
+        # Search for existing folder
+        q = (f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder'"
+             " and trashed=false")
+        results = drive.files().list(q=q, fields="files(id,name)").execute()
+        files = results.get("files", [])
+        if files:
+            _drive_folder_cache = files[0]["id"]
+            return _drive_folder_cache
+        # Create it
+        meta = {"name": folder_name,
+                "mimeType": "application/vnd.google-apps.folder"}
+        folder = drive.files().create(body=meta, fields="id").execute()
+        _drive_folder_cache = folder["id"]
+        return _drive_folder_cache
+    except Exception as e:
+        print(f"[Drive] Could not get/create folder: {e}")
+        return None
+
+
 class SheetsClient:
     """Unified facade over AdminSheets + EnvelopeSheets.
 
@@ -223,6 +288,7 @@ class SheetsClient:
     def __init__(self):
         self._gc = get_sheets_client()
         self._admin = AdminSheets(self._gc)
+        self._cache = SheetsCache(ttl_seconds=60)
 
     @property
     def admin(self):
@@ -232,6 +298,26 @@ class SheetsClient:
     # Admin pass-throughs
     def get_envelopes(self) -> list:
         return self._admin.get_envelopes()
+
+    def list_envelopes_with_links(self) -> list[dict]:
+        """Return active envelopes with Google Sheets URLs included."""
+        envelopes = self._admin.get_envelopes()
+        result = []
+        for e in envelopes:
+            if str(e.get("Active", "TRUE")).upper() == "FALSE":
+                continue
+            file_id = e.get("file_id", "")
+            url = f"https://docs.google.com/spreadsheets/d/{file_id}" if file_id else ""
+            result.append({
+                "id": e.get("ID", ""),
+                "name": e.get("Name", ""),
+                "currency": e.get("Currency", "EUR"),
+                "monthly_cap": e.get("Monthly_Cap", 0),
+                "split_rule": e.get("Split_Rule", "solo"),
+                "file_id": file_id,
+                "url": url,
+            })
+        return result
 
     def get_users(self) -> list:
         return self._admin.get_users()
@@ -268,14 +354,24 @@ class SheetsClient:
 
     def add_transaction(self, sheet_id: str, row) -> str:
         """Accept either a pre-formatted list (from tools) or a dict."""
+        # Invalidate cache so next read reflects the new row
+        self._cache.invalidate(f"txns_{sheet_id}")
         if isinstance(row, list):
             env = self._env_sheets(sheet_id)
             env._ws("Transactions").append_row(row)
-            return row[0]  # tx_id is the first element
+            return row[10]  # tx_id is at index 10 (col K) in new column order
         return self._env_sheets(sheet_id).add_transaction(row)
 
     def get_transactions(self, sheet_id: str, filters: dict = None) -> list:
-        return self._env_sheets(sheet_id).get_transactions(filters)
+        cache_key = f"txns_{sheet_id}"
+        if filters is None:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+        result = self._env_sheets(sheet_id).get_transactions(filters)
+        if filters is None:
+            self._cache.set(cache_key, result)
+        return result
 
     def update_transaction_field(self, sheet_id: str, tx_id: str,
                                  field: str, value: str) -> bool:

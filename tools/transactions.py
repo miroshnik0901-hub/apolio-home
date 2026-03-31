@@ -51,13 +51,45 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     tx_type = params.get("type", "expense")
     note = params.get("note", "")
 
+    # Resolve Amount_EUR: direct for EUR, otherwise look up FX rate
+    amount_eur = ""
+    if currency.upper() == "EUR":
+        amount_eur = amount
+    else:
+        try:
+            month = date[:7]  # YYYY-MM
+            file_id = envelope["file_id"]
+            fx_ws = sheets._env_sheets(file_id)._ws("FX_Rates")
+            fx_rows = fx_ws.get_all_records()
+            fx_row = next((r for r in fx_rows if r.get("Month") == month), None)
+            if fx_row:
+                rate = float(fx_row.get(currency.upper(), 0) or 0)
+                if rate:
+                    amount_eur = round(float(amount) / rate, 2)
+        except Exception:
+            pass  # leave blank; fallback in reporting uses Amount_Orig
+
+    # Column order matches the restructured Transactions sheet (Task 4a):
+    # A:Date  B:Amount_Orig  C:Currency_Orig  D:Category  E:Subcategory
+    # F:Note  G:Who  H:Amount_EUR  I:Type  J:Account
+    # K:ID  L:Envelope  M:Source  N:Wise_ID  O:Created_At  P:Deleted
     row = [
-        tx_id, date, envelope["ID"],
-        amount, currency, "",          # Amount_EUR filled by formula
-        category, subcategory,
-        who, account, tx_type,
-        note, "bot", "",               # Wise_ID empty for manual
-        now, "FALSE",
+        date,           # A - Date
+        amount,         # B - Amount_Orig
+        currency,       # C - Currency_Orig
+        category,       # D - Category
+        subcategory,    # E - Subcategory
+        note,           # F - Note
+        who,            # G - Who
+        amount_eur,     # H - Amount_EUR
+        tx_type,        # I - Type
+        account,        # J - Account
+        tx_id,          # K - ID
+        envelope["ID"], # L - Envelope
+        "bot",          # M - Source
+        "",             # N - Wise_ID
+        now,            # O - Created_At
+        "FALSE",        # P - Deleted
     ]
 
     sheets.add_transaction(envelope["file_id"], row)

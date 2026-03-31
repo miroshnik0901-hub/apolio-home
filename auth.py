@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Optional
 from sheets import AdminSheets
 
+DEFAULT_ENVELOPE = "MM_BUDGET"
+
 
 class AuthManager:
     """
@@ -22,7 +24,14 @@ class AuthManager:
     def get_user(self, telegram_id: int) -> Optional[dict]:
         if self._should_reload():
             self._reload()
-        return self._cache.get(int(telegram_id))
+        cached = self._cache.get(int(telegram_id))
+        if cached:
+            return cached
+        # Bootstrap admin always gets through even if Sheets is unavailable
+        bootstrap = os.environ.get("MIKHAIL_TELEGRAM_ID", "")
+        if bootstrap and str(telegram_id) == str(bootstrap):
+            return {"id": int(telegram_id), "name": "Mikhail", "role": "admin", "envelopes": []}
+        return None
 
     def is_admin(self, telegram_id: int) -> bool:
         # Bootstrap admin from env var
@@ -62,12 +71,17 @@ class AuthManager:
                 tid = int(u.get("telegram_id", 0))
                 if not tid:
                     continue
+                # Skip suspended users
+                if u.get("status", "active").lower() == "suspended":
+                    continue
                 envelopes = [e.strip() for e in str(u.get("envelopes", "")).split(",") if e.strip()]
                 self._cache[tid] = {
                     "id": tid,
                     "name": u.get("name", ""),
                     "role": u.get("role", "readonly"),
                     "envelopes": envelopes,
+                    "language": u.get("language", "RU"),
+                    "status": u.get("status", "active"),
                 }
         except Exception as e:
             print(f"[AuthManager] Failed to reload users: {e}")
@@ -100,9 +114,16 @@ _sessions: dict = {}
 def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
     """Return existing session or create a new one for the given user."""
     if user_id not in _sessions:
-        _sessions[user_id] = SessionContext(user_id, user_name, role)
+        session = SessionContext(user_id, user_name, role)
+        # Auto-set default envelope for admin so /status works after restart
+        if role == "admin":
+            session.current_envelope_id = DEFAULT_ENVELOPE
+        _sessions[user_id] = session
     else:
         # Refresh name and role on each call
         _sessions[user_id].user_name = user_name
         _sessions[user_id].role = role
+        # Restore default if envelope was lost (e.g. process restart via shared state)
+        if not _sessions[user_id].current_envelope_id and role == "admin":
+            _sessions[user_id].current_envelope_id = DEFAULT_ENVELOPE
     return _sessions[user_id]

@@ -76,9 +76,8 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
     if not env:
         return {"error": "Envelope not found."}
 
-    import json
-    settings = json.loads(env.get("settings", "{}"))
-    cap = float(settings.get("monthly_cap") or
+    # Monthly_Cap is a direct column in the Envelopes sheet (not a JSON field)
+    cap = float(env.get("Monthly_Cap") or env.get("monthly_cap") or
                 config.get(f"budget_{envelope_id}_monthly", 0))
 
     month = _current_month()

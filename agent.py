@@ -1,10 +1,12 @@
 """
 Apolio Home — AI Agent
-Claude claude-sonnet-4-20250514 with tool use
+Claude claude-sonnet-4-20250514 with tool use.
+System prompt is loaded from ApolioHome_Prompt.md at startup.
 """
 import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -13,6 +15,8 @@ from sheets import SheetsClient
 from auth import AuthManager, SessionContext
 
 logger = logging.getLogger(__name__)
+
+# ── Tools schema ───────────────────────────────────────────────────────────────
 
 TOOLS = [
     {
@@ -175,6 +179,15 @@ TOOLS = [
         },
     },
     {
+        "name": "list_envelopes",
+        "description": (
+            "List all active budget envelopes with their names, IDs, monthly caps, "
+            "and Google Sheets links. Use this when the user asks to see envelopes, "
+            "files, or wants to know what budgets are available."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "create_envelope",
         "description": (
             "Create a new budget envelope: Google Sheets file + register in Admin. "
@@ -197,31 +210,42 @@ TOOLS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are Apolio Home — a personal AI assistant for family budget management.
+# ── System prompt loader ───────────────────────────────────────────────────────
 
-You communicate in the language the user writes in (Russian, Ukrainian, English, Italian — all supported, no switching commands needed).
-
-Current date: {today}
-Current user: {user_name} (role: {role})
-Current envelope: {envelope_id}
-
-BEHAVIOR RULES:
-- Act immediately for add/edit. Never ask for confirmation unless deleting.
-- For delete: ask for confirmation first.
-- Missing date → assume today.
-- Missing category → make best guess from context, state it clearly.
-- Missing envelope → use current envelope unless message contains Polina/Поліна/Bergamo/liceo keywords → switch to Polina envelope.
-- Missing currency → assume EUR.
-- Multi-turn corrections: "виправ на вчора" / "actually yesterday" / "cambia a ieri" → edit last transaction date.
-- Respond in the same language the user wrote in.
-- Keep responses short and factual. Confirm what was done in one line.
-- For reports: use formatted text with emoji. Send chart only when explicitly requested.
-
-ENVELOPE SWITCHING KEYWORDS (any language):
-→ Polina envelope: Polina, Поліна, Полина, дочка, daughter, Bergamo, Бергамо, liceo
-→ Joint envelope: default for all other messages
+FALLBACK_PROMPT = """You are Apolio Home, a family budget assistant for Mikhail Miro.
+Always respond. Never stay silent. Handle RU/UK/EN/IT mixed input naturally.
+Current date: {today}. User: {user_name} (role: {role}). Active envelope: {envelope_id}.
+Add transactions proactively from natural language. Respond in the user's language.
 """
 
+
+def _load_system_prompt() -> str:
+    """Load agent system prompt from ApolioHome_Prompt.md.
+    Strips the YAML-style header block (everything before the second ---).
+    Falls back to minimal inline prompt if file not found."""
+    prompt_file = Path(__file__).parent / "ApolioHome_Prompt.md"
+    try:
+        raw = prompt_file.read_text(encoding="utf-8")
+        lines = raw.split("\n")
+        start = 0
+        dashes = 0
+        for i, line in enumerate(lines):
+            if line.strip() == "---":
+                dashes += 1
+                if dashes == 2:  # second --- ends the header block
+                    start = i + 1
+                    break
+        return "\n".join(lines[start:]).strip()
+    except Exception as e:
+        logger.warning(f"Could not load ApolioHome_Prompt.md: {e}. Using fallback prompt.")
+        return FALLBACK_PROMPT
+
+
+# Load once at module startup
+_SYSTEM_PROMPT_TEMPLATE = _load_system_prompt()
+
+
+# ── Agent ──────────────────────────────────────────────────────────────────────
 
 class ApolioAgent:
     def __init__(self, sheets: SheetsClient, auth: AuthManager):
@@ -234,14 +258,14 @@ class ApolioAgent:
                   media_data: bytes | None = None) -> str:
         """
         Run the agent with a user message.
-        Returns the bot's text response.
+        Returns the bot's text response. Never returns empty string.
         """
         today = datetime.now().strftime("%Y-%m-%d")
-        system = SYSTEM_PROMPT.format(
+        system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,
             user_name=session.user_name,
             role=session.role,
-            envelope_id=session.current_envelope_id or "not set",
+            envelope_id=session.current_envelope_id or "MM_BUDGET",
         )
 
         # Build user content (text or with media)
@@ -265,33 +289,44 @@ class ApolioAgent:
 
         # Agentic loop
         max_iterations = 5
-        for _ in range(max_iterations):
+        last_text = ""
+
+        for iteration in range(max_iterations):
             response = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=1024,
+                max_tokens=2048,
                 system=system,
                 tools=TOOLS,
                 messages=messages,
             )
 
             if response.stop_reason == "end_turn":
-                # Extract final text
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        return block.text
-                return "Done."
+                # Extract text blocks — never return empty
+                text_blocks = [
+                    b.text for b in response.content
+                    if hasattr(b, "text") and b.text.strip()
+                ]
+                if text_blocks:
+                    return "\n".join(text_blocks)
+                # Claude finished without text — use last seen text or ask for summary
+                if last_text:
+                    return last_text
+                # Generate a one-line summary
+                break  # fall through to fallback
 
             if response.stop_reason == "tool_use":
-                # Process tool calls
+                # Collect any text Claude wrote alongside the tool call
+                for block in response.content:
+                    if hasattr(block, "text") and block.text.strip():
+                        last_text = block.text.strip()
+
                 messages.append({"role": "assistant", "content": response.content})
                 tool_results = []
 
                 for block in response.content:
                     if block.type != "tool_use":
                         continue
-                    result = await self._execute_tool(
-                        block.name, block.input, session
-                    )
+                    result = await self._execute_tool(block.name, block.input, session)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -300,7 +335,24 @@ class ApolioAgent:
 
                 messages.append({"role": "user", "content": tool_results})
 
-        return "Processing complete."
+        # Fallback: ask Claude for a short plain-text summary of what happened
+        try:
+            fallback = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=256,
+                system=system,
+                messages=messages + [{
+                    "role": "user",
+                    "content": "Кратко (1-2 предложения) опиши что ты только что сделал, на языке пользователя.",
+                }],
+            )
+            for block in fallback.content:
+                if hasattr(block, "text") and block.text.strip():
+                    return block.text.strip()
+        except Exception as e:
+            logger.error(f"Fallback response failed: {e}")
+
+        return last_text or "✓"
 
     async def _execute_tool(self, name: str, params: dict,
                              session: SessionContext) -> Any:
@@ -316,21 +368,22 @@ class ApolioAgent:
             tool_update_config, tool_add_authorized_user,
             tool_remove_authorized_user,
         )
-        from tools.envelope_tools import tool_create_envelope
+        from tools.envelope_tools import tool_create_envelope, tool_list_envelopes
 
         dispatch = {
-            "add_transaction":       tool_add_transaction,
-            "edit_transaction":      tool_edit_transaction,
-            "delete_transaction":    tool_delete_transaction,
-            "find_transactions":     tool_find_transactions,
-            "get_summary":           tool_get_summary,
-            "get_budget_status":     tool_get_budget_status,
-            "import_wise_csv":       tool_import_wise_csv,
-            "set_fx_rate":           tool_set_fx_rate,
-            "update_config":         tool_update_config,
-            "add_authorized_user":   tool_add_authorized_user,
+            "list_envelopes":         tool_list_envelopes,
+            "add_transaction":        tool_add_transaction,
+            "edit_transaction":       tool_edit_transaction,
+            "delete_transaction":     tool_delete_transaction,
+            "find_transactions":      tool_find_transactions,
+            "get_summary":            tool_get_summary,
+            "get_budget_status":      tool_get_budget_status,
+            "import_wise_csv":        tool_import_wise_csv,
+            "set_fx_rate":            tool_set_fx_rate,
+            "update_config":          tool_update_config,
+            "add_authorized_user":    tool_add_authorized_user,
             "remove_authorized_user": tool_remove_authorized_user,
-            "create_envelope":       tool_create_envelope,
+            "create_envelope":        tool_create_envelope,
         }
 
         handler = dispatch.get(name)
@@ -340,7 +393,8 @@ class ApolioAgent:
         try:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
-            if name not in ("find_transactions", "get_summary", "get_budget_status"):
+            if name not in ("find_transactions", "get_summary", "get_budget_status",
+                            "list_envelopes"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -348,5 +402,5 @@ class ApolioAgent:
                 )
             return result
         except Exception as e:
-            logger.error(f"Tool {name} failed: {e}")
+            logger.error(f"Tool {name} failed: {e}", exc_info=True)
             return {"error": str(e)}

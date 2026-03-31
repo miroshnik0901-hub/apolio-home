@@ -240,6 +240,33 @@ Session persists as long as the bot process is running. **Restarts reset all ses
 
 ---
 
+## 16. Changes Made in Session 2 (2026-04-01)
+
+### Code changes (all files committed together)
+- **auth.py** — `DEFAULT_ENVELOPE = "MM_BUDGET"`. `get_session()` auto-assigns MM_BUDGET for admin on first login. `_reload()` reads `language`, `status` columns from Users sheet; suspended users are skipped.
+- **bot.py** — Full rewrite: `ReplyKeyboardMarkup` (persistent bottom keyboard with 5 buttons), greeting interceptor (no API call for "привет"), keyboard shortcut router, keep-alive typing task (8s loop), `/undo`, `/week`, `/month` commands, post-transaction inline buttons (✏ Edit / 🗑 Delete / 📊 Status), confirmation flow for delete, weekly summary scheduled job (Monday 09:00 Rome via APScheduler/JobQueue).
+- **agent.py** — System prompt now loaded from `ApolioHome_Prompt.md` at startup. Silent bot fix: fallback text extraction if tool-use loop returns no text. `max_tokens` raised from 1024 → 2048.
+- **sheets.py** — Added `SheetsCache` class (60s TTL). `get_transactions` caches unflitered results; invalidated on `add_transaction`. `EnvelopeSheets.add_transaction()` dict-path updated to new 16-column order.
+- **tools/transactions.py** — `tool_add_transaction` row list reordered: Date/Amount_Orig/Currency_Orig/Category/Subcategory/Note/Who/Amount_EUR/Type/Account/ID/Envelope/Source/Wise_ID/Created_At/Deleted.
+- **reports.py** — New file: `CATEGORY_EMOJI`, `format_bar`, `format_budget_status`, `format_report`, `format_transactions_list`, `to_html`.
+- **requirements.txt** — Added `pytz==2024.1`; changed `python-telegram-bot==20.7` → `python-telegram-bot[job-queue]==20.7`.
+
+### Google Sheets changes (applied via setup_sheets_v2.py)
+- **MM Budget — Transactions**: Columns reordered A-P, Amount_EUR formula in H2:H1000, columns K-P hidden, row 1 + col A frozen, dropdowns on Currency/Who/Type, column widths set, FX_MISSING conditional formatting.
+- **MM Budget — Summary**: Rebuilt with SUMPRODUCT formulas for all 12 months of 2026.
+- **MM Budget — Accounts**: New sheet with 4 pre-filled accounts (Wise Family, Wise Mikhail, Cash IT, Cash PL).
+- **Admin — Config**: Added Description column; 6 key entries filled.
+- **Admin — Users**: Added columns `language`, `status`, `notes`, `updated_at`; Mikhail's row updated.
+- **Admin — Audit_Log**: Bold headers, frozen row 1, timestamp column 200px wide.
+
+### New commands
+`/undo`, `/week`, `/month` (all registered in Telegram command menu)
+
+### New keyboard
+Persistent bottom keyboard: 📊 Статус / 📋 Отчёт / 💰 Добавить расход / 📁 Конверты / ❓ Помощь
+
+---
+
 ## 10. Known Issues & Pending Tasks
 
 ### Issue 1: SEMYA file not in Mikhail's Drive folder
