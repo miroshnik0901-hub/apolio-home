@@ -1,4 +1,4 @@
-"""Apolio Home — Telegram Bot Entry Point"""
+"""Apolio Home — Telegram Bot Entry Point — v2.1.0"""
 import asyncio
 import logging
 import os
@@ -557,6 +557,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
 # ── /start ─────────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    logger.info("cmd_start invoked — bot v2.1.0 inline menu")
     tg_user, session = _require_user(update)
     if not tg_user:
         await update.message.reply_text("⛔ Access denied.")
