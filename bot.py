@@ -1070,6 +1070,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
             return
 
+        if ntype == "free_text":
+            prompt_text = node.get("params", {}).get("prompt", "Введите значение:")
+            pending_key = node.get("params", {}).get("pending_key", "")
+            session.pending_prompt = pending_key
+            await query.message.reply_text(
+                f"✏️ {prompt_text}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
     # ── cb_envelopes ───────────────────────────────────────────────────────
     if data == "cb_envelopes":
         try:
@@ -1275,6 +1285,75 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if msg.text:
         text = msg.text.strip()
+
+        # ── Pending free-text prompt handler ───────────────────────────────
+        pending = getattr(session, "pending_prompt", None)
+        if pending:
+            session.pending_prompt = None  # consume immediately
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+            if pending == "report:custom_period":
+                # Try YYYY-MM format directly; otherwise let agent interpret
+                period_match = re.match(r'(\d{4}-\d{2})(?::(\d{4}-\d{2}))?', text.strip())
+                if period_match:
+                    period = text.strip().split()[0]  # take first token
+                    html = await _build_report_html(session, period)
+                    kb = _with_menu_btn(
+                        [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                         InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                    )
+                    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+                else:
+                    # Pass to agent — it understands "февраль", "march", etc.
+                    response = await agent.run(f"покажи отчёт за {text}", session)
+                    await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                return
+
+            elif pending == "transactions:search":
+                response = await agent.run(
+                    f"найди записи по запросу: {text}", session
+                )
+                await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                return
+
+            elif pending == "transactions:category":
+                await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+                try:
+                    from tools.transactions import tool_find_transactions
+                    result = await tool_find_transactions(
+                        {"category": text.strip(), "limit": 20},
+                        session, sheets, auth,
+                    )
+                    if result.get("error"):
+                        await update.message.reply_text(f"❌ {result['error']}")
+                        return
+                    txs = result.get("transactions", [])
+                    if not txs:
+                        await update.message.reply_text(
+                            f"📝 Записей по категории «{text}» нет."
+                        )
+                        return
+                    total = sum(
+                        float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs
+                    )
+                    lines = [f"📝 <b>Категория «{text}»</b> — {len(txs)} записей · {total:,.0f} EUR\n"]
+                    for tx in txs[-20:]:
+                        date = tx.get("Date", "")
+                        amt  = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+                        curr = tx.get("Currency_Orig", "EUR")
+                        note = tx.get("Note", "")
+                        who  = tx.get("Who", "")
+                        note_part = f"  <i>{note}</i>" if note else ""
+                        who_part  = f" · {who}" if who else ""
+                        lines.append(f"• {date}  {amt} {curr}{who_part}{note_part}")
+                    await update.message.reply_text(
+                        "\n".join(lines), parse_mode=ParseMode.HTML,
+                        reply_markup=_with_menu_btn(),
+                    )
+                except Exception as e:
+                    logger.error(f"transactions:category failed: {e}", exc_info=True)
+                    await update.message.reply_text(f"❌ Ошибка: {e}")
+                return
 
         # ── Menu button intercept (catches lingering reply keyboard taps) ──
         _MENU_TRIGGERS = {"☰ меню", "≡ меню", "☰ menu", "меню", "/menu"}
