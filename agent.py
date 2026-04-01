@@ -251,7 +251,7 @@ class ApolioAgent:
     def __init__(self, sheets: SheetsClient, auth: AuthManager):
         self.sheets = sheets
         self.auth = auth
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.AsyncAnthropic()
 
     async def run(self, message: str, session: SessionContext,
                   media_type: str = "text",
@@ -292,7 +292,7 @@ class ApolioAgent:
         last_text = ""
 
         for iteration in range(max_iterations):
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2048,
                 system=system,
@@ -337,7 +337,7 @@ class ApolioAgent:
 
         # Fallback: ask Claude for a short plain-text summary of what happened
         try:
-            fallback = self.client.messages.create(
+            fallback = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=256,
                 system=system,
