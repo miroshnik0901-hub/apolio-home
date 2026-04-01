@@ -83,6 +83,34 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "cmd", "command": "report", "params": {"period": "current"}, "order": 3,
         "roles": [],
     },
+    "txn_search": {
+        "label": "🔍 Поиск", "parent": "transactions",
+        "type": "free_text", "command": "",
+        "params": {
+            "prompt": "Введите поисковой запрос:\nНапример: Продукты, кофе, 2026-03-15, > 50",
+            "pending_key": "transactions:search",
+        },
+        "order": 4, "roles": [],
+    },
+    "txn_category": {
+        "label": "🏷 По категории", "parent": "transactions",
+        "type": "free_text", "command": "",
+        "params": {
+            "prompt": "Введите категорию:\nНапример: Продукты, Ресторан, Транспорт, Здоровье",
+            "pending_key": "transactions:category",
+        },
+        "order": 5, "roles": [],
+    },
+    # ── Report free_text ───────────────────────────────────────────────────
+    "rep_custom": {
+        "label": "🗓 Другой период", "parent": "report",
+        "type": "free_text", "command": "",
+        "params": {
+            "prompt": "Введите период отчёта:\n• Месяц: <code>2026-03</code>\n• Диапазон: <code>2026-01:2026-03</code>\n• Слово: <code>февраль</code>",
+            "pending_key": "report:custom_period",
+        },
+        "order": 4, "roles": [],
+    },
     # ── System submenu (admin only) ────────────────────────────────────────
     "set_undo": {
         "label": "↩️ Отменить", "parent": "settings",
@@ -116,7 +144,10 @@ _DEFAULT_ROWS = [
     # Records submenu
     ("txn_recent",    "📋 Последние 10",   "transactions", "cmd",     "transactions", '{"limit":10}',         1, "TRUE", ""),
     ("txn_week",      "📅 За неделю",     "transactions", "cmd",     "week",         "",                     2, "TRUE", ""),
-    ("txn_month",     "📆 За месяц",      "transactions", "cmd",     "report",       '{"period":"current"}', 3, "TRUE", ""),
+    ("txn_month",     "📆 За месяц",            "transactions", "cmd",       "report",  '{"period":"current"}',                                                          3, "TRUE", ""),
+    ("txn_search",    "🔍 Поиск",               "transactions", "free_text", "",        '{"prompt":"Введите поисковой запрос:\\nНапример: Продукты, кофе, > 50","pending_key":"transactions:search"}',   4, "TRUE", ""),
+    ("txn_category",  "🏷 По категории",         "transactions", "free_text", "",        '{"prompt":"Введите категорию:\\nНапример: Продукты, Ресторан, Транспорт","pending_key":"transactions:category"}', 5, "TRUE", ""),
+    ("rep_custom",    "🗓 Другой период",         "report",       "free_text", "",        '{"prompt":"Введите период:\\n• Месяц: 2026-03\\n• Диапазон: 2026-01:2026-03","pending_key":"report:custom_period"}', 4, "TRUE", ""),
     # System submenu (admin only)
     ("set_undo",      "↩️ Отменить",      "settings",     "cmd",     "undo",         "",                     1, "TRUE", "admin"),
     ("set_envelopes", "📁 Конверты",       "settings",     "cmd",     "envelopes",    "",                     2, "TRUE", "admin"),
