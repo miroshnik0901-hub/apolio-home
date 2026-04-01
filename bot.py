@@ -26,6 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 import menu_config as mc
+import i18n
 
 from telegram import (
     Update, BotCommand,
@@ -51,24 +52,16 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-# Reply keyboard — shown after /start, user can hide/show with 🟦 button
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton("💰 Добавить"), KeyboardButton("📊 Статус")],
-        [KeyboardButton("📋 Отчёт"),   KeyboardButton("📝 Записи")],
-        [KeyboardButton("❓ Помощь")],
-    ],
-    resize_keyboard=True,
-)
-
-# Keyboard button texts — intercept before AI agent
-KEYBOARD_SHORTCUTS = {
-    "💰 Добавить",
-    "📊 Статус",
-    "📋 Отчёт",
-    "📝 Записи",
-    "❓ Помощь",
-}
+def _build_main_keyboard(lang: str = "en") -> ReplyKeyboardMarkup:
+    """Build reply keyboard in the user's language."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(i18n.t_kb("add", lang)),    KeyboardButton(i18n.t_kb("status", lang))],
+            [KeyboardButton(i18n.t_kb("report", lang)), KeyboardButton(i18n.t_kb("records", lang))],
+            [KeyboardButton(i18n.t_kb("help", lang))],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
@@ -79,12 +72,13 @@ def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
 
 
 def _build_inline_menu(parent_id: str = "", tree: dict = None,
-                        role: str = "admin") -> InlineKeyboardMarkup:
+                        role: str = "admin", lang: str = "en") -> InlineKeyboardMarkup:
     """Build an inline keyboard grid from the menu config, filtered by role.
 
     parent_id="" → root level.
     parent_id="report" → children of report submenu.
     role → only show nodes visible to this role.
+    lang → label language (ru/uk/en/it).
     """
     if tree is None:
         tree = mc.get_menu()
@@ -101,7 +95,8 @@ def _build_inline_menu(parent_id: str = "", tree: dict = None,
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for nid, node in children:
-        label = node["label"]
+        # Prefer i18n translation; fall back to sheet label
+        label = i18n.t_menu(nid, lang) or node["label"]
         if node["type"] == "submenu":
             label = label + " ›"
         row.append(InlineKeyboardButton(label, callback_data=f"nav:{nid}"))
@@ -111,14 +106,14 @@ def _build_inline_menu(parent_id: str = "", tree: dict = None,
     if row:
         rows.append(row)
     if back_cb:
-        rows.append([InlineKeyboardButton("◀ Назад", callback_data=back_cb)])
+        rows.append([InlineKeyboardButton(i18n.t_menu("back", lang), callback_data=back_cb)])
     return InlineKeyboardMarkup(rows)
 
 
 # Alias kept for backward compatibility
 def _build_submenu_keyboard(parent_id: str, tree: dict,
-                             role: str = "admin") -> InlineKeyboardMarkup:
-    return _build_inline_menu(parent_id, tree, role)
+                             role: str = "admin", lang: str = "en") -> InlineKeyboardMarkup:
+    return _build_inline_menu(parent_id, tree, role, lang)
 
 
 GREETINGS = {
@@ -470,6 +465,11 @@ def _require_user(update: Update):
     if not tg_user:
         return None, None
     session = get_session(user.id, user.first_name, tg_user["role"])
+    # Language detection: Telegram UI language → stored preference → English fallback
+    if getattr(user, "language_code", None):
+        session.lang = i18n.get_lang(user.language_code)
+    elif not getattr(session, "lang", ""):
+        session.lang = "en"
     return tg_user, session
 
 
@@ -482,10 +482,12 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
     if not tg_user:
         return False
 
+    lang = getattr(session, "lang", "en")
+
     if node_id in ("__menu__", "__root__"):
         tree = mc.get_menu()
-        kb = _build_inline_menu("", tree, role)
-        await update.message.reply_text("Меню:", reply_markup=kb)
+        kb = _build_inline_menu("", tree, role, lang)
+        await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
         return True
 
     tree = mc.get_menu()
@@ -501,17 +503,17 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
     ntype = node.get("type", "cmd")
 
     if ntype == "submenu":
-        kb = _build_inline_menu(node_id, tree, role)
+        kb = _build_inline_menu(node_id, tree, role, lang)
+        node_label = i18n.t_menu(node_id, lang) or node["label"]
         await update.message.reply_text(
-            node["label"].replace(" ›", "") + ":",
+            node_label + ":",
             reply_markup=kb,
         )
         return True
 
     if ntype == "free_text":
         await update.message.reply_text(
-            "Напишите расход в свободной форме:\n"
-            "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»",
+            i18n.t("", lang, i18n.ADD_PROMPT),
             reply_markup=_with_menu_btn(),
         )
         return True
@@ -560,17 +562,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Access denied.")
         return
 
+    lang = getattr(session, "lang", "en")
     name = session.user_name or "Mikhail"
+    msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
     await update.message.reply_text(
-        f"👋 Привет, {name}!\n\n"
-        "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
-        "Просто напишите что потратили:\n"
-        "• <i>«кофе 3.50»</i> — запишу расход\n"
-        "• <i>«продукты 85 EUR Esselunga»</i> — с заметкой\n"
-        "• <i>«покажи отчёт за март»</i> — статистика\n\n"
-        "Используйте кнопки внизу для навигации 👇",
+        msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=_build_main_keyboard(lang),
     )
 
 
@@ -597,10 +595,11 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Access denied.")
         return
 
+    lang = getattr(session, "lang", "en")
     role = tg_user.get("role", "viewer")
     tree = mc.get_menu()
-    kb = _build_inline_menu("", tree, role)
-    await update.message.reply_text("Меню:", reply_markup=kb)
+    kb = _build_inline_menu("", tree, role, lang)
+    await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
 
 
 # ── /settings ──────────────────────────────────────────────────────────────────
@@ -979,6 +978,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     role = tg_user.get("role", "viewer")
     session = get_session(query.from_user.id, query.from_user.first_name, role)
+    # Detect language for callback context
+    if getattr(query.from_user, "language_code", None):
+        session.lang = i18n.get_lang(query.from_user.language_code)
+    lang = getattr(session, "lang", "en")
     data = query.data
 
     # ── nav: dynamic menu navigation ───────────────────────────────────────
@@ -988,7 +991,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # __menu__ / __root__ = show main menu (keyboard-only edit, keep message text)
         if node_id in ("__menu__", "__root__"):
-            kb = _build_inline_menu("", tree, role)
+            kb = _build_inline_menu("", tree, role, lang)
             try:
                 await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
@@ -1008,7 +1011,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ntype = node.get("type", "cmd")
 
         if ntype == "submenu":
-            kb = _build_inline_menu(node_id, tree, role)
+            kb = _build_inline_menu(node_id, tree, role, lang)
             try:
                 await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
@@ -1021,15 +1024,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if command == "status":
                 html = await _build_status_html(session)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton("📋 Отчёт",    callback_data="nav:report"),
-                     InlineKeyboardButton("📝 Записи",   callback_data="nav:transactions")],
+                    [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="nav:report"),
+                     InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="nav:transactions")],
                 )
             elif command == "report":
                 period = params.get("period", "current")
                 html = await _build_report_html(session, period)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                     InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                    [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
+                     InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
                 )
             elif command == "week":
                 html = await _build_week_html(session)
@@ -1043,7 +1046,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 mc.reset_to_defaults(sheets._gc, admin_id)
                 tree = mc.get_menu(sheets._gc, admin_id)
                 await query.answer("🔄 Меню обновлено", show_alert=False)
-                kb = _build_inline_menu("settings", tree, role)
+                kb = _build_inline_menu("settings", tree, role, lang)
                 try:
                     await query.edit_message_reply_markup(reply_markup=kb)
                 except BadRequest:
@@ -1260,6 +1263,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     media_data = None
 
     role = tg_user.get("role", "viewer")
+    lang = getattr(session, "lang", "en")
 
     if msg.text:
         text = msg.text.strip()
@@ -1268,36 +1272,31 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _MENU_TRIGGERS = {"☰ меню", "≡ меню", "☰ menu", "меню", "/menu"}
         if text.strip().lower() in _MENU_TRIGGERS:
             tree = mc.get_menu()
-            kb = _build_inline_menu("", tree, role)
-            await update.message.reply_text("Меню:", reply_markup=kb)
+            kb = _build_inline_menu("", tree, role, lang)
+            await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
             return
 
-        # ── Keyboard shortcut intercept (persistent reply keyboard buttons) ──
-        if text in KEYBOARD_SHORTCUTS:
-            if text == "💰 Добавить":
-                await update.message.reply_text(
-                    "Напишите расход в свободной форме:\n"
-                    "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»"
-                )
-            elif text == "📊 Статус":
+        # ── Keyboard shortcut intercept (any language, via reverse map) ──
+        action = i18n.KB_TEXT_TO_ACTION.get(text)
+        if action:
+            if action == "add":
+                await update.message.reply_text(i18n.t("", lang, i18n.ADD_PROMPT))
+            elif action == "status":
                 await cmd_status(update, ctx)
-            elif text == "📋 Отчёт":
+            elif action == "report":
                 await cmd_report(update, ctx)
-            elif text == "📝 Записи":
+            elif action == "records":
                 await cmd_transactions(update, ctx)
-            elif text == "❓ Помощь":
+            elif action == "help":
                 await cmd_help(update, ctx)
             return
 
         # ── Greeting intercept ─────────────────────────────────────────────
         if text.lower() in GREETINGS:
             await update.message.reply_text(
-                "Привет! 👋\n\n"
-                "Просто напишите что потратили:\n"
-                "«кофе 3.50» или «продукты 85 EUR»\n\n"
-                "Используйте кнопки внизу 👇",
+                i18n.t("", lang, i18n.GREETING_MSG),
                 parse_mode=ParseMode.HTML,
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=_build_main_keyboard(lang),
             )
             return
 
