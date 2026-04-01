@@ -55,16 +55,16 @@ agent = ApolioAgent(sheets, auth)
 def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     """Build reply keyboard in the user's language.
 
-    Layout:
+    Layout (3 rows × 2 columns):
         📊 Статус   |  📋 Отчёт
-        📝 Записи   |  📁 Конверты
-           💰 Добавить расход
+        📝 Записи   |  ➕ Добавить
+        📁 Конверты |  ⚙️ Настройки
     """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(i18n.t_kb("status", lang)),    KeyboardButton(i18n.t_kb("report", lang))],
-            [KeyboardButton(i18n.t_kb("records", lang)),   KeyboardButton(i18n.t_kb("envelopes", lang))],
-            [KeyboardButton(i18n.t_kb("add", lang))],
+            [KeyboardButton(i18n.t_kb("records", lang)),   KeyboardButton(i18n.t_kb("add", lang))],
+            [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -1372,30 +1372,23 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # ── Keyboard shortcut intercept (any language, via reverse map) ──
         action = i18n.KB_TEXT_TO_ACTION.get(text)
         if action:
-            if action == "add":
-                await update.message.reply_text(i18n.t("", lang, i18n.ADD_PROMPT))
-            elif action == "status":
+            tree = mc.get_menu()
+            role = tg_user.get("role", "viewer")
+            if action == "status":
                 await cmd_status(update, ctx)
             elif action == "report":
-                # Show period submenu instead of running report directly
-                tree = mc.get_menu()
-                kb = _build_inline_menu("report", tree, tg_user.get("role", "viewer"), lang)
-                await update.message.reply_text(
-                    i18n.t_menu("report", lang) + " — выберите период:",
-                    reply_markup=kb,
-                )
+                kb = _build_inline_menu("report", tree, role, lang)
+                await update.message.reply_text("📋 Отчёт — выберите период:", reply_markup=kb)
             elif action == "records":
-                # Show records filter submenu
-                tree = mc.get_menu()
-                kb = _build_inline_menu("transactions", tree, tg_user.get("role", "viewer"), lang)
-                await update.message.reply_text(
-                    i18n.t_menu("transactions", lang) + " — выберите фильтр:",
-                    reply_markup=kb,
-                )
+                kb = _build_inline_menu("transactions", tree, role, lang)
+                await update.message.reply_text("📝 Записи — выберите фильтр:", reply_markup=kb)
+            elif action == "add":
+                await update.message.reply_text(i18n.t("", lang, i18n.ADD_PROMPT))
             elif action == "envelopes":
                 await cmd_envelopes(update, ctx)
-            elif action == "help":
-                await cmd_help(update, ctx)
+            elif action == "settings":
+                kb = _build_inline_menu("settings", tree, role, lang)
+                await update.message.reply_text("⚙️ Настройки:", reply_markup=kb)
             return
 
         # ── Greeting intercept ─────────────────────────────────────────────
