@@ -25,6 +25,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import menu_config as mc
+
 from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
@@ -48,24 +50,66 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton("📊 Статус"), KeyboardButton("📋 Отчёт")],
-        [KeyboardButton("💰 Добавить расход"), KeyboardButton("📁 Конверты")],
-        [KeyboardButton("📝 Записи"), KeyboardButton("❓ Помощь")],
-    ],
-    resize_keyboard=True,
-    is_persistent=True,
-)
+def _build_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Build the persistent bottom keyboard from menu config (top-level nodes)."""
+    tree = mc.get_menu()
+    roots = mc.root_nodes(tree)
+    rows = []
+    row: list[KeyboardButton] = []
+    for nid, node in roots:
+        label = node["label"]
+        # Submenus get a › suffix so the user knows it opens more options
+        if node["type"] == "submenu":
+            label = label + " ›"
+        row.append(KeyboardButton(label))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
-KEYBOARD_SHORTCUTS = {
-    "📊 Статус":          "status",
-    "📋 Отчёт":           "report",
-    "📁 Конверты":        "envelopes",
-    "📝 Записи":          "transactions",
-    "💰 Добавить расход": "add_prompt",
-    "❓ Помощь":          "help",
-}
+
+def _get_keyboard_shortcuts() -> dict[str, str]:
+    """Map button label → node_id for the message handler."""
+    tree = mc.get_menu()
+    result: dict[str, str] = {}
+    for nid, node in tree.items():
+        label = node["label"]
+        result[label] = nid
+        # Also accept the › version (submenus)
+        if node["type"] == "submenu":
+            result[label + " ›"] = nid
+    return result
+
+
+def _build_submenu_keyboard(parent_id: str, tree: dict) -> InlineKeyboardMarkup:
+    """Build an inline keyboard for a submenu node."""
+    children = mc.sorted_children(tree, parent_id)
+    rows = []
+    row: list[InlineKeyboardButton] = []
+    for nid, node in children:
+        label = node["label"]
+        if node["type"] == "submenu":
+            label = label + " ›"
+        row.append(InlineKeyboardButton(label, callback_data=f"nav:{nid}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    # Add Back button if parent has a parent (not root level)
+    parent_node = tree.get(parent_id, {})
+    grandparent = parent_node.get("parent", "")
+    if grandparent:
+        rows.append([InlineKeyboardButton("◀ Назад", callback_data=f"nav:{grandparent}")])
+    return InlineKeyboardMarkup(rows)
+
+
+MAIN_KEYBOARD = _build_reply_keyboard()
+
+# Legacy map kept for compatibility; rebuilt on /refresh
+KEYBOARD_SHORTCUTS = _get_keyboard_shortcuts()
 
 GREETINGS = {
     "привет", "hi", "hello", "ciao", "hey", "добрий день",
@@ -87,6 +131,7 @@ BOT_COMMANDS = [
     BotCommand("month",        "Расходы за этот месяц"),
     BotCommand("undo",         "Отменить последнее действие"),
     BotCommand("help",         "Справка и примеры"),
+    BotCommand("refresh",      "Обновить меню из Admin-таблицы"),
 ]
 
 
@@ -368,9 +413,20 @@ async def _build_week_html(session) -> str:
 # ── Post init ──────────────────────────────────────────────────────────────────
 
 async def post_init(app: Application):
-    """Register bot commands and schedule weekly summary."""
+    """Register bot commands, ensure BotMenu sheet exists, schedule weekly summary."""
     await app.bot.set_my_commands(BOT_COMMANDS)
     logger.info("Bot commands registered in Telegram")
+
+    # Ensure BotMenu tab exists in Admin sheet (creates with defaults if absent)
+    try:
+        admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+        created = mc.ensure_sheet(sheets._gc, admin_id)
+        if created:
+            logger.info("BotMenu sheet created in Admin spreadsheet with defaults")
+        # Pre-load menu into cache
+        mc.get_menu(sheets._gc, admin_id)
+    except Exception as e:
+        logger.warning(f"Could not init BotMenu sheet: {e}")
 
     try:
         import pytz
@@ -397,6 +453,73 @@ def _require_user(update: Update):
     return tg_user, session
 
 
+# ── Menu navigation helper ─────────────────────────────────────────────────────
+
+async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
+    """Handle a menu node tap. Returns True if the message was fully handled."""
+    tree = mc.get_menu()
+    node = tree.get(node_id)
+    if not node:
+        return False
+
+    ntype = node.get("type", "cmd")
+
+    if ntype == "submenu":
+        # Show inline keyboard with children
+        kb = _build_submenu_keyboard(node_id, tree)
+        label = node["label"].replace(" ›", "")
+        await update.message.reply_text(
+            f"{label}:",
+            reply_markup=kb,
+        )
+        return True
+
+    if ntype == "free_text":
+        await update.message.reply_text(
+            "Напишите расход в свободной форме:\n"
+            "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»",
+            reply_markup=_build_reply_keyboard(),
+        )
+        return True
+
+    if ntype == "cmd":
+        command = node.get("command", "")
+        params  = node.get("params", {})
+        # Dispatch to the right handler based on command name + params
+        if command == "status":
+            await cmd_status(update, ctx)
+        elif command == "report":
+            period = params.get("period", "current")
+            tg_user, session = _require_user(update)
+            if tg_user:
+                await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+                html = await _build_report_html(session, period)
+                nav_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                    InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr"),
+                ]])
+                await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=nav_kb)
+        elif command == "transactions":
+            await cmd_transactions(update, ctx)
+        elif command == "week":
+            await cmd_week(update, ctx)
+        elif command == "help":
+            await cmd_help(update, ctx)
+        elif command == "envelopes":
+            await cmd_envelopes(update, ctx)
+        else:
+            return False
+        return True
+
+    return False
+    user = update.effective_user
+    tg_user = auth.get_user(user.id)
+    if not tg_user:
+        return None, None
+    session = get_session(user.id, user.first_name, tg_user["role"])
+    return tg_user, session
+
+
 # ── /start ─────────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -406,12 +529,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     name = session.user_name or "Mikhail"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📁 Конверты", callback_data="cb_envelopes"),
-         InlineKeyboardButton("📊 Статус", callback_data="cb_status")],
-        [InlineKeyboardButton("📋 Отчёт за месяц", callback_data="cb_report"),
-         InlineKeyboardButton("📝 Последние записи", callback_data="cb_transactions")],
-    ])
+    kb = _build_reply_keyboard()
     await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
@@ -419,13 +537,27 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• <i>«кофе 3.50»</i> — запишу расход\n"
         "• <i>«продукты 85 EUR Esselunga»</i> — с заметкой\n"
         "• <i>«покажи отчёт за март»</i> — статистика\n\n"
-        "Или нажмите кнопку ниже 👇",
+        "Или используйте кнопки меню ниже 👇",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=kb,
     )
+
+
+async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reload menu config from Admin sheet."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text("⛔ Access denied.")
+        return
+    mc.invalidate()
+    admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+    mc.get_menu(sheets._gc, admin_id)  # pre-warm cache from sheet
+    global MAIN_KEYBOARD, KEYBOARD_SHORTCUTS
+    MAIN_KEYBOARD = _build_reply_keyboard()
+    KEYBOARD_SHORTCUTS = _get_keyboard_shortcuts()
     await update.message.reply_text(
-        "Быстрые действия:",
-        reply_markup=keyboard,
+        "🔄 Меню обновлено из Admin-таблицы.",
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -813,6 +945,57 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     session = get_session(query.from_user.id, query.from_user.first_name, tg_user["role"])
     data = query.data
 
+    # ── nav: dynamic menu navigation ───────────────────────────────────────
+    if data.startswith("nav:"):
+        node_id = data[4:]
+        tree = mc.get_menu()
+        node = tree.get(node_id)
+        if not node:
+            await query.answer("Пункт меню не найден", show_alert=True)
+            return
+
+        ntype = node.get("type", "cmd")
+
+        if ntype == "submenu":
+            kb = _build_submenu_keyboard(node_id, tree)
+            label = node["label"].replace(" ›", "")
+            try:
+                await query.edit_message_text(f"{label}:", reply_markup=kb)
+            except BadRequest:
+                pass
+            return
+
+        if ntype == "cmd":
+            command = node.get("command", "")
+            params  = node.get("params", {})
+            if command == "status":
+                html = await _build_status_html(session)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📋 Отчёт", callback_data="nav:report"),
+                    InlineKeyboardButton("📝 Записи", callback_data="nav:transactions"),
+                ]])
+            elif command == "report":
+                period = params.get("period", "current")
+                html = await _build_report_html(session, period)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                    InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr"),
+                ]])
+            elif command == "week":
+                html = await _build_week_html(session)
+                kb = None
+            else:
+                await query.answer("Команда не поддерживается в инлайн-режиме", show_alert=True)
+                return
+            try:
+                await query.edit_message_text(
+                    html, parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                )
+            except BadRequest:
+                pass
+            return
+
     # ── cb_envelopes ───────────────────────────────────────────────────────
     if data == "cb_envelopes":
         try:
@@ -1032,30 +1215,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if msg.text:
         text = msg.text.strip()
 
-        # ── Keyboard shortcut intercept ────────────────────────────────────
-        shortcut = KEYBOARD_SHORTCUTS.get(text)
-        if shortcut == "status":
-            await cmd_status(update, ctx)
-            return
-        elif shortcut == "report":
-            await cmd_report(update, ctx)
-            return
-        elif shortcut == "envelopes":
-            await cmd_envelopes(update, ctx)
-            return
-        elif shortcut == "transactions":
-            await cmd_transactions(update, ctx)
-            return
-        elif shortcut == "help":
-            await cmd_help(update, ctx)
-            return
-        elif shortcut == "add_prompt":
-            await update.message.reply_text(
-                "Напишите расход в свободной форме:\n"
-                "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»",
-                reply_markup=MAIN_KEYBOARD,
-            )
-            return
+        # ── Keyboard shortcut intercept (dynamic menu) ────────────────────
+        node_id = KEYBOARD_SHORTCUTS.get(text)
+        if node_id:
+            handled = await _handle_menu_node(node_id, update, ctx)
+            if handled:
+                return
 
         # ── Greeting intercept ─────────────────────────────────────────────
         if text.lower() in GREETINGS:
@@ -1194,6 +1359,7 @@ def main():
     app.add_handler(CommandHandler("month",        cmd_month))
     app.add_handler(CommandHandler("undo",         cmd_undo))
     app.add_handler(CommandHandler("help",         cmd_help))
+    app.add_handler(CommandHandler("refresh",      cmd_refresh))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message
