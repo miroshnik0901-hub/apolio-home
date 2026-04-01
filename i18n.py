@@ -197,6 +197,95 @@ ADD_PROMPT: dict[str, str] = {
 }
 
 
+# ── System messages (errors, confirmations, prompts) ──────────────────────────
+
+SYS: dict[str, dict[str, str]] = {
+    "access_denied": {
+        "ru": "⛔ Доступ запрещён.",
+        "uk": "⛔ Доступ заборонено.",
+        "en": "⛔ Access denied.",
+        "it": "⛔ Accesso negato.",
+    },
+    "admin_only": {
+        "ru": "⛔ Только для администратора.",
+        "uk": "⛔ Тільки для адміністратора.",
+        "en": "⛔ Admin only.",
+        "it": "⛔ Solo per amministratori.",
+    },
+    "no_rights": {
+        "ru": "⛔ Недостаточно прав.",
+        "uk": "⛔ Недостатньо прав.",
+        "en": "⛔ Insufficient permissions.",
+        "it": "⛔ Permessi insufficienti.",
+    },
+    "menu_not_found": {
+        "ru": "Пункт меню не найден.",
+        "uk": "Пункт меню не знайдено.",
+        "en": "Menu item not found.",
+        "it": "Voce di menu non trovata.",
+    },
+    "menu_refreshed": {
+        "ru": "🔄 Меню обновлено.",
+        "uk": "🔄 Меню оновлено.",
+        "en": "🔄 Menu refreshed.",
+        "it": "🔄 Menu aggiornato.",
+    },
+    "no_envelopes": {
+        "ru": "Конверты ещё не созданы.\n\nНапишите: «создай конверт Название, лимит N EUR»",
+        "uk": "Конверти ще не створені.\n\nНапишіть: «створи конверт Назва, ліміт N EUR»",
+        "en": "No envelopes yet.\n\nWrite: «create envelope Name, limit N EUR»",
+        "it": "Nessuna busta ancora.\n\nScrivi: «crea busta Nome, limite N EUR»",
+    },
+    "no_transactions": {
+        "ru": "Записей пока нет.\n\nПросто напишите что потратили, например: «кофе 3.50»",
+        "uk": "Записів поки немає.\n\nПросто напишіть що витратили, наприклад: «кава 3.50»",
+        "en": "No records yet.\n\nJust write what you spent, e.g.: «coffee 3.50»",
+        "it": "Nessun record ancora.\n\nScrivi cosa hai speso, es.: «caffè 3.50»",
+    },
+    "cmd_not_supported": {
+        "ru": "Команда не поддерживается.",
+        "uk": "Команда не підтримується.",
+        "en": "Command not supported.",
+        "it": "Comando non supportato.",
+    },
+    "input_prompt": {
+        "ru": "✏️ Введите значение:",
+        "uk": "✏️ Введіть значення:",
+        "en": "✏️ Enter value:",
+        "it": "✏️ Inserisci valore:",
+    },
+    "report_title": {
+        "ru": "📋 Отчёт — выберите период:",
+        "uk": "📋 Звіт — оберіть період:",
+        "en": "📋 Report — choose period:",
+        "it": "📋 Report — scegli periodo:",
+    },
+    "records_title": {
+        "ru": "📝 Записи — выберите фильтр:",
+        "uk": "📝 Записи — оберіть фільтр:",
+        "en": "📝 Records — choose filter:",
+        "it": "📝 Voci — scegli filtro:",
+    },
+    "settings_title": {
+        "ru": "⚙️ Настройки:",
+        "uk": "⚙️ Налаштування:",
+        "en": "⚙️ Settings:",
+        "it": "⚙️ Impostazioni:",
+    },
+}
+
+
+def ts(key: str, lang: str) -> str:
+    """Translate a system message key. Falls back to ru then en."""
+    lg = get_lang(lang)
+    return (
+        SYS.get(key, {}).get(lg)
+        or SYS.get(key, {}).get("ru")
+        or SYS.get(key, {}).get("en")
+        or key
+    )
+
+
 # ── Lookup helpers ─────────────────────────────────────────────────────────────
 
 def t_menu(node_id: str, lang: str) -> str:
