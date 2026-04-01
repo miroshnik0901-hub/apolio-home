@@ -22,12 +22,12 @@ def _resolve_envelope(params: dict, session: SessionContext,
     """Find the envelope file_id for the given envelope_id."""
     env_id = params.get("envelope_id") or session.current_envelope_id
     if not env_id:
-        raise ValueError("No envelope selected. Use /envelope <id> to select one.")
+        raise ValueError("Конверт не выбран. Используйте /envelope для выбора конверта.")
     envelopes = sheets.get_envelopes()
     for e in envelopes:
         if e.get("ID") == env_id:
             return e
-    raise ValueError(f"Envelope {env_id} not found.")
+    raise ValueError(f"Конверт {env_id} не найден. Проверьте список конвертов командой /envelope.")
 
 
 async def tool_add_transaction(params: dict, session: SessionContext,
