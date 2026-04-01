@@ -473,11 +473,14 @@ def _require_user(update: Update):
     if not tg_user:
         return None, None
     session = get_session(user.id, user.first_name, tg_user["role"])
-    # Language detection: Telegram UI language → stored preference → English fallback
-    if getattr(user, "language_code", None):
-        session.lang = i18n.get_lang(user.language_code)
-    elif not getattr(session, "lang", ""):
-        session.lang = "en"
+    # Language detection: only switch for explicit non-English languages (uk, it).
+    # English Telegram UI is not a signal — this product is Russian-first.
+    # Switching logic: uk → uk, it → it, anything else (en, ru, etc.) → keep "ru"
+    tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
+    if tg_lang in ("uk", "it"):
+        session.lang = tg_lang
+    elif not getattr(session, "lang", "") or session.lang == "en":
+        session.lang = "ru"
     return tg_user, session
 
 
@@ -986,10 +989,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     role = tg_user.get("role", "viewer")
     session = get_session(query.from_user.id, query.from_user.first_name, role)
-    # Detect language for callback context
-    if getattr(query.from_user, "language_code", None):
-        session.lang = i18n.get_lang(query.from_user.language_code)
-    lang = getattr(session, "lang", "en")
+    # Same Russian-first logic as _require_user: only override for uk/it
+    tg_lang_cb = i18n.get_lang(getattr(query.from_user, "language_code", None) or "")
+    if tg_lang_cb in ("uk", "it"):
+        session.lang = tg_lang_cb
+    elif not getattr(session, "lang", "") or session.lang == "en":
+        session.lang = "ru"
+    lang = session.lang
     data = query.data
 
     # ── nav: dynamic menu navigation ───────────────────────────────────────
