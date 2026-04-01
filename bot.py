@@ -52,15 +52,16 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-def _build_main_keyboard(lang: str = "en") -> ReplyKeyboardMarkup:
+def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     """Build reply keyboard in the user's language."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(i18n.t_kb("add", lang)),    KeyboardButton(i18n.t_kb("status", lang))],
-            [KeyboardButton(i18n.t_kb("report", lang)), KeyboardButton(i18n.t_kb("records", lang))],
+            [KeyboardButton(i18n.t_kb("status", lang)),    KeyboardButton(i18n.t_kb("report", lang))],
+            [KeyboardButton(i18n.t_kb("add", lang)),        KeyboardButton(i18n.t_kb("envelopes", lang))],
             [KeyboardButton(i18n.t_kb("help", lang))],
         ],
         resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -1286,8 +1287,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await cmd_status(update, ctx)
             elif action == "report":
                 await cmd_report(update, ctx)
-            elif action == "records":
-                await cmd_transactions(update, ctx)
+            elif action == "envelopes":
+                await cmd_envelopes(update, ctx)
             elif action == "help":
                 await cmd_help(update, ctx)
             return
