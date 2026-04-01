@@ -157,6 +157,18 @@ def _progress_bar(current: float, total: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def _ru_plural(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural form: 1 запись, 2-4 записи, 5+ записей."""
+    if 11 <= (n % 100) <= 19:
+        return many
+    r = n % 10
+    if r == 1:
+        return one
+    if 2 <= r <= 4:
+        return few
+    return many
+
+
 def _strip_markdown(text: str) -> str:
     """Strip basic Telegram markdown markers to produce plain text."""
     text = re.sub(r'\*\*?(.*?)\*\*?', r'\1', text)
@@ -226,7 +238,7 @@ async def _build_status_html(session) -> str:
         label = _month_label_ru(month)
         env_id = session.current_envelope_id or "?"
         bar = _progress_bar(spent, cap)
-        warn = " ⚠️" if alert else ("  ✅" if pct < 80 else "")
+        warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
 
         lines = [
             f"📊 <b>Бюджет {label}</b>  ·  {env_id}",
@@ -338,7 +350,7 @@ async def _build_week_html(session) -> str:
         lines = [
             f"📅 <b>Эта неделя</b>  ({week_label})",
             "",
-            f"Итого: <b>{total:,.0f} EUR</b>  ({len(txs)} записей)",
+            f"Итого: <b>{total:,.0f} EUR</b>  ({len(txs)} {_ru_plural(len(txs), 'запись', 'записи', 'записей')})",
         ]
         if cats:
             lines.append("")
@@ -566,10 +578,22 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    html = await _build_report_html(session, "current")
+
+    # Early in month with no data → auto-show previous month
+    period = "current"
+    if dt.date.today().day <= 10:
+        try:
+            from tools.summary import tool_get_summary
+            check = await tool_get_summary({"period": "current"}, session, sheets, auth)
+            if float(check.get("total_spent") or 0) == 0:
+                period = "last"
+        except Exception:
+            pass
+
+    html = await _build_report_html(session, period)
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("◀ Прошлый месяц", callback_data="cb_report_last"),
-        InlineKeyboardButton("📊 Статус", callback_data="cb_status"),
+        InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+        InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
     ]])
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
@@ -841,8 +865,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "cb_report":
         html = await _build_report_html(session, "current")
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀ Прошлый месяц", callback_data="cb_report_last"),
-            InlineKeyboardButton("📊 Статус", callback_data="cb_status"),
+            InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+            InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
         ]])
         try:
             await query.edit_message_text(
@@ -854,8 +878,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "cb_report_last":
         html = await _build_report_html(session, "last")
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("▶ Текущий месяц", callback_data="cb_report"),
-            InlineKeyboardButton("📊 Статус", callback_data="cb_status"),
+            InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+            InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
         ]])
         try:
             await query.edit_message_text(
