@@ -219,6 +219,31 @@ def root_nodes_for_role(tree: dict, role: str) -> list[tuple[str, dict]]:
     return sorted_children_for_role(tree, "", role)
 
 
+def reset_to_defaults(gc, admin_sheet_id: str) -> bool:
+    """Overwrite BotMenu tab with current _DEFAULT_ROWS. Clears cache. Returns True on success."""
+    global _cache
+    _cache = None
+    try:
+        wb = gc.open_by_key(admin_sheet_id)
+        try:
+            ws = wb.worksheet("BotMenu")
+        except Exception:
+            ws = wb.add_worksheet("BotMenu", rows=60, cols=10)
+        ws.clear()
+        ws.update("A1:I1", [_HEADERS])
+        data = [list(row) for row in _DEFAULT_ROWS]
+        ws.update(f"A2:I{1 + len(data)}", data)
+        try:
+            ws.format("A1:I1", {"textFormat": {"bold": True}})
+        except Exception:
+            pass
+        logger.info("BotMenu: reset to defaults (%d rows)", len(data))
+        return True
+    except Exception as e:
+        logger.error("BotMenu reset_to_defaults failed: %s", e)
+        return False
+
+
 def ensure_sheet(gc, admin_sheet_id: str) -> bool:
     """Create/update BotMenu tab in Admin sheet. Returns True if created."""
     try:
