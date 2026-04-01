@@ -21,6 +21,7 @@ KB_LABELS: dict[str, dict[str, str]] = {
     "ru": {
         "status":    "📊 Статус",
         "report":    "📋 Отчёт",
+        "records":   "📝 Записи",
         "add":       "💰 Добавить расход",
         "envelopes": "📁 Конверты",
         "help":      "❓ Помощь",
@@ -28,6 +29,7 @@ KB_LABELS: dict[str, dict[str, str]] = {
     "uk": {
         "status":    "📊 Статус",
         "report":    "📋 Звіт",
+        "records":   "📝 Записи",
         "add":       "💰 Додати витрату",
         "envelopes": "📁 Конверти",
         "help":      "❓ Допомога",
@@ -35,6 +37,7 @@ KB_LABELS: dict[str, dict[str, str]] = {
     "en": {
         "status":    "📊 Status",
         "report":    "📋 Report",
+        "records":   "📝 Records",
         "add":       "💰 Add Expense",
         "envelopes": "📁 Envelopes",
         "help":      "❓ Help",
@@ -42,6 +45,7 @@ KB_LABELS: dict[str, dict[str, str]] = {
     "it": {
         "status":    "📊 Stato",
         "report":    "📋 Report",
+        "records":   "📝 Voci",
         "add":       "💰 Aggiungi spesa",
         "envelopes": "📁 Buste",
         "help":      "❓ Aiuto",
