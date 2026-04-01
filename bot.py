@@ -53,12 +53,18 @@ agent = ApolioAgent(sheets, auth)
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
 def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
-    """Build reply keyboard in the user's language."""
+    """Build reply keyboard in the user's language.
+
+    Layout:
+        📊 Статус   |  📋 Отчёт
+        📝 Записи   |  📁 Конверты
+           💰 Добавить расход
+    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(i18n.t_kb("status", lang)),    KeyboardButton(i18n.t_kb("report", lang))],
-            [KeyboardButton(i18n.t_kb("add", lang)),        KeyboardButton(i18n.t_kb("envelopes", lang))],
-            [KeyboardButton(i18n.t_kb("help", lang))],
+            [KeyboardButton(i18n.t_kb("records", lang)),   KeyboardButton(i18n.t_kb("envelopes", lang))],
+            [KeyboardButton(i18n.t_kb("add", lang))],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -1286,7 +1292,21 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif action == "status":
                 await cmd_status(update, ctx)
             elif action == "report":
-                await cmd_report(update, ctx)
+                # Show period submenu instead of running report directly
+                tree = mc.get_menu()
+                kb = _build_inline_menu("report", tree, tg_user.get("role", "viewer"), lang)
+                await update.message.reply_text(
+                    i18n.t_menu("report", lang) + " — выберите период:",
+                    reply_markup=kb,
+                )
+            elif action == "records":
+                # Show records filter submenu
+                tree = mc.get_menu()
+                kb = _build_inline_menu("transactions", tree, tg_user.get("role", "viewer"), lang)
+                await update.message.reply_text(
+                    i18n.t_menu("transactions", lang) + " — выберите фильтр:",
+                    reply_markup=kb,
+                )
             elif action == "envelopes":
                 await cmd_envelopes(update, ctx)
             elif action == "help":
