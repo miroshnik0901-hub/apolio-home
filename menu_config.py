@@ -32,12 +32,12 @@ DEFAULT_MENU: dict[str, dict] = {
         "roles": [],
     },
     "report": {
-        "label": "📋 Аналитика ›", "parent": "",
+        "label": "📋 Аналитика", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 2,
         "roles": [],
     },
     "transactions": {
-        "label": "📝 Записи ›", "parent": "",
+        "label": "📝 Записи", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 3,
         "roles": [],
     },
@@ -47,7 +47,7 @@ DEFAULT_MENU: dict[str, dict] = {
         "roles": [],
     },
     "settings": {
-        "label": "⚙️ Система ›", "parent": "",
+        "label": "⚙️ Система", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 5,
         "roles": ["admin"],
     },
@@ -105,10 +105,10 @@ DEFAULT_MENU: dict[str, dict] = {
 _DEFAULT_ROWS = [
     # Top level
     ("status",        "📊 Статус",         "",             "cmd",     "status",       "",                     1, "TRUE", ""),
-    ("report",        "📋 Аналитика ›",    "",             "submenu", "",             "",                     2, "TRUE", ""),
-    ("transactions",  "📝 Записи ›",       "",             "submenu", "",             "",                     3, "TRUE", ""),
+    ("report",        "📋 Аналитика",      "",             "submenu", "",             "",                     2, "TRUE", ""),
+    ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     3, "TRUE", ""),
     ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     4, "TRUE", ""),
-    ("settings",      "⚙️ Система ›",     "",             "submenu", "",             "",                     5, "TRUE", "admin"),
+    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     5, "TRUE", "admin"),
     # Analytics submenu
     ("rep_curr",      "▶ Этот месяц",     "report",       "cmd",     "report",       '{"period":"current"}', 1, "TRUE", ""),
     ("rep_last",      "◀ Прошлый месяц",  "report",       "cmd",     "report",       '{"period":"last"}',    2, "TRUE", ""),
