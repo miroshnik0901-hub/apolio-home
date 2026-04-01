@@ -105,6 +105,7 @@ class SessionContext:
         self.role = role
         self.current_envelope_id: Optional[str] = None
         self.last_action: Optional[LastAction] = None
+        self.pending_edit_tx: Optional[str] = None
 
 
 # In-memory session store (keyed by user_id)
