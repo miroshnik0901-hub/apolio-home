@@ -51,7 +51,7 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-# Persistent reply keyboard — always visible at bottom of chat (Task 2b)
+# Reply keyboard — shown after /start, user can hide/show with 🟦 button
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("📊 Статус"), KeyboardButton("📋 Отчёт")],
@@ -59,7 +59,6 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton("❓ Помощь")],
     ],
     resize_keyboard=True,
-    is_persistent=True,
 )
 
 # Keyboard button texts → bot actions
@@ -129,22 +128,13 @@ GREETINGS = {
 }
 
 # ── Bot command definitions ────────────────────────────────────────────────────
-# Commands shown to all roles
+# Only /menu shown in the ≡ commands list — all other nav via reply keyboard
 BOT_COMMANDS_ALL = [
-    BotCommand("menu",         "☰ Открыть меню"),
-    BotCommand("status",       "📊 Статус бюджета"),
-    BotCommand("report",       "📋 Отчёт за месяц"),
-    BotCommand("week",         "📅 Эта неделя"),
-    BotCommand("transactions", "📝 Последние записи"),
-    BotCommand("help",         "❓ Справка и примеры"),
+    BotCommand("menu", "☰ Открыть меню"),
 ]
 
-# Extra commands only for admin
-BOT_COMMANDS_ADMIN = BOT_COMMANDS_ALL + [
-    BotCommand("envelopes", "📁 Конверты (список)"),
-    BotCommand("settings",  "⚙️ Настройки и сервис"),
-    BotCommand("undo",      "↩️ Отменить последнее"),
-    BotCommand("refresh",   "🔄 Обновить меню из таблицы"),
+BOT_COMMANDS_ADMIN = [
+    BotCommand("menu", "☰ Открыть меню"),
 ]
 
 
