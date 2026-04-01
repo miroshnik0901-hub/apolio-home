@@ -508,7 +508,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
 
     # Role check
     if not mc.node_visible_for_role(node, role):
-        await update.message.reply_text("⛔ Недостаточно прав.")
+        await update.message.reply_text(i18n.ts("no_rights", "ru"))
         return True
 
     ntype = node.get("type", "cmd")
@@ -570,7 +570,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logger.info("cmd_start invoked — bot v2.1.0 inline menu")
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     lang = getattr(session, "lang", "en")
@@ -587,13 +587,13 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Reload menu config from Admin sheet."""
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
     mc.invalidate()
     admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
     mc.get_menu(sheets._gc, admin_id)  # pre-warm cache from sheet
     await update.message.reply_text(
-        "🔄 Меню обновлено из Admin-таблицы.",
+        i18n.ts("menu_refreshed", getattr(session, "lang", "ru")),
         reply_markup=_with_menu_btn(),
     )
 
@@ -603,7 +603,7 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     lang = getattr(session, "lang", "en")
@@ -619,10 +619,10 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show settings/service submenu (admin only)."""
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
     if tg_user.get("role") != "admin":
-        await update.message.reply_text("⛔ Только для администратора.")
+        await update.message.reply_text(i18n.ts("admin_only", lang))
         return
 
     tree = mc.get_menu()
@@ -636,7 +636,7 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     try:
@@ -647,7 +647,7 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not envelopes:
         await update.message.reply_text(
-            "Конверты ещё не созданы.\n\nНапишите: «создай конверт Название, лимит N EUR»"
+            i18n.ts("no_envelopes", getattr(session, "lang", "ru"))
         )
         return
 
@@ -684,7 +684,7 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     if not ctx.args:
@@ -734,7 +734,7 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -751,7 +751,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -780,7 +780,7 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -793,7 +793,7 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -822,7 +822,7 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -838,7 +838,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         txs = result.get("transactions", [])
         if not txs:
             await update.message.reply_text(
-                "📝 Записей пока нет.\n\nПросто напишите что потратили, например: «кофе 3.50»"
+                i18n.ts("no_transactions", getattr(session, "lang", "ru"))
             )
             return
 
@@ -900,7 +900,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     la = session.last_action
@@ -941,7 +941,7 @@ async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, _ = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await update.message.reply_text(
@@ -984,7 +984,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     tg_user = auth.get_user(query.from_user.id)
     if not tg_user:
-        await query.edit_message_text("⛔ Access denied.")
+        await query.edit_message_text(i18n.ts("access_denied", "ru"))
         return
 
     role = tg_user.get("role", "viewer")
@@ -1014,12 +1014,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         node = tree.get(node_id)
         if not node:
-            await query.answer("Пункт меню не найден", show_alert=True)
+            await query.answer(i18n.ts("menu_not_found", lang), show_alert=True)
             return
 
         # Role check
         if not mc.node_visible_for_role(node, role):
-            await query.answer("⛔ Недостаточно прав", show_alert=True)
+            await query.answer(i18n.ts("no_rights", lang), show_alert=True)
             return
 
         ntype = node.get("type", "cmd")
@@ -1059,7 +1059,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
                 mc.reset_to_defaults(sheets._gc, admin_id)
                 tree = mc.get_menu(sheets._gc, admin_id)
-                await query.answer("🔄 Меню обновлено", show_alert=False)
+                await query.answer(i18n.ts("menu_refreshed", lang), show_alert=False)
                 kb = _build_inline_menu("settings", tree, role, lang)
                 try:
                     await query.edit_message_reply_markup(reply_markup=kb)
@@ -1070,16 +1070,17 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await cmd_undo(query._effective_message, ctx)
                 return
             else:
-                await query.answer("Команда не поддерживается", show_alert=True)
+                await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
                 return
             # Send as NEW message (not edit) — keeps chat history
             await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
             return
 
         if ntype == "free_text":
-            prompt_text = node.get("params", {}).get("prompt", "Введите значение:")
+            prompt_text = node.get("params", {}).get("prompt", i18n.ts("input_prompt", lang))
             pending_key = node.get("params", {}).get("pending_key", "")
-            session.pending_prompt = pending_key
+            if pending_key:
+                session.pending_prompt = pending_key
             await query.message.reply_text(
                 f"✏️ {prompt_text}",
                 parse_mode=ParseMode.HTML,
@@ -1153,7 +1154,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             result = await tool_find_transactions({"limit": 8}, session, sheets, auth)
             txs = result.get("transactions", [])
             if not txs:
-                await query.message.reply_text("Записей пока нет.", reply_markup=_with_menu_btn())
+                await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn())
                 return
             lines = ["📝 <b>Последние записи:</b>\n"]
             for tx in reversed(txs):
@@ -1278,7 +1279,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     msg = update.message
@@ -1378,17 +1379,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await cmd_status(update, ctx)
             elif action == "report":
                 kb = _build_inline_menu("report", tree, role, lang)
-                await update.message.reply_text("📋 Отчёт — выберите период:", reply_markup=kb)
+                await update.message.reply_text(i18n.ts("report_title", lang), reply_markup=kb)
             elif action == "records":
                 kb = _build_inline_menu("transactions", tree, role, lang)
-                await update.message.reply_text("📝 Записи — выберите фильтр:", reply_markup=kb)
+                await update.message.reply_text(i18n.ts("records_title", lang), reply_markup=kb)
             elif action == "add":
                 await update.message.reply_text(i18n.t("", lang, i18n.ADD_PROMPT))
             elif action == "envelopes":
                 await cmd_envelopes(update, ctx)
             elif action == "settings":
                 kb = _build_inline_menu("settings", tree, role, lang)
-                await update.message.reply_text("⚙️ Настройки:", reply_markup=kb)
+                await update.message.reply_text(i18n.ts("settings_title", lang), reply_markup=kb)
             return
 
         # ── Greeting intercept ─────────────────────────────────────────────
