@@ -596,8 +596,24 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    html = await _build_report_html(session, "current")
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML)
+
+    # If early in month (≤10 days) and no data yet, auto-show previous month
+    period = "current"
+    if dt.date.today().day <= 10:
+        try:
+            from tools.summary import tool_get_summary
+            check = await tool_get_summary({"period": "current"}, session, sheets, auth)
+            if float(check.get("total_spent") or 0) == 0:
+                period = "last"
+        except Exception:
+            pass
+
+    html = await _build_report_html(session, period)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+        InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
+    ]])
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
 # ── /transactions ──────────────────────────────────────────────────────────────
@@ -648,8 +664,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             note_str = f"\n     📎 {note}" if note else ""
             lines.append(
                 f"{icon} <b>{cat}</b>  {amt_str}{who_str}  <i>{date}</i>"
-                f"{note_str}\n"
-                f"     <code>{tx_id}</code>"
+                f"{note_str}"
             )
             lines.append("")
 
@@ -869,8 +884,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 icon = _cat_icon(cat)
                 note_str = f" · {note}" if note else ""
                 lines.append(
-                    f"{icon} <b>{cat}</b>  {amt} {curr}  <i>{date}</i>{note_str}\n"
-                    f"<code>{tx_id}</code>"
+                    f"{icon} <b>{cat}</b>  {amt} {curr}  <i>{date}</i>{note_str}"
                 )
                 lines.append("")
             keyboard = []
