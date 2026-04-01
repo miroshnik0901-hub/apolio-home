@@ -5,7 +5,7 @@ Priority: Telegram client language → user stored preference → English fallba
 """
 
 SUPPORTED_LANGS = {"ru", "uk", "en", "it"}
-DEFAULT_LANG = "en"
+DEFAULT_LANG = "ru"
 
 
 def get_lang(code: str) -> str:
@@ -19,32 +19,32 @@ def get_lang(code: str) -> str:
 
 KB_LABELS: dict[str, dict[str, str]] = {
     "ru": {
-        "add":     "💰 Добавить",
-        "status":  "📊 Статус",
-        "report":  "📋 Отчёт",
-        "records": "📝 Записи",
-        "help":    "❓ Помощь",
+        "status":    "📊 Статус",
+        "report":    "📋 Отчёт",
+        "add":       "💰 Добавить расход",
+        "envelopes": "📁 Конверты",
+        "help":      "❓ Помощь",
     },
     "uk": {
-        "add":     "💰 Додати",
-        "status":  "📊 Статус",
-        "report":  "📋 Звіт",
-        "records": "📝 Записи",
-        "help":    "❓ Допомога",
+        "status":    "📊 Статус",
+        "report":    "📋 Звіт",
+        "add":       "💰 Додати витрату",
+        "envelopes": "📁 Конверти",
+        "help":      "❓ Допомога",
     },
     "en": {
-        "add":     "💰 Add",
-        "status":  "📊 Status",
-        "report":  "📋 Report",
-        "records": "📝 Records",
-        "help":    "❓ Help",
+        "status":    "📊 Status",
+        "report":    "📋 Report",
+        "add":       "💰 Add Expense",
+        "envelopes": "📁 Envelopes",
+        "help":      "❓ Help",
     },
     "it": {
-        "add":     "💰 Aggiungi",
-        "status":  "📊 Stato",
-        "report":  "📋 Report",
-        "records": "📝 Voci",
-        "help":    "❓ Aiuto",
+        "status":    "📊 Stato",
+        "report":    "📋 Report",
+        "add":       "💰 Aggiungi spesa",
+        "envelopes": "📁 Buste",
+        "help":      "❓ Aiuto",
     },
 }
 
