@@ -221,14 +221,21 @@ async def tool_delete_transaction_rows(params: dict, session: SessionContext,
 
         preview = "\n".join(lines) if lines else "  (нет данных)"
 
+        # Store pending action in session for inline-button confirmation
+        session.pending_delete = {
+            "start_row": start_row,
+            "end_row": end_row,
+            "file_id": envelope["file_id"],
+            "count": count,
+        }
+
         return {
             "status": "confirm_required",
             "message": (
                 f"⚠️ ВНИМАНИЕ — безвозвратное удаление {count} {_row_word(count)} "
                 f"({start_row}–{end_row}):\n\n"
                 f"{preview}\n\n"
-                "Это действие нельзя отменить. "
-                "Подтвердите: напишите «да, удалить» или «отмена»."
+                "Это действие нельзя отменить. Нажмите кнопку ниже для подтверждения."
             ),
         }
 

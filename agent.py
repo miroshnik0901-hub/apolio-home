@@ -373,12 +373,14 @@ class ApolioAgent:
         self.auth = auth
         self.client = anthropic.AsyncAnthropic()
 
-    def _build_context(self, session: SessionContext) -> dict:
+    async def _build_context(self, session: SessionContext) -> dict:
         """
         Pre-compute intelligence snapshot, goals, and conversation history.
         Returns dict of context blocks for system prompt injection.
         All errors are swallowed — context enrichment must never crash the agent.
         """
+        import db as appdb
+
         intelligence_text = ""
         goals_text = ""
         conversation_text = ""
@@ -395,20 +397,30 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Intelligence context failed: {e}")
 
-        # 2. User goals
+        # 2. User goals — PostgreSQL first, Google Sheets fallback
         try:
-            mgr = _get_user_context_mgr(self.sheets)
-            from user_context import format_goals_for_prompt
-            ctx = mgr.get_all(session.user_id)
-            goals_text = format_goals_for_prompt(ctx)
+            if appdb.is_ready():
+                ctx = await appdb.ctx_get_all(session.user_id)
+                from user_context import format_goals_for_prompt
+                goals_text = format_goals_for_prompt(ctx)
+            else:
+                mgr = _get_user_context_mgr(self.sheets)
+                from user_context import format_goals_for_prompt
+                ctx = mgr.get_all(session.user_id)
+                goals_text = format_goals_for_prompt(ctx)
         except Exception as e:
             logger.warning(f"User context failed: {e}")
 
-        # 3. Conversation history
+        # 3. Conversation history — PostgreSQL (primary)
         try:
-            conv = _get_conv_logger()
-            if conv:
-                conversation_text = conv.format_context_for_prompt(session.user_id)
+            if appdb.is_ready():
+                rows = await appdb.get_recent_context(session.user_id, n=10)
+                conversation_text = appdb.format_context_for_prompt(rows)
+            else:
+                # Fallback: old ConversationLogger (Google Sheets)
+                conv = _get_conv_logger()
+                if conv:
+                    conversation_text = conv.format_context_for_prompt(session.user_id)
         except Exception as e:
             logger.warning(f"Conversation context failed: {e}")
 
@@ -427,8 +439,8 @@ class ApolioAgent:
         """
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # Build enriched context
-        context = self._build_context(session)
+        # Build enriched context (async — loads PostgreSQL history + intelligence)
+        context = await self._build_context(session)
 
         system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,

@@ -112,6 +112,9 @@ class SessionContext:
         # Set by free_text menu callbacks; cleared after use in handle_message.
         self.pending_prompt: Optional[str] = None
         self.session_id: Optional[str] = None
+        # Stores a pending hard-delete action awaiting inline-button confirmation.
+        # Set by tool_delete_transaction_rows; cleared after execution or cancel.
+        self.pending_delete: Optional[dict] = None  # {"start_row": int, "end_row": int, "file_id": str}
 
 
 # In-memory session store (keyed by user_id)

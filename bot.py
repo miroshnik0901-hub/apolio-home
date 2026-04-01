@@ -1040,6 +1040,36 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = session.lang
     data = query.data
 
+    # ── Hard-delete confirmation ───────────────────────────────────────────
+    if data.startswith("cb_confirm_del_"):
+        await query.answer()
+        pd = getattr(session, "pending_delete", None)
+        if not pd:
+            await query.edit_message_text("❌ Действие устарело. Повторите команду.")
+            return
+        try:
+            count = sheets.delete_transaction_rows(
+                pd["file_id"], pd["start_row"], pd["end_row"]
+            )
+            session.pending_delete = None
+            n_word = "строка" if count == 1 else "строки" if count in (2, 3, 4) else "строк"
+            await query.edit_message_text(
+                f"✓ Удалено {count} {n_word} ({pd['start_row']}–{pd['end_row']})",
+                reply_markup=_with_menu_btn(),
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Ошибка удаления: {e}")
+        return
+
+    if data == "cb_cancel_del":
+        await query.answer("Отменено")
+        session.pending_delete = None
+        try:
+            await query.edit_message_text("Удаление отменено.", reply_markup=_with_menu_btn())
+        except Exception:
+            pass
+        return
+
     # ── nav: dynamic menu navigation ───────────────────────────────────────
     if data.startswith("nav:"):
         node_id = data[4:]
@@ -1614,9 +1644,22 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     finally:
         typing_task.cancel()
 
-    # ── Post-transaction inline buttons ───────────────────────────────────
+    # ── Post-response inline buttons ──────────────────────────────────────
+    pd = getattr(session, "pending_delete", None)
     la = session.last_action
-    if la and la.action == "add" and "✓" in response:
+
+    if pd:
+        # Pending hard-delete: show confirm/cancel buttons instead of standard menu
+        s, e = pd["start_row"], pd["end_row"]
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"✅ Да, удалить строки {s}–{e}",
+                callback_data=f"cb_confirm_del_{s}_{e}",
+            )],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cb_cancel_del")],
+        ])
+        await _safe_reply(update.message, response, reply_markup=kb)
+    elif la and la.action == "add" and "✓" in response:
         tx_id = la.tx_id
         kb = _with_menu_btn(
             [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
