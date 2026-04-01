@@ -103,7 +103,7 @@ class SessionContext:
         self.user_id = user_id
         self.user_name = user_name
         self.role = role
-        self.lang: str = "en"           # detected from Telegram language_code
+        self.lang: str = "ru"           # default Russian; overridden to uk/it if detected
         self.current_envelope_id: Optional[str] = None
         self.last_action: Optional[LastAction] = None
         self.pending_edit_tx: Optional[str] = None
