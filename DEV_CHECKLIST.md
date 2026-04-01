@@ -17,23 +17,29 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 
 ### Language / i18n
 - [ ] `SessionContext.lang` defaults to `"ru"` (auth.py)
-- [ ] `_require_user` overrides lang ONLY for `uk`/`it` — NOT for `en` (bot.py)
+- [ ] `_require_user` loads saved language from UserContext (cached via `_lang_loaded`)
+- [ ] `_require_user` fallback: `uk`/`it` from Telegram → override; otherwise keep `"ru"`
 - [ ] `callback_handler` uses the same language logic (bot.py)
 - [ ] All new user-facing strings go through `i18n.ts()` or `i18n.t()` — never hardcoded
 - [ ] All 4 languages (ru/uk/en/it) covered in any new dictionary entries
+- [ ] `set_language` tool in agent.py TOOLS schema + dispatch dict
+- [ ] Language saved to UserContext sheet on change (both via menu and agent)
 
-### Reply keyboard
-- [ ] `_build_main_keyboard` builds 3×2: Status/Report, Records/Add, Envelopes/Settings
-- [ ] `is_persistent=True` present
-- [ ] All 6 action keys exist in `KB_LABELS` for all 4 languages
-- [ ] `KB_TEXT_TO_ACTION` reverse map auto-covers new keys (no manual update needed)
-- [ ] All 6 actions routed in `handle_message`
+### UI navigation (inline-only, NO persistent ReplyKeyboard)
+- [ ] `/start` sends `ReplyKeyboardRemove()` — NO persistent keyboard
+- [ ] Welcome message followed by inline buttons (Status, Report) + ☰ Меню
+- [ ] All navigation is inline buttons only — no `ReplyKeyboardMarkup` anywhere
+- [ ] `_with_menu_btn(lang)` appends ☰ Меню row to any inline keyboard
+- [ ] Greeting handler uses `_with_menu_btn()` (not `_build_main_keyboard`)
 
 ### Inline menu
 - [ ] New items added to BOTH `DEFAULT_MENU` and `_DEFAULT_ROWS` (menu_config.py)
 - [ ] `free_text` items have a non-empty `pending_key` in params
 - [ ] `callback_handler` handles `ntype == "free_text"` with `if pending_key:` guard
 - [ ] All `nav:` commands handled: status / report / week / envelopes / refresh / undo
+- [ ] Settings accessible to ALL users (`"roles": []`), not admin-only
+- [ ] Language submenu: set_lang → set_lang_ru/uk/en/it (cmd: set_language)
+- [ ] `set_language` command handled in `callback_handler` with UserContext persistence
 
 ### Pending prompt flow
 - [ ] `pending_prompt` field exists in `SessionContext` (auth.py)
@@ -99,24 +105,29 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 
 ---
 
-## Language detection chain
+## Language detection chain (3-tier)
 
 ```
-Telegram user.language_code
+1. UserContext sheet (saved preference, cached via _lang_loaded)
+    ↓ if found → session.lang = saved_lang, done
+2. Telegram user.language_code
     ↓
-i18n.get_lang(code)  →  "ru" / "uk" / "en" / "it"
+   i18n.get_lang(code)  →  "ru" / "uk" / "en" / "it"
     ↓
-_require_user():
-  if lang in ("uk", "it") → session.lang = lang
-  else → keep "ru" (do NOT switch to "en")
+   _require_user():
+     if lang in ("uk", "it") → session.lang = lang
+     else → keep "ru" (do NOT switch to "en")
+3. Default: session.lang = "ru"  (SessionContext)
     ↓
-session.lang = "ru"  (default in SessionContext)
-    ↓
-_build_main_keyboard(lang)  → i18n.t_kb(action, lang)
 _build_inline_menu(lang)    → i18n.t_menu(nid, lang)
+_with_menu_btn(lang)        → ☰ Меню / ☰ Menu button
 error replies               → i18n.ts(key, lang)
 _photo_prompts[lang]        → receipt analysis prompt
 ```
+
+Language change flow:
+- Settings → Language → select flag → `set_language` callback → UserContext.set() + session update
+- Free text "switch to English" → agent calls `set_language` tool → same persistence
 
 ---
 
@@ -168,8 +179,23 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 ## After pushing
 
 - [ ] Railway deployed — check logs, no import errors
-- [ ] Send `/start` — keyboard appears in Russian
+- [ ] Send `/start` — persistent keyboard removed, inline buttons appear
+- [ ] Welcome message shows Status + Report buttons + ☰ Меню
 - [ ] Send a photo without caption — bot responds (not silent)
 - [ ] Send "как дела с бюджетом?" — bot responds with budget intelligence
 - [ ] If new menu items added — tap ⚙️ Settings → Refresh Menu
 - [ ] Check Google Sheet: UserContext, ConversationLog, Receipts tabs auto-created on first use
+
+### Telegram button testing
+- [ ] ☰ Меню → opens main menu (Status, Analytics, Records, Envelopes, System)
+- [ ] Status → shows budget summary with progress bar, categories, per-person
+- [ ] Analytics (Report) → shows period selector (This month, Last month, This week, Custom)
+- [ ] Records → opens records submenu
+- [ ] Envelopes → lists envelopes with links
+- [ ] System (Settings) → opens settings submenu
+- [ ] Settings → Language → shows 4 flags (🇷🇺 🇺🇦 🇬🇧 🇮🇹)
+- [ ] Language switch → menu labels update to selected language
+- [ ] ◀ Back / ◀ Назад → returns to parent menu
+- [ ] Free text "coffee 3.50" → expense added, confirm/edit/delete buttons shown
+- [ ] Delete button → confirmation prompt → "Да, удалить" → transaction deleted
+- [ ] Free text "переключи язык на русский" → agent switches language via tool
