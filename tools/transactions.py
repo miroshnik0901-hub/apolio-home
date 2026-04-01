@@ -165,6 +165,96 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
     return {"error": "Envelope not found."}
 
 
+async def tool_delete_transaction_rows(params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager) -> Any:
+    """Physically delete a range of rows from the Transactions sheet by row number.
+    Two-step: first call (confirmed=False) returns a preview; second (confirmed=True) executes."""
+    if not auth.can_write(session.user_id):
+        return {"error": "Permission denied."}
+
+    start_row = params.get("start_row")
+    end_row = params.get("end_row")
+
+    if start_row is None or end_row is None:
+        return {"error": "start_row и end_row обязательны."}
+    start_row = int(start_row)
+    end_row = int(end_row)
+
+    if start_row < 2:
+        return {"error": "Строка 1 — заголовок, удалять нельзя. Строки данных начинаются с 2."}
+    if end_row < start_row:
+        return {"error": "end_row должен быть >= start_row."}
+    if end_row - start_row > 99:
+        return {"error": "Нельзя удалять больше 100 строк за раз."}
+
+    envelope = _resolve_envelope(params, session, sheets)
+    if not auth.can_access_envelope(session.user_id, envelope["ID"]):
+        return {"error": "You don't have access to this envelope."}
+
+    count = end_row - start_row + 1
+
+    # ── Step 1: preview (no confirmed flag) ──────────────────────────────────
+    if not params.get("confirmed"):
+        try:
+            raw_rows = sheets.get_transaction_rows_preview(
+                envelope["file_id"], start_row, end_row
+            )
+        except Exception as e:
+            raw_rows = []
+
+        lines = []
+        for i, row in enumerate(raw_rows):
+            sheet_row = start_row + i
+            try:
+                date     = row[0] if len(row) > 0 else "?"
+                amount   = row[1] if len(row) > 1 else "?"
+                currency = row[2] if len(row) > 2 else ""
+                category = row[3] if len(row) > 3 else ""
+                tx_type  = row[8] if len(row) > 8 else ""
+                note     = row[5] if len(row) > 5 else ""
+                desc = f"{date} · {amount} {currency} · {category}"
+                if note:
+                    desc += f" · {note}"
+                lines.append(f"  {sheet_row}: {desc}")
+            except Exception:
+                lines.append(f"  {sheet_row}: [данные]")
+
+        preview = "\n".join(lines) if lines else "  (нет данных)"
+
+        return {
+            "status": "confirm_required",
+            "message": (
+                f"⚠️ ВНИМАНИЕ — безвозвратное удаление {count} {_row_word(count)} "
+                f"({start_row}–{end_row}):\n\n"
+                f"{preview}\n\n"
+                "Это действие нельзя отменить. "
+                "Подтвердите: напишите «да, удалить» или «отмена»."
+            ),
+        }
+
+    # ── Step 2: execute (confirmed=True) ─────────────────────────────────────
+    try:
+        deleted = sheets.delete_transaction_rows(envelope["file_id"], start_row, end_row)
+    except Exception as e:
+        return {"error": f"Ошибка удаления: {e}"}
+
+    return {
+        "status": "ok",
+        "message": f"✓ Удалено {deleted} {_row_word(deleted)} ({start_row}–{end_row})",
+    }
+
+
+def _row_word(n: int) -> str:
+    if n % 100 in (11, 12, 13, 14):
+        return "строк"
+    r = n % 10
+    if r == 1:
+        return "строка"
+    if r in (2, 3, 4):
+        return "строки"
+    return "строк"
+
+
 async def tool_find_transactions(params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager) -> Any:
     envelope_id = params.get("envelope_id") or session.current_envelope_id

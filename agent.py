@@ -68,13 +68,46 @@ TOOLS = [
     },
     {
         "name": "delete_transaction",
-        "description": "Soft-delete a transaction. confirmed must be true to execute.",
+        "description": (
+            "Soft-delete a single transaction by tx_id (marks Deleted=TRUE, row stays in sheet). "
+            "ALWAYS ask the user for confirmation before calling with confirmed=True. "
+            "Show the transaction details and warn that this cannot be undone easily. "
+            "Only pass confirmed=True after explicit user approval."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["tx_id"],
             "properties": {
                 "tx_id":     {"type": "string"},
                 "confirmed": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "delete_transaction_rows",
+        "description": (
+            "Physically and permanently delete a range of rows from the Transactions sheet "
+            "by Google Sheet row number (row 1 = header, data rows start at 2). "
+            "Use when user says 'удали строки N-M', 'delete rows N to M', 'remove row N'. "
+            "TWO-STEP MANDATORY FLOW: "
+            "(1) Always call first WITHOUT confirmed to get a preview of what will be deleted. "
+            "(2) Show the preview to the user with a clear warning that this is IRREVERSIBLE. "
+            "(3) Only call again with confirmed=True AFTER the user explicitly confirms "
+            "(says 'да', 'yes', 'подтвердить', 'confirm', etc.). "
+            "If user says 'нет', 'отмена', 'cancel' — do NOT call with confirmed=True. "
+            "NEVER skip the preview step. NEVER call with confirmed=True on the first call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["start_row", "end_row"],
+            "properties": {
+                "start_row":   {"type": "integer",
+                                "description": "First row to delete (1-based, must be >= 2)"},
+                "end_row":     {"type": "integer",
+                                "description": "Last row to delete (inclusive)"},
+                "confirmed":   {"type": "boolean",
+                                "description": "false (default) = preview only; true = execute deletion"},
+                "envelope_id": {"type": "string"},
             },
         },
     },
@@ -251,25 +284,6 @@ TOOLS = [
             },
         },
     },
-    {
-        "name": "set_language",
-        "description": (
-            "Change the bot's UI language for the current user. "
-            "Supported languages: ru (Русский), uk (Українська), en (English), it (Italiano). "
-            "Use when user requests 'switch to English', 'change language', 'переключи на итальянский', etc."
-        ),
-        "input_schema": {
-            "type": "object",
-            "required": ["lang"],
-            "properties": {
-                "lang": {
-                    "type": "string",
-                    "enum": ["ru", "uk", "en", "it"],
-                    "description": "Target language code",
-                },
-            },
-        },
-    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -339,8 +353,16 @@ def _get_user_context_mgr(sheets: SheetsClient):
 
 
 def _get_conv_logger():
-    """Deprecated — kept for backward compat. Use appdb directly."""
-    return None
+    """Try to get the conversation logger from bot.py (shared instance)."""
+    global _conv_logger
+    if _conv_logger is not None:
+        return _conv_logger
+    try:
+        import bot as _bot_module
+        _conv_logger = getattr(_bot_module, "conv_log", None)
+    except Exception:
+        pass
+    return _conv_logger
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
@@ -351,19 +373,12 @@ class ApolioAgent:
         self.auth = auth
         self.client = anthropic.AsyncAnthropic()
 
-    async def _build_context(self, session: SessionContext) -> dict:
+    def _build_context(self, session: SessionContext) -> dict:
         """
         Pre-compute intelligence snapshot, goals, and conversation history.
         Returns dict of context blocks for system prompt injection.
         All errors are swallowed — context enrichment must never crash the agent.
-
-        Sources:
-          - Intelligence snapshot: from Google Sheets (transaction data)
-          - User goals/context: from PostgreSQL (user_context table)
-          - Conversation history: from PostgreSQL (conversation_log table)
         """
-        import db as appdb
-
         intelligence_text = ""
         goals_text = ""
         conversation_text = ""
@@ -371,7 +386,6 @@ class ApolioAgent:
         envelope_id = session.current_envelope_id or "MM_BUDGET"
 
         # 1. Intelligence snapshot (budget status, trends, anomalies)
-        #    Source: Google Sheets — transactions stay there for human access
         try:
             engine = _get_intelligence_engine(self.sheets)
             from intelligence import format_snapshot_for_prompt
@@ -381,26 +395,20 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Intelligence context failed: {e}")
 
-        # 2. User goals — from PostgreSQL
+        # 2. User goals
         try:
-            if appdb.is_ready():
-                from user_context import format_goals_for_prompt
-                ctx = await appdb.ctx_get_all(session.user_id)
-                goals_text = format_goals_for_prompt(ctx)
-            else:
-                # Fallback to Google Sheets
-                mgr = _get_user_context_mgr(self.sheets)
-                from user_context import format_goals_for_prompt
-                ctx = mgr.get_all(session.user_id)
-                goals_text = format_goals_for_prompt(ctx)
+            mgr = _get_user_context_mgr(self.sheets)
+            from user_context import format_goals_for_prompt
+            ctx = mgr.get_all(session.user_id)
+            goals_text = format_goals_for_prompt(ctx)
         except Exception as e:
             logger.warning(f"User context failed: {e}")
 
-        # 3. Conversation history — from PostgreSQL
+        # 3. Conversation history
         try:
-            if appdb.is_ready():
-                rows = await appdb.get_recent_context(session.user_id, n=5)
-                conversation_text = appdb.format_context_for_prompt(rows)
+            conv = _get_conv_logger()
+            if conv:
+                conversation_text = conv.format_context_for_prompt(session.user_id)
         except Exception as e:
             logger.warning(f"Conversation context failed: {e}")
 
@@ -420,7 +428,7 @@ class ApolioAgent:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Build enriched context
-        context = await self._build_context(session)
+        context = self._build_context(session)
 
         system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,
@@ -523,7 +531,8 @@ class ApolioAgent:
         """Dispatch tool call to the appropriate handler."""
         from tools.transactions import (
             tool_add_transaction, tool_edit_transaction,
-            tool_delete_transaction, tool_find_transactions,
+            tool_delete_transaction, tool_delete_transaction_rows,
+            tool_find_transactions,
         )
         from tools.summary import tool_get_summary, tool_get_budget_status
         from tools.wise import tool_import_wise_csv
@@ -539,6 +548,7 @@ class ApolioAgent:
             "add_transaction":        tool_add_transaction,
             "edit_transaction":       tool_edit_transaction,
             "delete_transaction":     tool_delete_transaction,
+            "delete_transaction_rows": tool_delete_transaction_rows,
             "find_transactions":      tool_find_transactions,
             "get_summary":            tool_get_summary,
             "get_budget_status":      tool_get_budget_status,
@@ -551,7 +561,6 @@ class ApolioAgent:
             # Intelligence tools (v2.0)
             "save_goal":              self._tool_save_goal,
             "get_intelligence":       self._tool_get_intelligence,
-            "set_language":           self._tool_set_language,
         }
 
         handler = dispatch.get(name)
@@ -578,18 +587,14 @@ class ApolioAgent:
     async def _tool_save_goal(self, params: dict, session: SessionContext,
                                sheets: SheetsClient, auth: AuthManager) -> Any:
         """Save a financial goal for the user."""
-        import db as appdb
         key = params.get("key", "")
         value = params.get("value", "")
         if not key or not value:
             return {"error": "key and value are required"}
 
         try:
-            if appdb.is_ready():
-                await appdb.ctx_set(session.user_id, key, value)
-            else:
-                mgr = _get_user_context_mgr(sheets)
-                mgr.set(session.user_id, key, value)
+            mgr = _get_user_context_mgr(sheets)
+            mgr.set(session.user_id, key, value)
             return {
                 "status": "ok",
                 "message": f"Goal saved: {key} = {value}",
@@ -606,28 +611,5 @@ class ApolioAgent:
             engine = _get_intelligence_engine(sheets)
             snap = engine.compute_snapshot(envelope_id)
             return snap
-        except Exception as e:
-            return {"error": str(e)}
-
-    async def _tool_set_language(self, params: dict, session: SessionContext,
-                                  sheets: SheetsClient, auth: AuthManager) -> Any:
-        """Change the user's language preference."""
-        import db as appdb
-        lang = params.get("lang", "").lower()
-        if lang not in ("ru", "uk", "en", "it"):
-            return {"error": f"Unsupported language: {lang}. Choose from: ru, uk, en, it"}
-
-        try:
-            if appdb.is_ready():
-                await appdb.ctx_set(session.user_id, "language", lang)
-            else:
-                mgr = _get_user_context_mgr(sheets)
-                mgr.set(session.user_id, "language", lang)
-            session.lang = lang
-            return {
-                "status": "ok",
-                "message": f"Language changed to {lang}",
-                "lang": lang,
-            }
         except Exception as e:
             return {"error": str(e)}

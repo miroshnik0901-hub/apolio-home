@@ -221,6 +221,27 @@ class EnvelopeSheets:
     def delete_transaction(self, tx_id: str) -> bool:
         return self.edit_transaction(tx_id, "Deleted", "TRUE")
 
+    def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:
+        """Return raw cell values for rows start_row..end_row (1-based) from Transactions."""
+        ws = self._ws("Transactions")
+        all_rows = ws.get_all_values()
+        result = []
+        for r in range(start_row, end_row + 1):
+            if r <= len(all_rows):
+                result.append(all_rows[r - 1])
+            else:
+                result.append([])
+        return result
+
+    def delete_rows_hard(self, start_row: int, end_row: int) -> int:
+        """Physically delete rows start_row..end_row (1-based, inclusive) from Transactions sheet.
+        Row 1 is the header — caller must ensure start_row >= 2.
+        Returns number of rows deleted."""
+        ws = self._ws("Transactions")
+        # gspread delete_rows(start_index, end_index) is 1-based, inclusive
+        ws.delete_rows(start_row, end_row)
+        return end_row - start_row + 1
+
     def sum_expenses(self, month: str) -> float:
         txs = self.get_transactions({"date_from": f"{month}-01", "date_to": f"{month}-31"})
         return sum(
@@ -379,6 +400,17 @@ class SheetsClient:
 
     def soft_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
         return self._env_sheets(sheet_id).delete_transaction(tx_id)
+
+    def delete_transaction_rows(self, sheet_id: str, start_row: int, end_row: int) -> int:
+        """Physically delete rows start_row..end_row from Transactions sheet.
+        Invalidates cache after deletion."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).delete_rows_hard(start_row, end_row)
+
+    def get_transaction_rows_preview(self, sheet_id: str,
+                                      start_row: int, end_row: int) -> list[list]:
+        """Return raw cell values for preview before deletion."""
+        return self._env_sheets(sheet_id).get_rows_raw(start_row, end_row)
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.
