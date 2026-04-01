@@ -35,7 +35,7 @@ async def tool_get_summary(params: dict, session: SessionContext,
 
     records = sheets.get_transactions(file_id)
     month_records = [r for r in records
-                     if r.get("Date", "").startswith(period)
+                     if str(r.get("Date", "")).startswith(period)
                      and r.get("Type") == "expense"]
 
     by_category = defaultdict(float)
@@ -84,7 +84,7 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
     file_id = env["file_id"]
     records = sheets.get_transactions(file_id)
     month_records = [r for r in records
-                     if r.get("Date", "").startswith(month)
+                     if str(r.get("Date", "")).startswith(month)
                      and r.get("Type") == "expense"]
 
     spent = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
