@@ -31,6 +31,7 @@ from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
+    MenuButtonCommands,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -66,22 +67,24 @@ def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _build_inline_menu(parent_id: str = "", tree: dict = None) -> InlineKeyboardMarkup:
-    """Build an inline keyboard grid from the menu config.
+def _build_inline_menu(parent_id: str = "", tree: dict = None,
+                        role: str = "admin") -> InlineKeyboardMarkup:
+    """Build an inline keyboard grid from the menu config, filtered by role.
 
     parent_id="" → root level.
     parent_id="report" → children of report submenu.
+    role → only show nodes visible to this role.
     """
     if tree is None:
         tree = mc.get_menu()
 
     if parent_id:
-        children = mc.sorted_children(tree, parent_id)
+        children = mc.sorted_children_for_role(tree, parent_id, role)
         parent_node = tree.get(parent_id, {})
         grandparent = parent_node.get("parent", "")
         back_cb = f"nav:{grandparent}" if grandparent else "nav:__root__"
     else:
-        children = mc.root_nodes(tree)
+        children = mc.root_nodes_for_role(tree, role)
         back_cb = None
 
     rows: list[list[InlineKeyboardButton]] = []
@@ -102,8 +105,9 @@ def _build_inline_menu(parent_id: str = "", tree: dict = None) -> InlineKeyboard
 
 
 # Alias kept for backward compatibility
-def _build_submenu_keyboard(parent_id: str, tree: dict) -> InlineKeyboardMarkup:
-    return _build_inline_menu(parent_id, tree)
+def _build_submenu_keyboard(parent_id: str, tree: dict,
+                             role: str = "admin") -> InlineKeyboardMarkup:
+    return _build_inline_menu(parent_id, tree, role)
 
 
 MAIN_KEYBOARD = _build_reply_keyboard()
@@ -115,13 +119,23 @@ GREETINGS = {
     "buongiorno", "salve", "allo",
 }
 
-# ── Bot command definitions (minimal — main interface is button-driven) ────────
+# ── Bot command definitions ────────────────────────────────────────────────────
+# Commands shown to all roles
+BOT_COMMANDS_ALL = [
+    BotCommand("menu",         "☰ Открыть меню"),
+    BotCommand("status",       "📊 Статус бюджета"),
+    BotCommand("report",       "📋 Отчёт за месяц"),
+    BotCommand("week",         "📅 Эта неделя"),
+    BotCommand("transactions", "📝 Последние записи"),
+    BotCommand("help",         "❓ Справка и примеры"),
+]
 
-BOT_COMMANDS = [
-    BotCommand("start",   "Начать / приветствие"),
-    BotCommand("undo",    "Отменить последнее действие"),
-    BotCommand("help",    "Справка и примеры"),
-    BotCommand("refresh", "Обновить меню из Admin-таблицы"),
+# Extra commands only for admin
+BOT_COMMANDS_ADMIN = BOT_COMMANDS_ALL + [
+    BotCommand("envelopes", "📁 Конверты (список)"),
+    BotCommand("settings",  "⚙️ Настройки и сервис"),
+    BotCommand("undo",      "↩️ Отменить последнее"),
+    BotCommand("refresh",   "🔄 Обновить меню из таблицы"),
 ]
 
 
@@ -404,7 +418,26 @@ async def _build_week_html(session) -> str:
 
 async def post_init(app: Application):
     """Register bot commands, ensure BotMenu sheet exists, schedule weekly summary."""
-    await app.bot.set_my_commands(BOT_COMMANDS)
+    # Set the native Telegram menu button to show commands (the [≡] left of input)
+    try:
+        await app.bot.set_my_menu_button(menu_button=MenuButtonCommands())
+    except Exception as e:
+        logger.warning(f"Could not set menu button: {e}")
+
+    # Register commands for all users (default scope)
+    await app.bot.set_my_commands(BOT_COMMANDS_ALL)
+
+    # Register extended commands for admin users
+    try:
+        admin_tg_id = int(os.environ.get("MIKHAIL_TELEGRAM_ID", 0))
+        if admin_tg_id:
+            from telegram import BotCommandScopeChat
+            await app.bot.set_my_commands(
+                BOT_COMMANDS_ADMIN,
+                scope=BotCommandScopeChat(chat_id=admin_tg_id),
+            )
+    except Exception as e:
+        logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
 
     # Ensure BotMenu tab exists in Admin sheet (creates with defaults if absent)
@@ -445,12 +478,17 @@ def _require_user(update: Update):
 
 # ── Menu navigation helper ─────────────────────────────────────────────────────
 
-async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
+async def _handle_menu_node(node_id: str, update: Update, ctx,
+                             role: str = "admin") -> bool:
     """Handle a menu node tap. Returns True if the message was fully handled."""
-    if node_id == "__menu__":
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        return False
+
+    if node_id in ("__menu__", "__root__"):
         tree = mc.get_menu()
-        kb = _build_inline_menu("", tree)
-        await update.message.reply_text("Выберите действие:", reply_markup=kb)
+        kb = _build_inline_menu("", tree, role)
+        await update.message.reply_text("Меню:", reply_markup=kb)
         return True
 
     tree = mc.get_menu()
@@ -458,14 +496,17 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
     if not node:
         return False
 
+    # Role check
+    if not mc.node_visible_for_role(node, role):
+        await update.message.reply_text("⛔ Недостаточно прав.")
+        return True
+
     ntype = node.get("type", "cmd")
 
     if ntype == "submenu":
-        # Show inline keyboard with children
-        kb = _build_submenu_keyboard(node_id, tree)
-        label = node["label"].replace(" ›", "")
+        kb = _build_inline_menu(node_id, tree, role)
         await update.message.reply_text(
-            f"{label}:",
+            node["label"].replace(" ›", "") + ":",
             reply_markup=kb,
         )
         return True
@@ -481,20 +522,17 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
     if ntype == "cmd":
         command = node.get("command", "")
         params  = node.get("params", {})
-        # Dispatch to the right handler based on command name + params
         if command == "status":
             await cmd_status(update, ctx)
         elif command == "report":
             period = params.get("period", "current")
-            tg_user, session = _require_user(update)
-            if tg_user:
-                await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                html = await _build_report_html(session, period)
-                kb = _with_menu_btn(
-                    [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                     InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
-                )
-                await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+            html = await _build_report_html(session, period)
+            kb = _with_menu_btn(
+                [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                 InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+            )
+            await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         elif command == "transactions":
             await cmd_transactions(update, ctx)
         elif command == "week":
@@ -503,6 +541,12 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
             await cmd_help(update, ctx)
         elif command == "envelopes":
             await cmd_envelopes(update, ctx)
+        elif command == "refresh":
+            await cmd_refresh(update, ctx)
+        elif command == "undo":
+            await cmd_undo(update, ctx)
+        elif command == "settings":
+            await cmd_settings(update, ctx)
         else:
             return False
         return True
@@ -561,9 +605,28 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Access denied.")
         return
 
+    role = tg_user.get("role", "viewer")
     tree = mc.get_menu()
-    kb = _build_inline_menu("", tree)
-    await update.message.reply_text("Выберите действие:", reply_markup=kb)
+    kb = _build_inline_menu("", tree, role)
+    await update.message.reply_text("Меню:", reply_markup=kb)
+
+
+# ── /settings ──────────────────────────────────────────────────────────────────
+
+async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show settings/service submenu (admin only)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text("⛔ Access denied.")
+        return
+    if tg_user.get("role") != "admin":
+        await update.message.reply_text("⛔ Только для администратора.")
+        return
+
+    tree = mc.get_menu()
+    kb = _build_inline_menu("settings", tree, role="admin")
+    await update.message.reply_text("⚙️ <b>Настройки</b>:", parse_mode=ParseMode.HTML,
+                                    reply_markup=kb)
 
 
 # ── /envelopes ─────────────────────────────────────────────────────────────────
@@ -922,7 +985,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⛔ Access denied.")
         return
 
-    session = get_session(query.from_user.id, query.from_user.first_name, tg_user["role"])
+    role = tg_user.get("role", "viewer")
+    session = get_session(query.from_user.id, query.from_user.first_name, role)
     data = query.data
 
     # ── nav: dynamic menu navigation ───────────────────────────────────────
@@ -932,7 +996,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # __menu__ / __root__ = show main menu (keyboard-only edit, keep message text)
         if node_id in ("__menu__", "__root__"):
-            kb = _build_inline_menu("", tree)
+            kb = _build_inline_menu("", tree, role)
             try:
                 await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
@@ -944,10 +1008,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.answer("Пункт меню не найден", show_alert=True)
             return
 
+        # Role check
+        if not mc.node_visible_for_role(node, role):
+            await query.answer("⛔ Недостаточно прав", show_alert=True)
+            return
+
         ntype = node.get("type", "cmd")
 
         if ntype == "submenu":
-            kb = _build_inline_menu(node_id, tree)
+            kb = _build_inline_menu(node_id, tree, role)
             try:
                 await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
@@ -973,8 +1042,26 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "week":
                 html = await _build_week_html(session)
                 kb = _with_menu_btn()
+            elif command == "envelopes":
+                # Trigger envelopes via fake update
+                await cmd_envelopes(query._effective_message, ctx)
+                return
+            elif command == "refresh":
+                mc.invalidate()
+                admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+                mc.get_menu(sheets._gc, admin_id)
+                await query.answer("🔄 Меню обновлено", show_alert=False)
+                kb = _build_inline_menu("settings", tree, role)
+                try:
+                    await query.edit_message_reply_markup(reply_markup=kb)
+                except BadRequest:
+                    pass
+                return
+            elif command == "undo":
+                await cmd_undo(query._effective_message, ctx)
+                return
             else:
-                await query.answer("Команда не поддерживается в инлайн-режиме", show_alert=True)
+                await query.answer("Команда не поддерживается", show_alert=True)
                 return
             # Send as NEW message (not edit) — keeps chat history
             await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -1180,18 +1267,23 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     media_type = "text"
     media_data = None
 
+    role = tg_user.get("role", "viewer")
+
     if msg.text:
         text = msg.text.strip()
 
+        # ── Menu button intercept (catches lingering reply keyboard taps) ──
+        _MENU_TRIGGERS = {"☰ меню", "≡ меню", "☰ menu", "меню", "/menu"}
+        if text.strip().lower() in _MENU_TRIGGERS:
+            tree = mc.get_menu()
+            kb = _build_inline_menu("", tree, role)
+            await update.message.reply_text("Меню:", reply_markup=kb)
+            return
+
         # ── Keyboard shortcut intercept (dynamic menu) ────────────────────
         action = KEYBOARD_SHORTCUTS.get(text)
-        if action == "__menu__":
-            tree = mc.get_menu()
-            kb = _build_inline_menu("", tree)
-            await update.message.reply_text("Выберите действие:", reply_markup=kb)
-            return
-        elif action:
-            handled = await _handle_menu_node(action, update, ctx)
+        if action:
+            handled = await _handle_menu_node(action, update, ctx, role)
             if handled:
                 return
 
@@ -1324,6 +1416,7 @@ def main():
 
     app.add_handler(CommandHandler("start",        cmd_start))
     app.add_handler(CommandHandler("menu",         cmd_menu))
+    app.add_handler(CommandHandler("settings",     cmd_settings))
     app.add_handler(CommandHandler("envelopes",    cmd_envelopes))
     app.add_handler(CommandHandler("envelope",     cmd_envelope))
     app.add_handler(CommandHandler("status",       cmd_status))
