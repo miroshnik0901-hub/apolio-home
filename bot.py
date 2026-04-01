@@ -51,13 +51,25 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-def _build_reply_keyboard():
-    """No reply keyboard — all navigation is via inline buttons."""
-    return ReplyKeyboardRemove()
+# Persistent reply keyboard — always visible at bottom of chat (Task 2b)
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("📊 Статус"), KeyboardButton("📋 Отчёт")],
+        [KeyboardButton("💰 Добавить расход"), KeyboardButton("📁 Конверты")],
+        [KeyboardButton("❓ Помощь")],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
-
-def _get_keyboard_shortcuts() -> dict[str, str]:
-    return {}
+# Keyboard button texts → bot actions
+KEYBOARD_SHORTCUTS = {
+    "📊 Статус",
+    "📋 Отчёт",
+    "💰 Добавить расход",
+    "📁 Конверты",
+    "❓ Помощь",
+}
 
 
 def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
@@ -109,9 +121,6 @@ def _build_submenu_keyboard(parent_id: str, tree: dict,
                              role: str = "admin") -> InlineKeyboardMarkup:
     return _build_inline_menu(parent_id, tree, role)
 
-
-MAIN_KEYBOARD = _build_reply_keyboard()
-KEYBOARD_SHORTCUTS = _get_keyboard_shortcuts()
 
 GREETINGS = {
     "привет", "hi", "hello", "ciao", "hey", "добрий день",
@@ -567,13 +576,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
-        "Просто напишите мне:\n"
+        "Просто напишите что потратили:\n"
         "• <i>«кофе 3.50»</i> — запишу расход\n"
         "• <i>«продукты 85 EUR Esselunga»</i> — с заметкой\n"
         "• <i>«покажи отчёт за март»</i> — статистика\n\n"
-        "Нажмите <b>☰ Меню</b> для навигации:",
+        "Используйте кнопки внизу для навигации 👇",
         parse_mode=ParseMode.HTML,
-        reply_markup=_with_menu_btn(),
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -1275,12 +1284,22 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Меню:", reply_markup=kb)
             return
 
-        # ── Keyboard shortcut intercept (dynamic menu) ────────────────────
-        action = KEYBOARD_SHORTCUTS.get(text)
-        if action:
-            handled = await _handle_menu_node(action, update, ctx, role)
-            if handled:
-                return
+        # ── Keyboard shortcut intercept (persistent reply keyboard buttons) ──
+        if text in KEYBOARD_SHORTCUTS:
+            if text == "📊 Статус":
+                await cmd_status(update, ctx)
+            elif text == "📋 Отчёт":
+                await cmd_report(update, ctx)
+            elif text == "📁 Конверты":
+                await cmd_envelopes(update, ctx)
+            elif text == "❓ Помощь":
+                await cmd_help(update, ctx)
+            elif text == "💰 Добавить расход":
+                await update.message.reply_text(
+                    "Напишите расход в свободной форме:\n"
+                    "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»"
+                )
+            return
 
         # ── Greeting intercept ─────────────────────────────────────────────
         if text.lower() in GREETINGS:
