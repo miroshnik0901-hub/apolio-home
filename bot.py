@@ -45,18 +45,19 @@ from telegram.error import BadRequest
 from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
-from tools.conversation_log import ConversationLogger, make_session_id
+from tools.conversation_log import make_session_id
+import db as appdb
 
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
 
-# Conversation logger — writes to ConversationLog tab in MM_BUDGET spreadsheet
 _MM_BUDGET_FILE_ID = os.environ.get(
     "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
 )
-conv_log: Optional[ConversationLogger] = None
+# Flag: True once PostgreSQL is ready (set in post_init)
+_db_ready = False
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
@@ -464,14 +465,16 @@ async def post_init(app: Application):
     except Exception as e:
         logger.warning(f"Could not schedule weekly summary: {e}")
 
-    # Initialize conversation logger
-    global conv_log
+    # Initialize PostgreSQL (conversation log + user context)
+    global _db_ready
     try:
-        conv_log = ConversationLogger(sheets._gc, _MM_BUDGET_FILE_ID)
-        conv_log.start()
-        logger.info("Conversation logger initialized and background writer started")
+        _db_ready = await appdb.init_db()
+        if _db_ready:
+            logger.info("PostgreSQL initialized — conversation history enabled")
+        else:
+            logger.warning("PostgreSQL not available — conversation history disabled")
     except Exception as e:
-        logger.warning(f"Could not initialize conversation logger: {e}")
+        logger.warning(f"Could not initialize PostgreSQL: {e}")
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
@@ -1577,13 +1580,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         # Log user message before agent call
         try:
-            if conv_log:
-                conv_log.log_user(
+            if _db_ready:
+                await appdb.log_message(
                     user_id=session.user_id,
-                    session_id=session.session_id,
-                    envelope_id=session.current_envelope_id or "",
+                    direction="user",
                     message_type=media_type,
                     raw_text=text,
+                    session_id=session.session_id,
+                    envelope_id=session.current_envelope_id or "",
                 )
         except Exception:
             pass  # Conversation logging is not critical
@@ -1596,12 +1600,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Log bot response after agent call
         try:
-            if conv_log:
-                conv_log.log_bot(
+            if _db_ready:
+                await appdb.log_message(
                     user_id=session.user_id,
+                    direction="bot",
+                    message_type="response",
+                    raw_text=response[:300],
                     session_id=session.session_id,
                     envelope_id=session.current_envelope_id or "",
-                    response_text=response[:300],
                 )
         except Exception:
             pass  # Conversation logging is not critical

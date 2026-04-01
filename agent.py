@@ -339,16 +339,8 @@ def _get_user_context_mgr(sheets: SheetsClient):
 
 
 def _get_conv_logger():
-    """Try to get the conversation logger from bot.py (shared instance)."""
-    global _conv_logger
-    if _conv_logger is not None:
-        return _conv_logger
-    try:
-        import bot as _bot_module
-        _conv_logger = getattr(_bot_module, "conv_log", None)
-    except Exception:
-        pass
-    return _conv_logger
+    """Deprecated — kept for backward compat. Use appdb directly."""
+    return None
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
@@ -359,12 +351,19 @@ class ApolioAgent:
         self.auth = auth
         self.client = anthropic.AsyncAnthropic()
 
-    def _build_context(self, session: SessionContext) -> dict:
+    async def _build_context(self, session: SessionContext) -> dict:
         """
         Pre-compute intelligence snapshot, goals, and conversation history.
         Returns dict of context blocks for system prompt injection.
         All errors are swallowed — context enrichment must never crash the agent.
+
+        Sources:
+          - Intelligence snapshot: from Google Sheets (transaction data)
+          - User goals/context: from PostgreSQL (user_context table)
+          - Conversation history: from PostgreSQL (conversation_log table)
         """
+        import db as appdb
+
         intelligence_text = ""
         goals_text = ""
         conversation_text = ""
@@ -372,6 +371,7 @@ class ApolioAgent:
         envelope_id = session.current_envelope_id or "MM_BUDGET"
 
         # 1. Intelligence snapshot (budget status, trends, anomalies)
+        #    Source: Google Sheets — transactions stay there for human access
         try:
             engine = _get_intelligence_engine(self.sheets)
             from intelligence import format_snapshot_for_prompt
@@ -381,20 +381,26 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Intelligence context failed: {e}")
 
-        # 2. User goals
+        # 2. User goals — from PostgreSQL
         try:
-            mgr = _get_user_context_mgr(self.sheets)
-            from user_context import format_goals_for_prompt
-            ctx = mgr.get_all(session.user_id)
-            goals_text = format_goals_for_prompt(ctx)
+            if appdb.is_ready():
+                from user_context import format_goals_for_prompt
+                ctx = await appdb.ctx_get_all(session.user_id)
+                goals_text = format_goals_for_prompt(ctx)
+            else:
+                # Fallback to Google Sheets
+                mgr = _get_user_context_mgr(self.sheets)
+                from user_context import format_goals_for_prompt
+                ctx = mgr.get_all(session.user_id)
+                goals_text = format_goals_for_prompt(ctx)
         except Exception as e:
             logger.warning(f"User context failed: {e}")
 
-        # 3. Conversation history
+        # 3. Conversation history — from PostgreSQL
         try:
-            conv = _get_conv_logger()
-            if conv:
-                conversation_text = conv.format_context_for_prompt(session.user_id)
+            if appdb.is_ready():
+                rows = await appdb.get_recent_context(session.user_id, n=5)
+                conversation_text = appdb.format_context_for_prompt(rows)
         except Exception as e:
             logger.warning(f"Conversation context failed: {e}")
 
@@ -414,7 +420,7 @@ class ApolioAgent:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Build enriched context
-        context = self._build_context(session)
+        context = await self._build_context(session)
 
         system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,
@@ -572,14 +578,18 @@ class ApolioAgent:
     async def _tool_save_goal(self, params: dict, session: SessionContext,
                                sheets: SheetsClient, auth: AuthManager) -> Any:
         """Save a financial goal for the user."""
+        import db as appdb
         key = params.get("key", "")
         value = params.get("value", "")
         if not key or not value:
             return {"error": "key and value are required"}
 
         try:
-            mgr = _get_user_context_mgr(sheets)
-            mgr.set(session.user_id, key, value)
+            if appdb.is_ready():
+                await appdb.ctx_set(session.user_id, key, value)
+            else:
+                mgr = _get_user_context_mgr(sheets)
+                mgr.set(session.user_id, key, value)
             return {
                 "status": "ok",
                 "message": f"Goal saved: {key} = {value}",
@@ -602,13 +612,17 @@ class ApolioAgent:
     async def _tool_set_language(self, params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager) -> Any:
         """Change the user's language preference."""
+        import db as appdb
         lang = params.get("lang", "").lower()
         if lang not in ("ru", "uk", "en", "it"):
             return {"error": f"Unsupported language: {lang}. Choose from: ru, uk, en, it"}
 
         try:
-            mgr = _get_user_context_mgr(sheets)
-            mgr.set(session.user_id, "language", lang)
+            if appdb.is_ready():
+                await appdb.ctx_set(session.user_id, "language", lang)
+            else:
+                mgr = _get_user_context_mgr(sheets)
+                mgr.set(session.user_id, "language", lang)
             session.lang = lang
             return {
                 "status": "ok",

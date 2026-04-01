@@ -6,6 +6,7 @@
 apolio-home/
 ├── bot.py           # Telegram bot, entry point
 ├── agent.py         # Claude AI agent with tool use
+├── db.py            # PostgreSQL layer (conversation log, user context)
 ├── auth.py          # Authorization manager
 ├── sheets.py        # Google Sheets client (Admin + Envelope)
 ├── tools/
@@ -119,6 +120,18 @@ Bot will:
 2. Add environment variables in Railway dashboard
 3. Set `WEBHOOK_URL=https://your-app.railway.app`
 4. Deploy
+
+## Step 9: Add PostgreSQL (conversation history + user context)
+
+1. In Railway dashboard → your project → **+ New** → **Database** → **PostgreSQL**
+2. Railway auto-creates `DATABASE_URL` variable and links it to your service
+3. Verify: go to service **Variables** tab → `DATABASE_URL` should be set
+4. Redeploy — bot will auto-create tables (`conversation_log`, `user_context`) on startup
+5. Check logs for: `[DB] PostgreSQL connected, tables ready`
+
+Data architecture:
+- **PostgreSQL** (Railway): conversation history, user goals, patterns, preferences
+- **Google Sheets**: transactions, budgets, reports (human-accessible)
 
 ---
 
