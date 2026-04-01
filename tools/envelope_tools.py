@@ -12,9 +12,9 @@ from auth import AuthManager, SessionContext
 
 ENVELOPE_TEMPLATE = {
     "Transactions": [
-        ["ID", "Date", "Envelope", "Amount_Orig", "Currency_Orig",
-         "Amount_EUR", "Category", "Subcategory", "Who", "Account",
-         "Type", "Note", "Source", "Wise_ID", "Created_At", "Deleted"]
+        ["Date", "Amount_Orig", "Currency_Orig", "Category", "Subcategory",
+         "Note", "Who", "Amount_EUR", "Type", "Account",
+         "ID", "Envelope", "Source", "Wise_ID", "Created_At", "Deleted"]
     ],
     "Summary": [
         ["Month", "Total_Expenses", "Total_Income", "Balance",

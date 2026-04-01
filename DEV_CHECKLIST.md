@@ -82,16 +82,20 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 | `bot.py` | Handlers, keyboards, routing, callbacks |
 | `i18n.py` | KB_LABELS, MENU_LABELS, SYS, ADD_PROMPT, START_MSG |
 | `menu_config.py` | DEFAULT_MENU, _DEFAULT_ROWS, BotMenu sheet loader |
-| `agent.py` | Agentic loop, tool dispatch, system prompt |
+| `agent.py` | Agentic loop, tool dispatch (17 tools), system prompt with intelligence context |
 | `sheets.py` | SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets |
+| `intelligence.py` | IntelligenceEngine — budget snapshot, trends, anomalies for prompt injection |
+| `user_context.py` | UserContextManager — goals, preferences in UserContext sheet |
 | `tools/transactions.py` | add / edit / delete / find transaction |
 | `tools/summary.py` | get_summary, get_budget_status |
 | `tools/wise.py` | Wise CSV import (Date first in column order!) |
 | `tools/envelope_tools.py` | create_envelope, list_envelopes |
+| `tools/conversation_log.py` | ConversationLogger — async background writer with Queue |
+| `tools/receipt_store.py` | ReceiptStore — save receipt details + AI summary |
 
 ### Files NOT to touch unless explicitly instructed
 `tools/wise.py`, `tools/fx.py`, `tools/config_tools.py`, `setup_admin.py`,
-`test_bot.py`, `encode_service_account.py`, `get_telegram_id.py`
+`setup_sheets_v2.py`, `test_bot.py`, `encode_service_account.py`, `get_telegram_id.py`
 
 ---
 
@@ -143,9 +147,29 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 
 ---
 
+### Intelligence layer (agent.py, intelligence.py, user_context.py)
+- [ ] `_build_context()` computes intelligence_context, goals_context, conversation_context
+- [ ] System prompt template has `{intelligence_context}`, `{goals_context}`, `{conversation_context}` placeholders
+- [ ] `_load_system_prompt()` auto-appends intelligence placeholders if missing in template
+- [ ] Lazy singletons: `_get_intelligence_engine()`, `_get_user_context_mgr()`, `_get_conv_logger()`
+- [ ] `save_goal` tool in TOOLS schema + dispatch dict
+- [ ] `get_intelligence` tool in TOOLS schema + dispatch dict + excluded from audit
+- [ ] IntelligenceEngine.compute_snapshot returns structured dict (budget, pace, trends, anomalies)
+- [ ] format_snapshot_for_prompt handles missing data / errors gracefully
+
+### Google Sheets formulas
+- [ ] Summary sheet formulas use `value_input_option="USER_ENTERED"` (not RAW)
+- [ ] Dashboard formulas reference Summary cells (N=Cap, O=Remaining, P=Used_%)
+- [ ] Dynamic month in Dashboard B6: `=TEXT(TODAY(),"YYYY-MM")`
+- [ ] No `#ERROR!` / `#REF!` / `#NAME?` cells in any sheet
+
+---
+
 ## After pushing
 
 - [ ] Railway deployed — check logs, no import errors
 - [ ] Send `/start` — keyboard appears in Russian
 - [ ] Send a photo without caption — bot responds (not silent)
+- [ ] Send "как дела с бюджетом?" — bot responds with budget intelligence
 - [ ] If new menu items added — tap ⚙️ Settings → Refresh Menu
+- [ ] Check Google Sheet: UserContext, ConversationLog, Receipts tabs auto-created on first use
