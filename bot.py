@@ -519,6 +519,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     name = session.user_name or "Mikhail"
+    # Clear any lingering reply keyboard silently, then delete the placeholder
+    try:
+        rm = await update.message.reply_text("\u200b", reply_markup=ReplyKeyboardRemove())
+        await rm.delete()
+    except Exception:
+        pass
     await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
