@@ -112,6 +112,24 @@ TOOLS = [
         },
     },
     {
+        "name": "sort_transactions",
+        "description": (
+            "Sort all rows in the Transactions sheet by date. "
+            "Use when user says 'отсортируй', 'sort', 'упорядочи по дате', "
+            "'сначала старые', 'сначала новые', or after adding transactions for past dates. "
+            "asc = oldest first (default); desc = newest first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order":       {"type": "string", "enum": ["asc", "desc"],
+                                "description": "asc = oldest first; desc = newest first",
+                                "default": "asc"},
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
+    {
         "name": "find_transactions",
         "description": "Search transactions by filters.",
         "input_schema": {
@@ -246,6 +264,29 @@ TOOLS = [
                                   "default": "solo"},
                 "owner_id":      {"type": "integer"},
                 "viewer_ids":    {"type": "array", "items": {"type": "integer"}},
+            },
+        },
+    },
+    {
+        "name": "search_history",
+        "description": (
+            "Search the conversation history for a user, going deeper than the last 10 messages. "
+            "Use when the user references something said earlier that is not in the current context, "
+            "or when you need to find a pattern, previous decision, past transaction mention, or "
+            "any prior exchange. "
+            "keyword is optional — omit to page through all history. "
+            "Use offset to paginate: first call offset=0, next call offset=20, etc. "
+            "Returns messages sorted oldest-first within the page."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string",
+                            "description": "Case-insensitive substring to search in message text; omit for all"},
+                "limit":   {"type": "integer", "default": 20,
+                            "description": "Max rows to return (max 50)"},
+                "offset":  {"type": "integer", "default": 0,
+                            "description": "Skip first N rows (for pagination)"},
             },
         },
     },
@@ -544,7 +585,7 @@ class ApolioAgent:
         from tools.transactions import (
             tool_add_transaction, tool_edit_transaction,
             tool_delete_transaction, tool_delete_transaction_rows,
-            tool_find_transactions,
+            tool_sort_transactions, tool_find_transactions,
         )
         from tools.summary import tool_get_summary, tool_get_budget_status
         from tools.wise import tool_import_wise_csv
@@ -561,6 +602,7 @@ class ApolioAgent:
             "edit_transaction":       tool_edit_transaction,
             "delete_transaction":     tool_delete_transaction,
             "delete_transaction_rows": tool_delete_transaction_rows,
+            "sort_transactions":      tool_sort_transactions,
             "find_transactions":      tool_find_transactions,
             "get_summary":            tool_get_summary,
             "get_budget_status":      tool_get_budget_status,
@@ -573,6 +615,8 @@ class ApolioAgent:
             # Intelligence tools (v2.0)
             "save_goal":              self._tool_save_goal,
             "get_intelligence":       self._tool_get_intelligence,
+            # History search
+            "search_history":         self._tool_search_history,
         }
 
         handler = dispatch.get(name)
@@ -583,7 +627,7 @@ class ApolioAgent:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
             if name not in ("find_transactions", "get_summary", "get_budget_status",
-                            "list_envelopes", "get_intelligence"):
+                            "list_envelopes", "get_intelligence", "search_history"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -624,4 +668,40 @@ class ApolioAgent:
             snap = engine.compute_snapshot(envelope_id)
             return snap
         except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_search_history(self, params: dict, session: SessionContext,
+                                    sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Search conversation history — deeper than the 10-message rolling window."""
+        import db as appdb
+
+        if not appdb.is_ready():
+            return {"error": "Conversation history unavailable (PostgreSQL not connected)"}
+
+        keyword = params.get("keyword", "")
+        limit   = min(int(params.get("limit", 20)), 50)
+        offset  = int(params.get("offset", 0))
+
+        try:
+            rows = await appdb.search_conversation_history(
+                session.user_id, keyword=keyword, limit=limit, offset=offset
+            )
+            if not rows:
+                msg = (
+                    f"No messages found" +
+                    (f" matching '{keyword}'" if keyword else "") +
+                    (f" at offset {offset}" if offset > 0 else "")
+                )
+                return {"status": "empty", "message": msg, "rows": []}
+
+            formatted = appdb.format_context_for_prompt(rows)
+            return {
+                "status": "ok",
+                "count": len(rows),
+                "offset": offset,
+                "has_more": len(rows) == limit,
+                "messages": formatted,
+            }
+        except Exception as e:
+            logger.error(f"search_history failed: {e}")
             return {"error": str(e)}

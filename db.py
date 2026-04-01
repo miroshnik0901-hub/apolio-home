@@ -218,6 +218,62 @@ def format_context_for_prompt(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def search_conversation_history(user_id: int,
+                                       keyword: str = "",
+                                       limit: int = 20,
+                                       offset: int = 0) -> list[dict]:
+    """
+    Search conversation history for a user.
+    - keyword: full-text search in raw_text (case-insensitive); empty = all
+    - limit/offset: pagination (max 50 per call)
+    Returns rows sorted oldest-first.
+    """
+    if not is_ready():
+        return []
+    limit = min(limit, 50)
+    try:
+        async with acquire() as conn:
+            if keyword.strip():
+                rows = await conn.fetch(
+                    """
+                    SELECT ts, direction, message_type, raw_text,
+                           tool_called, result_short
+                    FROM conversation_log
+                    WHERE user_id = $1
+                      AND raw_text ILIKE $2
+                    ORDER BY ts DESC
+                    LIMIT $3 OFFSET $4
+                    """,
+                    user_id, f"%{keyword}%", limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT ts, direction, message_type, raw_text,
+                           tool_called, result_short
+                    FROM conversation_log
+                    WHERE user_id = $1
+                    ORDER BY ts DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    user_id, limit, offset,
+                )
+            result = []
+            for row in reversed(rows):  # oldest first within the page
+                result.append({
+                    "ts": row["ts"].strftime("%Y-%m-%d %H:%M"),
+                    "direction": row["direction"],
+                    "message_type": row["message_type"],
+                    "raw_text": row["raw_text"],
+                    "tool_called": row["tool_called"],
+                    "result_short": row["result_short"],
+                })
+            return result
+    except Exception as e:
+        logger.error(f"[DB] search_conversation_history failed: {e}")
+        return []
+
+
 # ── UserContext operations ────────────────────────────────────────────────────
 
 async def ctx_get(user_id: int, key: str) -> Optional[str]:

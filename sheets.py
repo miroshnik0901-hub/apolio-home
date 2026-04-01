@@ -242,6 +242,36 @@ class EnvelopeSheets:
         ws.delete_rows(start_row, end_row)
         return end_row - start_row + 1
 
+    def sort_by_date(self, order: str = "asc") -> int:
+        """Sort Transactions data rows by Date (col A) in-place.
+        Header (row 1) is preserved. Returns number of rows sorted.
+        order: 'asc' (oldest first) or 'desc' (newest first)."""
+        ws = self._ws("Transactions")
+        all_rows = ws.get_all_values()
+        if len(all_rows) < 2:
+            return 0
+
+        header = all_rows[0]
+        data_rows = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
+        if not data_rows:
+            return 0
+
+        # Pad rows to header width so the update range is uniform
+        width = len(header)
+        padded = [r + [""] * max(0, width - len(r)) for r in data_rows]
+
+        # ISO dates (YYYY-MM-DD) sort correctly as strings; empty dates go last
+        reverse = (order.lower() == "desc")
+        padded.sort(key=lambda r: r[0] if r[0].strip() else "9999-99-99",
+                    reverse=reverse)
+
+        # Overwrite data area with sorted rows (single API call)
+        end_row = 1 + len(padded)
+        col_letter = chr(ord('A') + width - 1)  # e.g. 'P' for 16 columns
+        ws.update(f"A2:{col_letter}{end_row}", padded,
+                  value_input_option="USER_ENTERED")
+        return len(padded)
+
     def sum_expenses(self, month: str) -> float:
         txs = self.get_transactions({"date_from": f"{month}-01", "date_to": f"{month}-31"})
         return sum(
@@ -411,6 +441,11 @@ class SheetsClient:
                                       start_row: int, end_row: int) -> list[list]:
         """Return raw cell values for preview before deletion."""
         return self._env_sheets(sheet_id).get_rows_raw(start_row, end_row)
+
+    def sort_transactions_by_date(self, sheet_id: str, order: str = "asc") -> int:
+        """Sort Transactions sheet by date and invalidate cache."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).sort_by_date(order)
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.

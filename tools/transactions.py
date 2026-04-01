@@ -262,6 +262,32 @@ def _row_word(n: int) -> str:
     return "строк"
 
 
+async def tool_sort_transactions(params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager) -> Any:
+    """Sort Transactions sheet by date (ascending = oldest first, descending = newest first)."""
+    if not auth.can_write(session.user_id):
+        return {"error": "Permission denied."}
+
+    order = params.get("order", "asc").lower()
+    if order not in ("asc", "desc"):
+        order = "asc"
+
+    envelope = _resolve_envelope(params, session, sheets)
+    if not auth.can_access_envelope(session.user_id, envelope["ID"]):
+        return {"error": "You don't have access to this envelope."}
+
+    try:
+        count = sheets.sort_transactions_by_date(envelope["file_id"], order)
+    except Exception as e:
+        return {"error": f"Ошибка сортировки: {e}"}
+
+    direction = "старые → новые" if order == "asc" else "новые → старые"
+    return {
+        "status": "ok",
+        "message": f"✓ Отсортировано {count} {_row_word(count)} по дате ({direction})",
+    }
+
+
 async def tool_find_transactions(params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager) -> Any:
     envelope_id = params.get("envelope_id") or session.current_envelope_id
