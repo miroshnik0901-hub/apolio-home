@@ -65,12 +65,17 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 - [ ] Photo without caption gets a language-aware default receipt prompt (not empty string)
 - [ ] `_photo_prompts` dict covers ru/uk/en/it and falls back to ru
 
-### Conversation logging
-- [ ] `ConversationLogger` started in `post_init` (non-blocking)
+### Conversation logging (PostgreSQL via db.py)
+- [ ] `appdb.init_db()` called in `post_init` — creates tables if needed
+- [ ] Graceful degradation: if no `DATABASE_URL`, logs warning and disables (no crash)
 - [ ] `session.session_id` assigned on first message in `handle_message`
-- [ ] User message logged BEFORE agent call (so it's always recorded even if agent crashes)
-- [ ] Bot response logged AFTER agent call
+- [ ] User message logged BEFORE agent call via `appdb.log_message(direction="user")`
+- [ ] Bot response logged AFTER agent call via `appdb.log_message(direction="bot")`
 - [ ] Logging exceptions are silently swallowed — must never crash the bot
+- [ ] `agent._build_context()` is async — reads history from PostgreSQL via `appdb.get_recent_context()`
+- [ ] Context injection: last 5 turns formatted via `appdb.format_context_for_prompt()`
+- [ ] User goals: `appdb.ctx_get_all()` with fallback to Google Sheets `UserContextManager`
+- [ ] `save_goal` tool: writes to PostgreSQL via `appdb.ctx_set()` (fallback to Sheets)
 
 ### Receipt storage (tools/receipt_store.py)
 - [ ] `ReceiptStore` creates Receipts sheet on first use if not present
@@ -96,7 +101,8 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 | `tools/summary.py` | get_summary, get_budget_status |
 | `tools/wise.py` | Wise CSV import (Date first in column order!) |
 | `tools/envelope_tools.py` | create_envelope, list_envelopes |
-| `tools/conversation_log.py` | ConversationLogger — async background writer with Queue |
+| `db.py` | PostgreSQL layer — conversation_log + user_context tables (asyncpg) |
+| `tools/conversation_log.py` | DEPRECATED — Google Sheets logger, kept for make_session_id() |
 | `tools/receipt_store.py` | ReceiptStore — save receipt details + AI summary |
 
 ### Files NOT to touch unless explicitly instructed
@@ -158,6 +164,13 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 
 ---
 
+### Data architecture
+- **PostgreSQL (Railway):** `conversation_log`, `user_context` — history, goals, patterns, preferences
+- **Google Sheets:** transactions, budgets, summary formulas, receipts — human-accessible
+- `db.py` handles all PostgreSQL operations (async via asyncpg)
+- `sheets.py` handles all Google Sheets operations (sync via gspread)
+- Intelligence engine reads from Sheets (transaction data), user context from PostgreSQL
+
 ### Intelligence layer (agent.py, intelligence.py, user_context.py)
 - [ ] `_build_context()` computes intelligence_context, goals_context, conversation_context
 - [ ] System prompt template has `{intelligence_context}`, `{goals_context}`, `{conversation_context}` placeholders
@@ -185,7 +198,9 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 - [ ] Send a photo without caption — bot responds (not silent)
 - [ ] Send "как дела с бюджетом?" — bot responds with budget intelligence
 - [ ] If new menu items added — tap ⚙️ Settings → Refresh Menu
-- [ ] Check Google Sheet: UserContext, ConversationLog, Receipts tabs auto-created on first use
+- [ ] Check Railway logs: `[DB] PostgreSQL connected, tables ready`
+- [ ] Send 2+ messages → check PostgreSQL `conversation_log` table has rows
+- [ ] Check Google Sheet: Receipts tab auto-created on first use (transactions stay in Sheets)
 
 ### Telegram button testing
 - [ ] ☰ Меню → opens main menu (Status, Analytics, Records, Envelopes, System)
@@ -200,3 +215,17 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 - [ ] Free text "coffee 3.50" → expense added, confirm/edit/delete buttons shown
 - [ ] Delete button → confirmation prompt → "Да, удалить" → transaction deleted
 - [ ] Free text "переключи язык на русский" → agent switches language via tool
+
+### PostgreSQL testing (requires Railway DATABASE_URL)
+- [ ] Test 1: Graceful degradation without DATABASE_URL — all ops no-op, no crash ✅ PASSED
+- [ ] Test 2: format_context_for_prompt renders mock conversation correctly ✅ PASSED
+- [ ] Test 3: Google Sheets connection works (transactions, envelopes) ✅ PASSED
+- [ ] Test 4: IntelligenceEngine computes snapshot from Sheets ✅ PASSED
+- [ ] Test 5: System prompt template has all placeholders + CONVERSATION MEMORY section ✅ PASSED
+- [ ] Test 6: agent._build_context() async — intelligence from Sheets, empty conv without DB ✅ PASSED
+- [ ] Test 7: LIVE — PostgreSQL tables created on Railway deploy (check logs)
+- [ ] Test 8: LIVE — Send message → conversation_log row appears
+- [ ] Test 9: LIVE — Send 2nd message → agent system prompt includes history
+- [ ] Test 10: LIVE — Bot does NOT say "I don't remember" anymore
+- [ ] Test 11: LIVE — save_goal tool writes to user_context table
+- [ ] Test 12: LIVE — Google Sheets transactions still work after PostgreSQL migration
