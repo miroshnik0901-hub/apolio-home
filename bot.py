@@ -564,10 +564,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     name = session.user_name or "Mikhail"
-    # First message: silently remove any persistent reply keyboard
-    # (kept intentionally — deleting a ReplyKeyboardRemove msg can revert the keyboard on some clients)
-    await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
-    # Main response with inline ☰ Меню button
     await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
