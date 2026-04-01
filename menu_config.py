@@ -25,49 +25,49 @@ logger = logging.getLogger(__name__)
 # ── Default menu (used when BotMenu sheet is absent) ──────────────────────────
 
 DEFAULT_MENU: dict[str, dict] = {
-    # ── Top level (all roles) ──────────────────────────────────────────────
+    # ── Top level ──────────────────────────────────────────────────────────
     "status": {
         "label": "📊 Статус", "parent": "",
         "type": "cmd", "command": "status", "params": {}, "order": 1,
         "roles": [],
     },
     "report": {
-        "label": "📋 Отчёт", "parent": "",
+        "label": "📋 Аналитика ›", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 2,
         "roles": [],
     },
     "transactions": {
-        "label": "📝 Записи", "parent": "",
+        "label": "📝 Записи ›", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 3,
         "roles": [],
     },
-    "week": {
-        "label": "📅 Неделя", "parent": "",
-        "type": "cmd", "command": "week", "params": {}, "order": 4,
-        "roles": [],
-    },
-    "add": {
-        "label": "➕ Добавить", "parent": "",
-        "type": "free_text", "command": "", "params": {}, "order": 5,
+    "envelopes_top": {
+        "label": "📁 Конверты", "parent": "",
+        "type": "cmd", "command": "envelopes", "params": {}, "order": 4,
         "roles": [],
     },
     "settings": {
-        "label": "⚙️ Настройки", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 6,
+        "label": "⚙️ Система ›", "parent": "",
+        "type": "submenu", "command": "", "params": {}, "order": 5,
         "roles": ["admin"],
     },
-    # ── Report submenu ─────────────────────────────────────────────────────
+    # ── Analytics submenu ──────────────────────────────────────────────────
     "rep_curr": {
-        "label": "▶ Тек. месяц", "parent": "report",
+        "label": "▶ Этот месяц", "parent": "report",
         "type": "cmd", "command": "report", "params": {"period": "current"}, "order": 1,
         "roles": [],
     },
     "rep_last": {
-        "label": "◀ Пред. месяц", "parent": "report",
+        "label": "◀ Прошлый месяц", "parent": "report",
         "type": "cmd", "command": "report", "params": {"period": "last"}, "order": 2,
         "roles": [],
     },
-    # ── Transactions submenu ───────────────────────────────────────────────
+    "rep_week": {
+        "label": "📅 Эта неделя", "parent": "report",
+        "type": "cmd", "command": "week", "params": {}, "order": 3,
+        "roles": [],
+    },
+    # ── Transactions / Records submenu ─────────────────────────────────────
     "txn_recent": {
         "label": "📋 Последние 10", "parent": "transactions",
         "type": "cmd", "command": "transactions", "params": {"limit": 10}, "order": 1,
@@ -83,40 +83,44 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "cmd", "command": "report", "params": {"period": "current"}, "order": 3,
         "roles": [],
     },
-    # ── Settings submenu (admin only) ──────────────────────────────────────
+    # ── System submenu (admin only) ────────────────────────────────────────
+    "set_undo": {
+        "label": "↩️ Отменить", "parent": "settings",
+        "type": "cmd", "command": "undo", "params": {}, "order": 1,
+        "roles": ["admin"],
+    },
     "set_envelopes": {
         "label": "📁 Конверты", "parent": "settings",
-        "type": "cmd", "command": "envelopes", "params": {}, "order": 1,
+        "type": "cmd", "command": "envelopes", "params": {}, "order": 2,
         "roles": ["admin"],
     },
     "set_refresh": {
         "label": "🔄 Обновить меню", "parent": "settings",
-        "type": "cmd", "command": "refresh", "params": {}, "order": 2,
-        "roles": ["admin"],
-    },
-    "set_undo": {
-        "label": "↩️ Отменить", "parent": "settings",
-        "type": "cmd", "command": "undo", "params": {}, "order": 3,
+        "type": "cmd", "command": "refresh", "params": {}, "order": 3,
         "roles": ["admin"],
     },
 }
 
 # Rows for auto-creating / re-creating the BotMenu sheet
 _DEFAULT_ROWS = [
-    ("status",        "📊 Статус",        "",             "cmd",       "status",       "",                        1, "TRUE", ""),
-    ("report",        "📋 Отчёт",         "",             "submenu",   "",             "",                        2, "TRUE", ""),
-    ("transactions",  "📝 Записи",        "",             "submenu",   "",             "",                        3, "TRUE", ""),
-    ("week",          "📅 Неделя",        "",             "cmd",       "week",         "",                        4, "TRUE", ""),
-    ("add",           "➕ Добавить",      "",             "free_text", "",             "",                        5, "TRUE", ""),
-    ("settings",      "⚙️ Настройки",    "",             "submenu",   "",             "",                        6, "TRUE", "admin"),
-    ("rep_curr",      "▶ Тек. месяц",    "report",       "cmd",       "report",       '{"period":"current"}',    1, "TRUE", ""),
-    ("rep_last",      "◀ Пред. месяц",   "report",       "cmd",       "report",       '{"period":"last"}',       2, "TRUE", ""),
-    ("txn_recent",    "📋 Последние 10",  "transactions", "cmd",       "transactions", '{"limit":10}',            1, "TRUE", ""),
-    ("txn_week",      "📅 За неделю",    "transactions", "cmd",       "week",         "",                        2, "TRUE", ""),
-    ("txn_month",     "📆 За месяц",     "transactions", "cmd",       "report",       '{"period":"current"}',    3, "TRUE", ""),
-    ("set_envelopes", "📁 Конверты",      "settings",     "cmd",       "envelopes",    "",                        1, "TRUE", "admin"),
-    ("set_refresh",   "🔄 Обновить меню", "settings",     "cmd",       "refresh",      "",                        2, "TRUE", "admin"),
-    ("set_undo",      "↩️ Отменить",     "settings",     "cmd",       "undo",         "",                        3, "TRUE", "admin"),
+    # Top level
+    ("status",        "📊 Статус",         "",             "cmd",     "status",       "",                     1, "TRUE", ""),
+    ("report",        "📋 Аналитика ›",    "",             "submenu", "",             "",                     2, "TRUE", ""),
+    ("transactions",  "📝 Записи ›",       "",             "submenu", "",             "",                     3, "TRUE", ""),
+    ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     4, "TRUE", ""),
+    ("settings",      "⚙️ Система ›",     "",             "submenu", "",             "",                     5, "TRUE", "admin"),
+    # Analytics submenu
+    ("rep_curr",      "▶ Этот месяц",     "report",       "cmd",     "report",       '{"period":"current"}', 1, "TRUE", ""),
+    ("rep_last",      "◀ Прошлый месяц",  "report",       "cmd",     "report",       '{"period":"last"}',    2, "TRUE", ""),
+    ("rep_week",      "📅 Эта неделя",    "report",       "cmd",     "week",         "",                     3, "TRUE", ""),
+    # Records submenu
+    ("txn_recent",    "📋 Последние 10",   "transactions", "cmd",     "transactions", '{"limit":10}',         1, "TRUE", ""),
+    ("txn_week",      "📅 За неделю",     "transactions", "cmd",     "week",         "",                     2, "TRUE", ""),
+    ("txn_month",     "📆 За месяц",      "transactions", "cmd",     "report",       '{"period":"current"}', 3, "TRUE", ""),
+    # System submenu (admin only)
+    ("set_undo",      "↩️ Отменить",      "settings",     "cmd",     "undo",         "",                     1, "TRUE", "admin"),
+    ("set_envelopes", "📁 Конверты",       "settings",     "cmd",     "envelopes",    "",                     2, "TRUE", "admin"),
+    ("set_refresh",   "🔄 Обновить меню",  "settings",     "cmd",     "refresh",      "",                     3, "TRUE", "admin"),
 ]
 
 _HEADERS = ["ID", "Label", "Parent", "Type", "Command", "Params", "Order", "Visible", "Roles"]
