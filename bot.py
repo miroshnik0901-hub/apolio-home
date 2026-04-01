@@ -291,14 +291,12 @@ async def _build_status_html(session) -> str:
 
         label = _month_label_ru(month)
         env_id = session.current_envelope_id or "?"
-        bar = _progress_bar(spent, cap)
         warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
 
         lines = [
             f"📊 <b>Бюджет {label}</b>  ·  {env_id}",
             "",
             f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  ({pct:.0f}%){warn}",
-            f"<code>{bar}</code>",
             f"Осталось: <b>{remaining:,.0f} EUR</b>",
         ]
 
@@ -354,10 +352,8 @@ async def _build_report_html(session, period: str = "current") -> str:
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 pct = round(amt / total * 100) if total else 0
                 icon = _cat_icon(cat)
-                bar = _progress_bar(amt, total, width=6)
                 lines.append(
-                    f"  {icon} <b>{cat}</b>: {amt:,.0f} EUR  ({pct}%)\n"
-                    f"     <code>{bar}</code>"
+                    f"  {icon} <b>{cat}</b>: {amt:,.0f} EUR  ({pct}%)"
                 )
 
         if len(by_who) > 1:
@@ -472,7 +468,8 @@ async def post_init(app: Application):
     global conv_log
     try:
         conv_log = ConversationLogger(sheets._gc, _MM_BUDGET_FILE_ID)
-        logger.info("Conversation logger initialized")
+        conv_log.start()
+        logger.info("Conversation logger initialized and background writer started")
     except Exception as e:
         logger.warning(f"Could not initialize conversation logger: {e}")
 
@@ -613,13 +610,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                              callback_data="nav:__menu__")],
     ])
 
-    # Send welcome with non-persistent reply keyboard (available via toggle icon)
+    # Remove any old persistent reply keyboard + show inline navigation
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=_build_main_keyboard(lang),
+        reply_markup=ReplyKeyboardRemove(),
     )
-    # Then: show inline navigation buttons
     await update.message.reply_text(
         "👇",
         reply_markup=welcome_kb,
@@ -705,13 +701,7 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"  Лимит: {cap} · Правило: {rule}{link}"
         )
 
-    keyboard = []
-    row = []
-    for i, e in enumerate(envelopes):
-        row.append(InlineKeyboardButton(e["name"], callback_data=f"cb_env_{e['id']}"))
-        if len(row) == 2 or i == len(envelopes) - 1:
-            keyboard.append(row)
-            row = []
+    keyboard = [[InlineKeyboardButton(e["name"], callback_data=f"cb_env_{e['id']}")] for e in envelopes]
 
     await update.message.reply_text(
         "\n\n".join(lines),
@@ -738,15 +728,11 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         lines = ["Доступные конверты:\n"]
         keyboard = []
-        row = []
-        for i, e in enumerate(active):
+        for e in active:
             eid = e.get("ID", "")
             ename = e.get("Name", eid)
             lines.append(f"• <code>{eid}</code> — {ename}")
-            row.append(InlineKeyboardButton(ename, callback_data=f"cb_env_{eid}"))
-            if len(row) == 2 or i == len(active) - 1:
-                keyboard.append(row)
-                row = []
+            keyboard.append([InlineKeyboardButton(ename, callback_data=f"cb_env_{eid}")])
 
         await update.message.reply_text(
             "Использование: <code>/envelope ID</code>\n\n" + "\n".join(lines),
@@ -911,20 +897,17 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             lines.append("")
 
-        # Inline delete buttons for last 5 transactions
+        # Inline delete buttons for last 5 transactions (1 per row)
         recent = list(reversed(txs))[:5]
         del_rows = []
-        row = []
-        for i, tx in enumerate(recent):
+        for tx in recent:
             tx_id = tx.get("ID", "")
-            cat = tx.get("Category", "?")[:7]
+            cat = tx.get("Category", "?")
             amt = tx.get("Amount_Orig", "?")
-            row.append(InlineKeyboardButton(
-                f"🗑 {cat} {amt}", callback_data=f"cb_del_{tx_id}"
-            ))
-            if len(row) == 2 or i == len(recent) - 1:
-                del_rows.append(row)
-                row = []
+            date = tx.get("Date", "")[-5:]  # MM-DD
+            del_rows.append([InlineKeyboardButton(
+                f"🗑 {cat} · {amt} EUR · {date}", callback_data=f"cb_del_{tx_id}"
+            )])
 
         markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
         await update.message.reply_text(
@@ -1132,10 +1115,48 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "week":
                 html = await _build_week_html(session)
                 kb = _with_menu_btn()
+            elif command == "transactions":
+                limit_n = params.get("limit", 10)
+                try:
+                    from tools.summary import tool_get_summary
+                    data = await tool_get_summary(
+                        {"breakdown_by": "list", "limit": limit_n},
+                        session, sheets, auth,
+                    )
+                    txs = data.get("transactions", [])
+                    if txs:
+                        tlines = [f"📝 <b>Последние {len(txs)} записей:</b>\n"]
+                        for tx in txs:
+                            d = tx.get("date", "?")
+                            a = tx.get("amount_eur", tx.get("amount", 0))
+                            c = tx.get("category", "")
+                            n = tx.get("note", "")
+                            w = tx.get("who", "")
+                            tlines.append(f"  {d} · <b>{a} EUR</b> · {c}" + (f" ({n})" if n else "") + (f" — {w}" if w else ""))
+                        html = "\n".join(tlines)
+                    else:
+                        html = "📝 Нет записей."
+                except Exception as e:
+                    logger.error(f"transactions handler: {e}", exc_info=True)
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn()
             elif command == "envelopes":
-                # Trigger envelopes via fake update
-                await cmd_envelopes(query._effective_message, ctx)
-                return
+                try:
+                    envelopes = sheets.list_envelopes_with_links()
+                    if envelopes:
+                        elines = ["📁 <b>Список конвертов:</b>\n"]
+                        for e in envelopes:
+                            cap_str = f"{e['monthly_cap']:,} {e['currency']}" if e.get('monthly_cap') else "без лимита"
+                            active = " ✅" if e["id"] == session.current_envelope_id else ""
+                            url = e.get("url", "")
+                            link = f'  <a href="{url}">открыть</a>' if url else ""
+                            elines.append(f"▸ <b>{e['name']}</b>{active}\n  Лимит: {cap_str}{link}")
+                        html = "\n".join(elines)
+                    else:
+                        html = "📁 Нет конвертов."
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn()
             elif command == "refresh":
                 admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
                 mc.reset_to_defaults(sheets._gc, admin_id)
@@ -1148,8 +1169,30 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
             elif command == "undo":
-                await cmd_undo(query._effective_message, ctx)
-                return
+                la = session.last_action
+                if not la:
+                    await query.answer("Нет действий для отмены.", show_alert=True)
+                    return
+                try:
+                    if la.action == "add":
+                        envelopes = sheets.get_envelopes()
+                        file_id = next(
+                            (ev["file_id"] for ev in envelopes if ev.get("ID") == la.envelope_id),
+                            None
+                        )
+                        if file_id:
+                            sheets.soft_delete_transaction(file_id, la.tx_id)
+                            snap = la.snapshot
+                            html = (f"↩ Отменено: {snap.get('category', '')} · "
+                                    f"{snap.get('amount', '?')} {snap.get('currency', 'EUR')}")
+                            session.last_action = None
+                        else:
+                            html = "❌ Конверт не найден."
+                    else:
+                        html = "❌ Неизвестное действие."
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn()
             else:
                 await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
                 return
@@ -1185,13 +1228,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             link = f'  <a href="{url}">открыть</a>' if url else ""
             active_mark = " ✅" if e["id"] == session.current_envelope_id else ""
             lines.append(f"▸ <b>{e['name']}</b> (<code>{e['id']}</code>){active_mark} · {cap}{link}")
-        keyboard = []
-        row = []
-        for i, e in enumerate(envelopes):
-            row.append(InlineKeyboardButton(e["name"], callback_data=f"cb_env_{e['id']}"))
-            if len(row) == 2 or i == len(envelopes) - 1:
-                keyboard.append(row)
-                row = []
+        keyboard = [[InlineKeyboardButton(e["name"], callback_data=f"cb_env_{e['id']}")] for e in envelopes]
         try:
             await query.edit_message_text(
                 "\n\n".join(lines),
@@ -1251,17 +1288,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
                 lines.append("")
             del_rows = []
-            row = []
             recent = list(reversed(txs))[:4]
-            for i, tx in enumerate(recent):
+            for tx in recent:
                 tx_id = tx.get("ID", "")
-                cat = tx.get("Category", "?")[:7]
-                row.append(InlineKeyboardButton(
-                    f"🗑 {cat}", callback_data=f"cb_del_{tx_id}"
-                ))
-                if len(row) == 2 or i == len(recent) - 1:
-                    del_rows.append(row)
-                    row = []
+                cat = tx.get("Category", "?")
+                amt = tx.get("Amount_Orig", "?")
+                del_rows.append([InlineKeyboardButton(
+                    f"🗑 {cat} · {amt} EUR", callback_data=f"cb_del_{tx_id}"
+                )])
             markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
             await query.message.reply_text(
                 "\n".join(lines),
@@ -1544,7 +1578,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Log user message before agent call
         try:
             if conv_log:
-                conv_log.log_user_message(session.user_id, text, session.session_id)
+                conv_log.log_user(
+                    user_id=session.user_id,
+                    session_id=session.session_id,
+                    envelope_id=session.current_envelope_id or "",
+                    message_type=media_type,
+                    raw_text=text,
+                )
         except Exception:
             pass  # Conversation logging is not critical
 
@@ -1557,7 +1597,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Log bot response after agent call
         try:
             if conv_log:
-                conv_log.log_bot_message(session.user_id, response, session.session_id)
+                conv_log.log_bot(
+                    user_id=session.user_id,
+                    session_id=session.session_id,
+                    envelope_id=session.current_envelope_id or "",
+                    response_text=response[:300],
+                )
         except Exception:
             pass  # Conversation logging is not critical
     finally:

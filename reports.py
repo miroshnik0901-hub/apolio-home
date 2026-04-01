@@ -62,15 +62,12 @@ def format_budget_status(data: dict) -> str:
     pct = data.get("pct_used", 0)
     alert = data.get("alert", False)
 
-    bar = format_bar(pct)
     alert_emoji = "🔴" if pct >= 90 else ("🟡" if alert else "🟢")
 
     lines = [
         f"📊 *{month_label} — {env_id}*",
         "",
-        f"Потрачено: *{spent:,.2f}* из *{cap:,.0f} EUR* ({pct:.0f}%)",
-        f"{alert_emoji} [{bar}]",
-        "",
+        f"{alert_emoji} Потрачено: *{spent:,.2f}* из *{cap:,.0f} EUR* ({pct:.0f}%)",
         f"Осталось: *{remaining:,.2f} EUR*",
     ]
     return "\n".join(lines)
@@ -91,9 +88,7 @@ def format_report(data: dict, envelope_id: str = "", cap: float = 0) -> str:
 
     if cap and cap > 0:
         pct_total = round(total / cap * 100, 1)
-        bar = format_bar(pct_total)
         lines.append(f"Всего: *{total:,.2f}* из *{cap:,.0f} EUR* ({pct_total:.0f}%)")
-        lines.append(f"[{bar}]")
         lines.append("")
 
     # Sort categories by amount descending
@@ -103,8 +98,7 @@ def format_report(data: dict, envelope_id: str = "", cap: float = 0) -> str:
             continue
         pct = round(amt / total * 100) if total > 0 else 0
         emoji = CATEGORY_EMOJI.get(cat, "▸")
-        bar = format_bar(pct, width=6)
-        lines.append(f"{emoji} `{cat:<14}` {amt:>7,.0f}  {bar}  {pct}%")
+        lines.append(f"{emoji} {cat}: {amt:,.0f} EUR ({pct}%)")
 
     if not sorted_cats or total == 0:
         lines.append("Расходов за период нет.")
