@@ -51,42 +51,38 @@ agent = ApolioAgent(sheets, auth)
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
 def _build_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Build the persistent bottom keyboard from menu config (top-level nodes)."""
-    tree = mc.get_menu()
-    roots = mc.root_nodes(tree)
-    rows = []
-    row: list[KeyboardButton] = []
-    for nid, node in roots:
-        label = node["label"]
-        # Submenus get a › suffix so the user knows it opens more options
-        if node["type"] == "submenu":
-            label = label + " ›"
-        row.append(KeyboardButton(label))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
+    """Single persistent button — all navigation happens via inline keyboards."""
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("☰ Меню")]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def _get_keyboard_shortcuts() -> dict[str, str]:
-    """Map button label → node_id for the message handler."""
-    tree = mc.get_menu()
-    result: dict[str, str] = {}
-    for nid, node in tree.items():
-        label = node["label"]
-        result[label] = nid
-        # Also accept the › version (submenus)
-        if node["type"] == "submenu":
-            result[label + " ›"] = nid
-    return result
+    """Map reply button label → action key for the message handler."""
+    return {"☰ Меню": "__menu__"}
 
 
-def _build_submenu_keyboard(parent_id: str, tree: dict) -> InlineKeyboardMarkup:
-    """Build an inline keyboard for a submenu node."""
-    children = mc.sorted_children(tree, parent_id)
-    rows = []
+def _build_inline_menu(parent_id: str = "", tree: dict = None) -> InlineKeyboardMarkup:
+    """Build an inline keyboard grid from the menu config.
+
+    parent_id="" → root level.
+    parent_id="report" → children of report submenu.
+    """
+    if tree is None:
+        tree = mc.get_menu()
+
+    if parent_id:
+        children = mc.sorted_children(tree, parent_id)
+        parent_node = tree.get(parent_id, {})
+        grandparent = parent_node.get("parent", "")
+        back_cb = f"nav:{grandparent}" if grandparent else "nav:__root__"
+    else:
+        children = mc.root_nodes(tree)
+        back_cb = None
+
+    rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for nid, node in children:
         label = node["label"]
@@ -98,17 +94,17 @@ def _build_submenu_keyboard(parent_id: str, tree: dict) -> InlineKeyboardMarkup:
             row = []
     if row:
         rows.append(row)
-    # Add Back button if parent has a parent (not root level)
-    parent_node = tree.get(parent_id, {})
-    grandparent = parent_node.get("parent", "")
-    if grandparent:
-        rows.append([InlineKeyboardButton("◀ Назад", callback_data=f"nav:{grandparent}")])
+    if back_cb:
+        rows.append([InlineKeyboardButton("◀ Назад", callback_data=back_cb)])
     return InlineKeyboardMarkup(rows)
 
 
-MAIN_KEYBOARD = _build_reply_keyboard()
+# Alias kept for backward compatibility
+def _build_submenu_keyboard(parent_id: str, tree: dict) -> InlineKeyboardMarkup:
+    return _build_inline_menu(parent_id, tree)
 
-# Legacy map kept for compatibility; rebuilt on /refresh
+
+MAIN_KEYBOARD = _build_reply_keyboard()
 KEYBOARD_SHORTCUTS = _get_keyboard_shortcuts()
 
 GREETINGS = {
@@ -117,21 +113,13 @@ GREETINGS = {
     "buongiorno", "salve", "allo",
 }
 
-# ── Bot command definitions ────────────────────────────────────────────────────
+# ── Bot command definitions (minimal — main interface is button-driven) ────────
 
 BOT_COMMANDS = [
-    BotCommand("start",        "Начать / приветствие"),
-    BotCommand("menu",         "Меню функций"),
-    BotCommand("envelopes",    "Список конвертов со ссылками"),
-    BotCommand("envelope",     "Выбрать активный конверт"),
-    BotCommand("status",       "Статус бюджета за текущий месяц"),
-    BotCommand("report",       "Отчёт по категориям за месяц"),
-    BotCommand("transactions", "Последние записи с кнопками"),
-    BotCommand("week",         "Расходы за эту неделю"),
-    BotCommand("month",        "Расходы за этот месяц"),
-    BotCommand("undo",         "Отменить последнее действие"),
-    BotCommand("help",         "Справка и примеры"),
-    BotCommand("refresh",      "Обновить меню из Admin-таблицы"),
+    BotCommand("start",   "Начать / приветствие"),
+    BotCommand("undo",    "Отменить последнее действие"),
+    BotCommand("help",    "Справка и примеры"),
+    BotCommand("refresh", "Обновить меню из Admin-таблицы"),
 ]
 
 
@@ -457,6 +445,12 @@ def _require_user(update: Update):
 
 async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
     """Handle a menu node tap. Returns True if the message was fully handled."""
+    if node_id == "__menu__":
+        tree = mc.get_menu()
+        kb = _build_inline_menu("", tree)
+        await update.message.reply_text("Выберите действие:", reply_markup=kb)
+        return True
+
     tree = mc.get_menu()
     node = tree.get(node_id)
     if not node:
@@ -569,21 +563,9 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Access denied.")
         return
 
-    active_env = session.current_envelope_id or "не выбран"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📁 Конверты", callback_data="cb_envelopes"),
-         InlineKeyboardButton("📊 Статус", callback_data="cb_status")],
-        [InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
-         InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
-        [InlineKeyboardButton("❓ Справка", callback_data="cb_help")],
-    ])
-    await update.message.reply_text(
-        f"🏠 <b>Apolio Home — Меню</b>\n\n"
-        f"Активный конверт: <code>{active_env}</code>\n\n"
-        "Выберите действие:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard,
-    )
+    tree = mc.get_menu()
+    kb = _build_inline_menu("", tree)
+    await update.message.reply_text("Выберите действие:", reply_markup=kb)
 
 
 # ── /envelopes ─────────────────────────────────────────────────────────────────
@@ -949,6 +931,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("nav:"):
         node_id = data[4:]
         tree = mc.get_menu()
+
+        # __root__ = go back to main menu
+        if node_id == "__root__":
+            kb = _build_inline_menu("", tree)
+            try:
+                await query.edit_message_text("Выберите действие:", reply_markup=kb)
+            except BadRequest:
+                pass
+            return
+
         node = tree.get(node_id)
         if not node:
             await query.answer("Пункт меню не найден", show_alert=True)
@@ -1196,9 +1188,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = msg.text.strip()
 
         # ── Keyboard shortcut intercept (dynamic menu) ────────────────────
-        node_id = KEYBOARD_SHORTCUTS.get(text)
-        if node_id:
-            handled = await _handle_menu_node(node_id, update, ctx)
+        action = KEYBOARD_SHORTCUTS.get(text)
+        if action == "__menu__":
+            tree = mc.get_menu()
+            kb = _build_inline_menu("", tree)
+            await update.message.reply_text("Выберите действие:", reply_markup=kb)
+            return
+        elif action:
+            handled = await _handle_menu_node(action, update, ctx)
             if handled:
                 return
 
