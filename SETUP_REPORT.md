@@ -1,5 +1,5 @@
 # Apolio Home — SETUP REPORT
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01
 **Maintained by:** Cowork AI Agent
 
 This document is a complete technical handoff for any Claude session continuing work on this project. Read this before touching any code.
@@ -30,9 +30,11 @@ Also contains `.gsheet` shortcuts to Google Sheets files (these are 178-byte Dri
 apolio-home/
 ├── bot.py                    # Telegram bot entry point, all handlers
 ├── agent.py                  # Claude AI agent with tool loop
-├── auth.py                   # AuthManager + SessionContext
+├── auth.py                   # AuthManager + SessionContext (+ lang field)
 ├── sheets.py                 # SheetsClient (facade over AdminSheets + EnvelopeSheets)
-├── reports.py                # (placeholder, unused for now)
+├── menu_config.py            # Dynamic inline menu from Admin BotMenu sheet
+├── i18n.py                   # Multilingual strings (RU/UK/EN/IT): keyboards, menus, messages
+├── reports.py                # Formatting helpers (CATEGORY_EMOJI, format_bar, format_report)
 ├── tools/
 │   ├── transactions.py       # add / edit / delete / find transactions
 │   ├── summary.py            # get_summary + get_budget_status
@@ -70,9 +72,10 @@ apolio-home/
 
 Sheets/tabs:
 - **Envelopes** — registry of all envelope files. Columns: `ID, Name, file_id, Owner_TG, Currency, Monthly_Cap, Split_Rule, Active, Created_At`
-- **Users** — authorized Telegram users. Columns: `telegram_id, name, role, envelopes, created_at`
-- **Config** — key/value config. Relevant keys: `alert_threshold_pct` (default 80), `budget_<ENV_ID>_monthly`
-- **Audit_Log** — log of all state-changing bot operations. Columns: `timestamp, user_id, user_name, action, details`
+- **Users** — authorized Telegram users. Columns: `telegram_id, name, role, envelopes, created_at, language, status, notes, updated_at`. Status `suspended` blocks access. Language: RU/UK/EN/IT.
+- **Config** — key/value config with Description column. Keys: `alert_threshold_pct`, `default_currency`, `fx_fallback`, `budget_MM_BUDGET_monthly`, `default_envelope`, `bot_version`, `current_envelope_mikhail`
+- **Audit_Log** — log of all state-changing bot operations. Columns: `Timestamp, Telegram_ID, Name, Action, Details`. Bold header, frozen row 1, alternating row colors.
+- **BotMenu** — dynamic inline /menu structure loaded on deploy. Columns: `ID, Label, Parent, Type, Command, Params, Order, Visible, Roles`. Reset to defaults on every deploy via `menu_config.reset_to_defaults()`.
 
 ### 4b. MM Budget Envelope
 **File:** Apolio Home — MM Budget
@@ -81,11 +84,13 @@ Sheets/tabs:
 **Monthly cap:** 2500 EUR
 
 Sheets/tabs:
-- **Transactions** — main ledger. Columns: `ID, Date, Envelope, Amount_Orig, Currency_Orig, Amount_EUR, Category, Subcategory, Who, Account, Type, Note, Source, Wise_ID, Created_At, Deleted`
-- **Summary** — monthly summary rows. Columns: `Month, Total_Expenses, Total_Income, Balance, Top_Category, Note`
-- **Categories** — category list with Type (Fixed/Variable/Income/Transfer). Columns: `Category, Subcategory, Type`
+- **Transactions** — main ledger. Column order (A→P): `Date, Amount_Orig, Currency_Orig, Category, Subcategory, Note, Who, Amount_EUR, Type, Account, ID, Envelope, Source, Wise_ID, Created_At, Deleted`. Columns K-P hidden. Row 1 + Col A frozen. Dropdowns on C (currency), D (category from sheet), G (who), I (type), J (account from sheet). Conditional formatting: FX_MISSING rows → light red; Deleted=TRUE rows → gray+strikethrough. Col H: number format 2dp.
+- **Summary** — monthly summary with SUMIFS formulas. Columns: `Month, Total_Expenses, Total_Income, Balance, Housing, Food, Transport, Health, Entertainment, Personal, Household, Travel, Other, Cap, Remaining, Used_%`. Jan–Dec 2026 pre-filled.
+- **Categories** — category list. Columns: `Category, Subcategory, Type, Emoji`
 - **FX_Rates** — monthly FX rates. Columns: `Month, PLN, UAH, GBP, USD, Source`
+- **Accounts** — account list. Columns: `Account, Owner, Currency, Description, Active`. Pre-filled: Wise Family, Wise Mikhail, Cash IT, Cash PL.
 - **Config** — per-envelope config (optional overrides)
+- **Dashboard** — visual summary sheet (manual layout)
 
 ### 4c. Семья (SEMYA) Envelope
 **File:** Apolio Home — Семья
@@ -150,22 +155,34 @@ Every handler calls `_require_user(update)` which:
 ### 7c. Session
 `SessionContext` (per user, in-memory dict) holds:
 - `user_id`, `user_name`, `role`
-- `current_envelope_id` — which envelope is "active" for this user
+- `lang` — detected from Telegram `language_code` on each message (ru/uk/en/it, default en)
+- `current_envelope_id` — which envelope is "active" for this user (auto-set to MM_BUDGET for admin)
 - `last_action` — for undo support (records last tx_id + snapshot)
+- `pending_edit_tx` — tx_id of a transaction being edited via free text
 
-Session persists as long as the bot process is running. **Restarts reset all sessions** — users must re-select their envelope.
+Session persists as long as the bot process is running. After restart, `current_envelope_id` is auto-restored for admin users (MM_BUDGET default).
 
 ### 7d. Commands
 
 | Command | Handler | Description |
 |---|---|---|
-| `/start` | `cmd_start` | Welcome message + 4-button inline keyboard |
-| `/menu` | `cmd_menu` | Same keyboard + shows current envelope |
+| `/start` | `cmd_start` | Welcome + shows reply keyboard in user's language |
+| `/menu` | `cmd_menu` | Opens inline menu (2-level, from BotMenu sheet) |
 | `/envelopes` | `cmd_envelopes` | Lists all active envelopes with links + select buttons |
 | `/envelope [ID]` | `cmd_envelope` | No args: show list with buttons; with arg: set active envelope |
-| `/status` | `cmd_status` | Budget status for current month (calls agent) |
-| `/report` | `cmd_report` | Category breakdown for current month (calls agent) |
-| `/help` | `cmd_help` | Usage examples in Russian |
+| `/status` | `cmd_status` | Budget status for current month (direct render, no agent) |
+| `/report` | `cmd_report` | Category breakdown for current/last month (direct render) |
+| `/week` | `cmd_week` | Expenses for current week |
+| `/month` | `cmd_month` | Expenses for current month (same as /report) |
+| `/transactions` | `cmd_transactions` | Last 10 transactions with delete buttons |
+| `/undo` | `cmd_undo` | Undo last add/edit action |
+| `/help` | `cmd_help` | Usage examples |
+| `/refresh` | `cmd_refresh` | Reload BotMenu from Admin sheet |
+| `/settings` | `cmd_settings` | Show settings submenu (admin only) |
+
+**Reply keyboard** (shown after /start, user can hide/show with 🟦 button): Add / Status / Report / Records / Help — all labels translated via `i18n.py`. Language auto-detected from Telegram `language_code`.
+
+**Inline /menu** (from BotMenu sheet): 2-level hierarchy. Root: Status, Analytics ›, Records ›, Envelopes, Settings › (admin). All labels translated via `i18n.MENU_LABELS`.
 
 ### 7e. Inline Callbacks
 `callback_handler` handles:
@@ -240,7 +257,27 @@ Session persists as long as the bot process is running. **Restarts reset all ses
 
 ---
 
-## 16. Changes Made in Session 2 (2026-04-01)
+## 17. Changes Made in Session 3 (2026-04-01)
+
+### Multilingual support (i18n)
+- **i18n.py** (new) — full translations for RU/UK/EN/IT: reply keyboard labels (`KB_LABELS`), inline menu node labels (`MENU_LABELS`), start/greeting/add-expense messages. Reverse map `KB_TEXT_TO_ACTION` routes any language's button text to action key. Helper functions: `get_lang()`, `t_menu()`, `t_kb()`, `t()`.
+- **auth.py** — added `lang: str = "en"` to `SessionContext`. Set by `_require_user()` from Telegram `language_code` on every message.
+- **menu_config.py** — fixed double-arrow bug: removed `›` from submenu labels in `DEFAULT_MENU` and `_DEFAULT_ROWS`. `_build_inline_menu()` adds `›` suffix itself.
+- **bot.py** — replaced hardcoded `MAIN_KEYBOARD` + `KEYBOARD_SHORTCUTS` with: `_build_main_keyboard(lang)` (language-aware), `i18n.KB_TEXT_TO_ACTION` routing, `_build_inline_menu(lang=lang)` with translated labels and Back button. `/start`, greeting, add-prompt use `i18n` strings. `callback_handler` and `cmd_menu` pass `lang` through.
+
+### Google Sheets formatting (applied via scripts, not committed to repo)
+- **MM Budget — Transactions**: Dropdowns on C/D/G/I/J, columns K-P hidden, row 1 + col A frozen, FX_MISSING and Deleted conditional formatting, column widths A-J, blue header row, Amount_EUR formula in H2:H1000.
+- **Admin — Config**: Blue header, col widths, bold key column. Fixed `current_envelope_mikhail` value → MM_BUDGET.
+- **Admin — Users**: Blue header, col widths, dropdowns on role/status/language. Fixed Mikhail's `envelopes` field → MM_BUDGET.
+- **Admin — Audit_Log**: Dark header, alternating row colors, col widths.
+
+### Railway
+- Verified all 3 OAuth vars (`GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN`) already set in Railway.
+- Deployment: `feat(i18n): multilingual menus and keyboards` — active, successful.
+
+---
+
+## 16. Changes Made in Session 2 (2026-04-01 — continued)
 
 ### Code changes (all files committed together)
 - **auth.py** — `DEFAULT_ENVELOPE = "MM_BUDGET"`. `get_session()` auto-assigns MM_BUDGET for admin on first login. `_reload()` reads `language`, `status` columns from Users sheet; suspended users are skipped.
@@ -283,12 +320,10 @@ The `apolio-home` Drive folder (Mac: `My Drive > Personal > AI > apolio-home`) c
 
 **Fix needed:** Replace `gc.create(f"Apolio Home — {name}")` with `sheets.create_spreadsheet_as_owner(f"Apolio Home — {name}")` and then populate via `gc.open_by_key(file_id)`.
 
-**Prerequisite:** OAuth env vars must be set (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`). These are already in `.env` locally but need to be added to Railway.
+**Prerequisite:** OAuth env vars must be set (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`). ✅ All three are now set in Railway and verified working.
 
-### Issue 3: Envelope sessions reset on restart
-`current_envelope_id` lives in `_sessions` dict (in-memory). After Railway restarts (deploy, crash, etc.), all users must re-select their envelope with `/envelope` or `/envelopes`. For Mikhail, the default should auto-set to `MM_BUDGET`.
-
-**Possible fix:** Auto-set `current_envelope_id = "MM_BUDGET"` in `get_session()` if no envelope is set and user is admin.
+### ~~Issue 3: Envelope sessions reset on restart~~ ✅ FIXED
+`get_session()` now auto-assigns `current_envelope_id = "MM_BUDGET"` when `role == "admin"` on every session creation or envelope loss. Admin never needs to run `/envelope` after restart.
 
 ### Issue 4: FX rates for non-EUR transactions not auto-populated
 `auto_update_fx_rates()` in `fx.py` is never called automatically. It must be triggered manually or via a cron job. Without FX rates, all non-EUR transactions have `Amount_EUR = ""` which breaks reporting.
