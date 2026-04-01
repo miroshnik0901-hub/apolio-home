@@ -251,6 +251,25 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "set_language",
+        "description": (
+            "Change the bot's UI language for the current user. "
+            "Supported languages: ru (Русский), uk (Українська), en (English), it (Italiano). "
+            "Use when user requests 'switch to English', 'change language', 'переключи на итальянский', etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["lang"],
+            "properties": {
+                "lang": {
+                    "type": "string",
+                    "enum": ["ru", "uk", "en", "it"],
+                    "description": "Target language code",
+                },
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -526,6 +545,7 @@ class ApolioAgent:
             # Intelligence tools (v2.0)
             "save_goal":              self._tool_save_goal,
             "get_intelligence":       self._tool_get_intelligence,
+            "set_language":           self._tool_set_language,
         }
 
         handler = dispatch.get(name)
@@ -576,5 +596,24 @@ class ApolioAgent:
             engine = _get_intelligence_engine(sheets)
             snap = engine.compute_snapshot(envelope_id)
             return snap
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_set_language(self, params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Change the user's language preference."""
+        lang = params.get("lang", "").lower()
+        if lang not in ("ru", "uk", "en", "it"):
+            return {"error": f"Unsupported language: {lang}. Choose from: ru, uk, en, it"}
+
+        try:
+            mgr = _get_user_context_mgr(sheets)
+            mgr.set(session.user_id, "language", lang)
+            session.lang = lang
+            return {
+                "status": "ok",
+                "message": f"Language changed to {lang}",
+                "lang": lang,
+            }
         except Exception as e:
             return {"error": str(e)}

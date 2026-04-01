@@ -489,7 +489,23 @@ def _require_user(update: Update):
     if not tg_user:
         return None, None
     session = get_session(user.id, user.first_name, tg_user["role"])
-    # Language detection: only switch for explicit non-English languages (uk, it).
+
+    # Check saved language preference (cached in session after first load)
+    if getattr(session, "_lang_loaded", False):
+        return tg_user, session  # language already resolved
+    try:
+        from user_context import UserContextManager
+        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+        saved_lang = ctx_mgr.get(user.id, "language")
+        if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
+            session.lang = saved_lang
+            session._lang_loaded = True
+            return tg_user, session
+    except Exception as e:
+        logger.debug(f"Could not load saved language: {e}")
+
+    # Fallback: Language detection from Telegram
+    # Only switch for explicit non-English languages (uk, it).
     # English Telegram UI is not a signal — this product is Russian-first.
     # Switching logic: uk → uk, it → it, anything else (en, ru, etc.) → keep "ru"
     tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
@@ -592,10 +608,25 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = getattr(session, "lang", "en")
     name = session.user_name or "Mikhail"
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
+
+    # Welcome keyboard: 3 buttons [📊 Status] [📋 Report] [☰ Menu]
+    welcome_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status"),
+         InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
+        [InlineKeyboardButton("☰ " + i18n.t_menu("menu_title", lang).rstrip(":"),
+                             callback_data="nav:__menu__")],
+    ])
+
+    # First: clear any persistent reply keyboard from previous version
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=_build_main_keyboard(lang),
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    # Then: show inline navigation buttons
+    await update.message.reply_text(
+        "👇",
+        reply_markup=welcome_kb,
     )
 
 
@@ -632,18 +663,17 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── /settings ──────────────────────────────────────────────────────────────────
 
 async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Show settings/service submenu (admin only)."""
+    """Show settings/service submenu (accessible to all users)."""
     tg_user, session = _require_user(update)
     if not tg_user:
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
-    if tg_user.get("role") != "admin":
-        await update.message.reply_text(i18n.ts("admin_only", lang))
-        return
 
+    lang = getattr(session, "lang", "en")
+    role = tg_user.get("role", "viewer")
     tree = mc.get_menu()
-    kb = _build_inline_menu("settings", tree, role="admin")
-    await update.message.reply_text("⚙️ <b>Настройки</b>:", parse_mode=ParseMode.HTML,
+    kb = _build_inline_menu("settings", tree, role=role, lang=lang)
+    await update.message.reply_text(i18n.ts("settings_title", lang), parse_mode=ParseMode.HTML,
                                     reply_markup=kb)
 
 
@@ -1005,12 +1035,26 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     role = tg_user.get("role", "viewer")
     session = get_session(query.from_user.id, query.from_user.first_name, role)
-    # Same Russian-first logic as _require_user: only override for uk/it
-    tg_lang_cb = i18n.get_lang(getattr(query.from_user, "language_code", None) or "")
-    if tg_lang_cb in ("uk", "it"):
-        session.lang = tg_lang_cb
-    elif not getattr(session, "lang", "") or session.lang == "en":
-        session.lang = "ru"
+
+    # Language: use cached value or load from UserContext
+    if not getattr(session, "_lang_loaded", False):
+        try:
+            from user_context import UserContextManager
+            ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+            saved_lang = ctx_mgr.get(query.from_user.id, "language")
+            if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
+                session.lang = saved_lang
+                session._lang_loaded = True
+        except Exception:
+            pass
+        if not getattr(session, "_lang_loaded", False):
+            tg_lang_cb = i18n.get_lang(getattr(query.from_user, "language_code", None) or "")
+            if tg_lang_cb in ("uk", "it"):
+                session.lang = tg_lang_cb
+            elif not getattr(session, "lang", "") or session.lang == "en":
+                session.lang = "ru"
+            session._lang_loaded = True
+
     lang = session.lang
     data = query.data
 
@@ -1051,7 +1095,32 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if ntype == "cmd":
             command = node.get("command", "")
             params  = node.get("params", {})
-            if command == "status":
+            if command == "set_language":
+                # Handle language switching
+                target_lang = params.get("lang", "").lower()
+                if target_lang in i18n.SUPPORTED_LANGS:
+                    session.lang = target_lang
+                    session._lang_loaded = True  # mark as resolved
+                    # Save to UserContext
+                    try:
+                        from user_context import UserContextManager
+                        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+                        ctx_mgr.set(query.from_user.id, "language", target_lang)
+                    except Exception as e:
+                        logger.debug(f"Could not save language to UserContext: {e}")
+                    # Show confirmation and rebuild settings menu in new language
+                    await query.answer(i18n.ts("lang_changed", target_lang), show_alert=False)
+                    tree = mc.get_menu()
+                    kb = _build_inline_menu("settings", tree, role, session.lang)
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=kb)
+                    except BadRequest:
+                        pass
+                    return
+                else:
+                    await query.answer(f"Unsupported language: {target_lang}", show_alert=True)
+                    return
+            elif command == "status":
                 html = await _build_status_html(session)
                 kb = _with_menu_btn(
                     [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="nav:report"),
@@ -1417,7 +1486,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 i18n.t("", lang, i18n.GREETING_MSG),
                 parse_mode=ParseMode.HTML,
-                reply_markup=_build_main_keyboard(lang),
+                reply_markup=_with_menu_btn(),
             )
             return
 

@@ -49,7 +49,7 @@ DEFAULT_MENU: dict[str, dict] = {
     "settings": {
         "label": "⚙️ Система", "parent": "",
         "type": "submenu", "command": "", "params": {}, "order": 5,
-        "roles": ["admin"],
+        "roles": [],
     },
     # ── Analytics submenu ──────────────────────────────────────────────────
     "rep_curr": {
@@ -111,20 +111,45 @@ DEFAULT_MENU: dict[str, dict] = {
         },
         "order": 4, "roles": [],
     },
-    # ── System submenu (admin only) ────────────────────────────────────────
+    # ── System submenu ────────────────────────────────────────────────────────
+    "set_lang": {
+        "label": "🌍 Язык", "parent": "settings",
+        "type": "submenu", "command": "", "params": {}, "order": 1,
+        "roles": [],
+    },
+    "set_lang_ru": {
+        "label": "🇷🇺 Русский", "parent": "set_lang",
+        "type": "cmd", "command": "set_language", "params": {"lang": "ru"}, "order": 1,
+        "roles": [],
+    },
+    "set_lang_uk": {
+        "label": "🇺🇦 Українська", "parent": "set_lang",
+        "type": "cmd", "command": "set_language", "params": {"lang": "uk"}, "order": 2,
+        "roles": [],
+    },
+    "set_lang_en": {
+        "label": "🇬🇧 English", "parent": "set_lang",
+        "type": "cmd", "command": "set_language", "params": {"lang": "en"}, "order": 3,
+        "roles": [],
+    },
+    "set_lang_it": {
+        "label": "🇮🇹 Italiano", "parent": "set_lang",
+        "type": "cmd", "command": "set_language", "params": {"lang": "it"}, "order": 4,
+        "roles": [],
+    },
+    "set_envelope": {
+        "label": "📁 Активный конверт", "parent": "settings",
+        "type": "cmd", "command": "envelopes", "params": {}, "order": 2,
+        "roles": [],
+    },
     "set_undo": {
         "label": "↩️ Отменить", "parent": "settings",
-        "type": "cmd", "command": "undo", "params": {}, "order": 1,
-        "roles": ["admin"],
-    },
-    "set_envelopes": {
-        "label": "📁 Конверты", "parent": "settings",
-        "type": "cmd", "command": "envelopes", "params": {}, "order": 2,
+        "type": "cmd", "command": "undo", "params": {}, "order": 3,
         "roles": ["admin"],
     },
     "set_refresh": {
         "label": "🔄 Обновить меню", "parent": "settings",
-        "type": "cmd", "command": "refresh", "params": {}, "order": 3,
+        "type": "cmd", "command": "refresh", "params": {}, "order": 4,
         "roles": ["admin"],
     },
 }
@@ -136,7 +161,7 @@ _DEFAULT_ROWS = [
     ("report",        "📋 Аналитика",      "",             "submenu", "",             "",                     2, "TRUE", ""),
     ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     3, "TRUE", ""),
     ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     4, "TRUE", ""),
-    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     5, "TRUE", "admin"),
+    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     5, "TRUE", ""),
     # Analytics submenu
     ("rep_curr",      "▶ Этот месяц",     "report",       "cmd",     "report",       '{"period":"current"}', 1, "TRUE", ""),
     ("rep_last",      "◀ Прошлый месяц",  "report",       "cmd",     "report",       '{"period":"last"}',    2, "TRUE", ""),
@@ -148,10 +173,15 @@ _DEFAULT_ROWS = [
     ("txn_search",    "🔍 Поиск",               "transactions", "free_text", "",        '{"prompt":"Введите поисковой запрос:\\nНапример: Продукты, кофе, > 50","pending_key":"transactions:search"}',   4, "TRUE", ""),
     ("txn_category",  "🏷 По категории",         "transactions", "free_text", "",        '{"prompt":"Введите категорию:\\nНапример: Продукты, Ресторан, Транспорт","pending_key":"transactions:category"}', 5, "TRUE", ""),
     ("rep_custom",    "🗓 Другой период",         "report",       "free_text", "",        '{"prompt":"Введите период:\\n• Месяц: 2026-03\\n• Диапазон: 2026-01:2026-03","pending_key":"report:custom_period"}', 4, "TRUE", ""),
-    # System submenu (admin only)
-    ("set_undo",      "↩️ Отменить",      "settings",     "cmd",     "undo",         "",                     1, "TRUE", "admin"),
-    ("set_envelopes", "📁 Конверты",       "settings",     "cmd",     "envelopes",    "",                     2, "TRUE", "admin"),
-    ("set_refresh",   "🔄 Обновить меню",  "settings",     "cmd",     "refresh",      "",                     3, "TRUE", "admin"),
+    # System submenu
+    ("set_lang",      "🌍 Язык",           "settings",     "submenu", "",             "",                     1, "TRUE", ""),
+    ("set_lang_ru",   "🇷🇺 Русский",        "set_lang",     "cmd",     "set_language", '{"lang":"ru"}',       1, "TRUE", ""),
+    ("set_lang_uk",   "🇺🇦 Українська",     "set_lang",     "cmd",     "set_language", '{"lang":"uk"}',       2, "TRUE", ""),
+    ("set_lang_en",   "🇬🇧 English",        "set_lang",     "cmd",     "set_language", '{"lang":"en"}',       3, "TRUE", ""),
+    ("set_lang_it",   "🇮🇹 Italiano",       "set_lang",     "cmd",     "set_language", '{"lang":"it"}',       4, "TRUE", ""),
+    ("set_envelope",  "📁 Активный конверт",  "settings",   "cmd",     "envelopes",    "",                     2, "TRUE", ""),
+    ("set_undo",      "↩️ Отменить",      "settings",     "cmd",     "undo",         "",                     3, "TRUE", "admin"),
+    ("set_refresh",   "🔄 Обновить меню",  "settings",     "cmd",     "refresh",      "",                     4, "TRUE", "admin"),
 ]
 
 _HEADERS = ["ID", "Label", "Parent", "Type", "Command", "Params", "Order", "Visible", "Roles"]
