@@ -25,12 +25,12 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 - [ ] `set_language` tool in agent.py TOOLS schema + dispatch dict
 - [ ] Language saved to UserContext sheet on change (both via menu and agent)
 
-### UI navigation (inline-only, NO persistent ReplyKeyboard)
-- [ ] `/start` sends `ReplyKeyboardRemove()` — NO persistent keyboard
+### UI navigation (dual: reply keyboard + inline buttons)
+- [ ] Reply keyboard: `is_persistent=False` — hidden by default, available via toggle icon
+- [ ] `/start` sends `_build_main_keyboard(lang)` as non-persistent reply keyboard
 - [ ] Welcome message followed by inline buttons (Status, Report) + ☰ Меню
-- [ ] All navigation is inline buttons only — no `ReplyKeyboardMarkup` anywhere
-- [ ] `_with_menu_btn(lang)` appends ☰ Меню row to any inline keyboard
-- [ ] Greeting handler uses `_with_menu_btn()` (not `_build_main_keyboard`)
+- [ ] Inline navigation used for menus, settings, language switching
+- [ ] `_with_menu_btn()` appends ☰ Меню row to any inline keyboard
 
 ### Inline menu
 - [ ] New items added to BOTH `DEFAULT_MENU` and `_DEFAULT_ROWS` (menu_config.py)
@@ -179,8 +179,9 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 ## After pushing
 
 - [ ] Railway deployed — check logs, no import errors
-- [ ] Send `/start` — persistent keyboard removed, inline buttons appear
+- [ ] Send `/start` — reply keyboard available via toggle (not persistent), inline buttons appear
 - [ ] Welcome message shows Status + Report buttons + ☰ Меню
+- [ ] Keyboard toggle icon visible on right side of input field
 - [ ] Send a photo without caption — bot responds (not silent)
 - [ ] Send "как дела с бюджетом?" — bot responds with budget intelligence
 - [ ] If new menu items added — tap ⚙️ Settings → Refresh Menu

@@ -67,6 +67,8 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
         📊 Статус   |  📋 Отчёт
         📝 Записи   |  ➕ Добавить
         📁 Конверты |  ⚙️ Настройки
+
+    NOT persistent — hidden by default, user opens via keyboard toggle icon.
     """
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -75,7 +77,7 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
             [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
         ],
         resize_keyboard=True,
-        is_persistent=True,
+        is_persistent=False,
     )
 
 
@@ -617,11 +619,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                              callback_data="nav:__menu__")],
     ])
 
-    # First: clear any persistent reply keyboard from previous version
+    # Send welcome with non-persistent reply keyboard (available via toggle icon)
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=_build_main_keyboard(lang),
     )
     # Then: show inline navigation buttons
     await update.message.reply_text(
