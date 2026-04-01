@@ -414,7 +414,8 @@ async def post_init(app: Application):
     """Register bot commands, ensure BotMenu sheet exists, schedule weekly summary."""
     # Set the native Telegram menu button to show commands (the [≡] left of input)
     try:
-        await app.bot.set_my_menu_button(menu_button=MenuButtonCommands())
+        if hasattr(app.bot, "set_my_menu_button"):
+            await app.bot.set_my_menu_button(menu_button=MenuButtonCommands())
     except Exception as e:
         logger.warning(f"Could not set menu button: {e}")
 
