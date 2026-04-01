@@ -564,13 +564,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     name = session.user_name or "Mikhail"
-    # Clear any lingering reply keyboard silently, then delete the placeholder
-    try:
-        rm = await update.message.reply_text("\u200b", reply_markup=ReplyKeyboardRemove())
-        await rm.delete()
-    except Exception:
-        pass
-    await update.message.reply_text(
+    # Send message with ReplyKeyboardRemove to clear any persistent keyboard,
+    # then immediately edit it to attach the inline ☰ Меню button.
+    # This is more reliable than send+delete across all Telegram clients.
+    msg = await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
         "Просто напишите мне:\n"
@@ -579,8 +576,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• <i>«покажи отчёт за март»</i> — статистика\n\n"
         "Нажмите <b>☰ Меню</b> для навигации:",
         parse_mode=ParseMode.HTML,
-        reply_markup=_with_menu_btn(),
+        reply_markup=ReplyKeyboardRemove(),
     )
+    await msg.edit_reply_markup(reply_markup=_with_menu_btn())
 
 
 async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
