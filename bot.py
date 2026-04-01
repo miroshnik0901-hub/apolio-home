@@ -30,7 +30,7 @@ import menu_config as mc
 from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -50,18 +50,20 @@ agent = ApolioAgent(sheets, auth)
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-def _build_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Single persistent button — all navigation happens via inline keyboards."""
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("☰ Меню")]],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+def _build_reply_keyboard():
+    """No reply keyboard — all navigation is via inline buttons."""
+    return ReplyKeyboardRemove()
 
 
 def _get_keyboard_shortcuts() -> dict[str, str]:
-    """Map reply button label → action key for the message handler."""
-    return {"☰ Меню": "__menu__"}
+    return {}
+
+
+def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
+    """Build inline keyboard: extra rows + [☰ Меню] at the bottom."""
+    rows = [list(r) for r in extra_rows]
+    rows.append([InlineKeyboardButton("☰ Меню", callback_data="nav:__menu__")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _build_inline_menu(parent_id: str = "", tree: dict = None) -> InlineKeyboardMarkup:
@@ -472,7 +474,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
         await update.message.reply_text(
             "Напишите расход в свободной форме:\n"
             "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»",
-            reply_markup=_build_reply_keyboard(),
+            reply_markup=_with_menu_btn(),
         )
         return True
 
@@ -488,11 +490,11 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
             if tg_user:
                 await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
                 html = await _build_report_html(session, period)
-                nav_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                    InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr"),
-                ]])
-                await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=nav_kb)
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                     InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                )
+                await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         elif command == "transactions":
             await cmd_transactions(update, ctx)
         elif command == "week":
@@ -506,12 +508,6 @@ async def _handle_menu_node(node_id: str, update: Update, ctx) -> bool:
         return True
 
     return False
-    user = update.effective_user
-    tg_user = auth.get_user(user.id)
-    if not tg_user:
-        return None, None
-    session = get_session(user.id, user.first_name, tg_user["role"])
-    return tg_user, session
 
 
 # ── /start ─────────────────────────────────────────────────────────────────────
@@ -523,7 +519,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     name = session.user_name or "Mikhail"
-    kb = _build_reply_keyboard()
     await update.message.reply_text(
         f"👋 Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
@@ -531,9 +526,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• <i>«кофе 3.50»</i> — запишу расход\n"
         "• <i>«продукты 85 EUR Esselunga»</i> — с заметкой\n"
         "• <i>«покажи отчёт за март»</i> — статистика\n\n"
-        "Или используйте кнопки меню ниже 👇",
+        "Нажмите <b>☰ Меню</b> для навигации:",
         parse_mode=ParseMode.HTML,
-        reply_markup=kb,
+        reply_markup=_with_menu_btn(),
     )
 
 
@@ -546,12 +541,9 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     mc.invalidate()
     admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
     mc.get_menu(sheets._gc, admin_id)  # pre-warm cache from sheet
-    global MAIN_KEYBOARD, KEYBOARD_SHORTCUTS
-    MAIN_KEYBOARD = _build_reply_keyboard()
-    KEYBOARD_SHORTCUTS = _get_keyboard_shortcuts()
     await update.message.reply_text(
         "🔄 Меню обновлено из Admin-таблицы.",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=_with_menu_btn(),
     )
 
 
@@ -676,11 +668,11 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     html = await _build_status_html(session)
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
-        InlineKeyboardButton("📝 Записи", callback_data="cb_transactions"),
-    ]])
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
+         InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
+    )
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ── /report ────────────────────────────────────────────────────────────────────
@@ -705,11 +697,11 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
 
     html = await _build_report_html(session, period)
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-        InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
-    ]])
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+    )
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ── /week ──────────────────────────────────────────────────────────────────────
@@ -722,7 +714,7 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     html = await _build_week_html(session)
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=_with_menu_btn())
 
 
 # ── /month ─────────────────────────────────────────────────────────────────────
@@ -747,11 +739,11 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
 
     html = await _build_report_html(session, period)
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-        InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
-    ]])
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+    )
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ── /transactions ──────────────────────────────────────────────────────────────
@@ -807,9 +799,9 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append("")
 
         # Inline delete buttons for last 5 transactions
-        keyboard = []
-        row = []
         recent = list(reversed(txs))[:5]
+        del_rows = []
+        row = []
         for i, tx in enumerate(recent):
             tx_id = tx.get("ID", "")
             cat = tx.get("Category", "?")[:7]
@@ -818,10 +810,10 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"🗑 {cat} {amt}", callback_data=f"cb_del_{tx_id}"
             ))
             if len(row) == 2 or i == len(recent) - 1:
-                keyboard.append(row)
+                del_rows.append(row)
                 row = []
 
-        markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
         await update.message.reply_text(
             "\n".join(lines),
             parse_mode=ParseMode.HTML,
@@ -909,7 +901,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/week · /month · /envelopes · /undo\n\n"
         "<i>Голос и фото чеков тоже работают 🎤📸</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=_with_menu_btn(),
     )
 
 
@@ -932,11 +924,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         node_id = data[4:]
         tree = mc.get_menu()
 
-        # __root__ = go back to main menu
-        if node_id == "__root__":
+        # __menu__ / __root__ = show main menu (keyboard-only edit, keep message text)
+        if node_id in ("__menu__", "__root__"):
             kb = _build_inline_menu("", tree)
             try:
-                await query.edit_message_text("Выберите действие:", reply_markup=kb)
+                await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
                 pass
             return
@@ -949,10 +941,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ntype = node.get("type", "cmd")
 
         if ntype == "submenu":
-            kb = _build_submenu_keyboard(node_id, tree)
-            label = node["label"].replace(" ›", "")
+            kb = _build_inline_menu(node_id, tree)
             try:
-                await query.edit_message_text(f"{label}:", reply_markup=kb)
+                await query.edit_message_reply_markup(reply_markup=kb)
             except BadRequest:
                 pass
             return
@@ -962,20 +953,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             params  = node.get("params", {})
             if command == "status":
                 html = await _build_status_html(session)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📋 Отчёт", callback_data="nav:report"),
-                    InlineKeyboardButton("📝 Записи", callback_data="nav:transactions"),
-                ]])
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton("📋 Отчёт",    callback_data="nav:report"),
+                     InlineKeyboardButton("📝 Записи",   callback_data="nav:transactions")],
+                )
             elif command == "report":
                 period = params.get("period", "current")
                 html = await _build_report_html(session, period)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                    InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr"),
-                ]])
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                     InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                )
             elif command == "week":
                 html = await _build_week_html(session)
-                kb = None
+                kb = _with_menu_btn()
             else:
                 await query.answer("Команда не поддерживается в инлайн-режиме", show_alert=True)
                 return
@@ -1020,28 +1011,28 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── cb_status ──────────────────────────────────────────────────────────
     elif data == "cb_status":
         html = await _build_status_html(session)
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
-            InlineKeyboardButton("📝 Записи", callback_data="cb_transactions"),
-        ]])
-        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("📋 Отчёт",  callback_data="cb_report"),
+             InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
+        )
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_report ──────────────────────────────────────────────────────────
     elif data == "cb_report":
         html = await _build_report_html(session, "current")
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-            InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
-        ]])
-        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+        )
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     elif data == "cb_report_last":
         html = await _build_report_html(session, "last")
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-            InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
-        ]])
-        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+        )
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_transactions ────────────────────────────────────────────────────
     elif data == "cb_transactions":
@@ -1050,7 +1041,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             result = await tool_find_transactions({"limit": 8}, session, sheets, auth)
             txs = result.get("transactions", [])
             if not txs:
-                await query.edit_message_text("Записей пока нет.")
+                await query.message.reply_text("Записей пока нет.", reply_markup=_with_menu_btn())
                 return
             lines = ["📝 <b>Последние записи:</b>\n"]
             for tx in reversed(txs):
@@ -1059,14 +1050,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
                 curr = tx.get("Currency_Orig", "EUR")
                 note = tx.get("Note", "")
-                tx_id = tx.get("ID", "")
                 icon = _cat_icon(cat)
                 note_str = f" · {note}" if note else ""
                 lines.append(
                     f"{icon} <b>{cat}</b>  {amt} {curr}  <i>{date}</i>{note_str}"
                 )
                 lines.append("")
-            keyboard = []
+            del_rows = []
             row = []
             recent = list(reversed(txs))[:4]
             for i, tx in enumerate(recent):
@@ -1076,16 +1066,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"🗑 {cat}", callback_data=f"cb_del_{tx_id}"
                 ))
                 if len(row) == 2 or i == len(recent) - 1:
-                    keyboard.append(row)
+                    del_rows.append(row)
                     row = []
-            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            await query.edit_message_text(
+            markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
+            await query.message.reply_text(
                 "\n".join(lines),
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
             )
         except Exception as e:
-            await query.edit_message_text(f"❌ {e}")
+            await query.message.reply_text(f"❌ {e}", reply_markup=_with_menu_btn())
 
     # ── cb_help ────────────────────────────────────────────────────────────
     elif data == "cb_help":
@@ -1205,8 +1195,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "Привет! 👋\n\n"
                 "Просто напишите что потратили:\n"
                 "«кофе 3.50» или «продукты 85 EUR»\n\n"
-                "Или нажмите кнопку ниже 👇",
-                reply_markup=MAIN_KEYBOARD,
+                "Нажмите <b>☰ Меню</b> для навигации:",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_with_menu_btn(),
             )
             return
 
@@ -1270,14 +1261,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     la = session.last_action
     if la and la.action == "add" and "✓" in response:
         tx_id = la.tx_id
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
-            InlineKeyboardButton("🗑 Удалить", callback_data=f"cb_del_{tx_id}"),
-            InlineKeyboardButton("📊 Статус", callback_data="cb_status"),
-        ]])
-        await _safe_reply(update.message, response, reply_markup=keyboard)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
+             InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],
+            [InlineKeyboardButton("📊 Статус",   callback_data="cb_status")],
+        )
+        await _safe_reply(update.message, response, reply_markup=kb)
     else:
-        await _safe_reply(update.message, response)
+        await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
 
 
 # ── Weekly summary job ─────────────────────────────────────────────────────────
