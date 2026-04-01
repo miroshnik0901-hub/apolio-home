@@ -54,19 +54,19 @@ agent = ApolioAgent(sheets, auth)
 # Reply keyboard — shown after /start, user can hide/show with 🟦 button
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("📊 Статус"), KeyboardButton("📋 Отчёт")],
-        [KeyboardButton("💰 Добавить расход"), KeyboardButton("📁 Конверты")],
+        [KeyboardButton("💰 Добавить"), KeyboardButton("📊 Статус")],
+        [KeyboardButton("📋 Отчёт"),   KeyboardButton("📝 Записи")],
         [KeyboardButton("❓ Помощь")],
     ],
     resize_keyboard=True,
 )
 
-# Keyboard button texts → bot actions
+# Keyboard button texts — intercept before AI agent
 KEYBOARD_SHORTCUTS = {
+    "💰 Добавить",
     "📊 Статус",
     "📋 Отчёт",
-    "💰 Добавить расход",
-    "📁 Конверты",
+    "📝 Записи",
     "❓ Помощь",
 }
 
@@ -1276,19 +1276,19 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # ── Keyboard shortcut intercept (persistent reply keyboard buttons) ──
         if text in KEYBOARD_SHORTCUTS:
-            if text == "📊 Статус":
-                await cmd_status(update, ctx)
-            elif text == "📋 Отчёт":
-                await cmd_report(update, ctx)
-            elif text == "📁 Конверты":
-                await cmd_envelopes(update, ctx)
-            elif text == "❓ Помощь":
-                await cmd_help(update, ctx)
-            elif text == "💰 Добавить расход":
+            if text == "💰 Добавить":
                 await update.message.reply_text(
                     "Напишите расход в свободной форме:\n"
                     "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»"
                 )
+            elif text == "📊 Статус":
+                await cmd_status(update, ctx)
+            elif text == "📋 Отчёт":
+                await cmd_report(update, ctx)
+            elif text == "📝 Записи":
+                await cmd_transactions(update, ctx)
+            elif text == "❓ Помощь":
+                await cmd_help(update, ctx)
             return
 
         # ── Greeting intercept ─────────────────────────────────────────────
@@ -1297,9 +1297,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "Привет! 👋\n\n"
                 "Просто напишите что потратили:\n"
                 "«кофе 3.50» или «продукты 85 EUR»\n\n"
-                "Нажмите <b>☰ Меню</b> для навигации:",
+                "Используйте кнопки внизу 👇",
                 parse_mode=ParseMode.HTML,
-                reply_markup=_with_menu_btn(),
+                reply_markup=MAIN_KEYBOARD,
             )
             return
 
