@@ -439,16 +439,14 @@ async def post_init(app: Application):
         logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
 
-    # Ensure BotMenu tab exists in Admin sheet (creates with defaults if absent)
+    # Reset BotMenu tab to current defaults on every deploy (keeps sheet in sync with code)
     try:
         admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
-        created = mc.ensure_sheet(sheets._gc, admin_id)
-        if created:
-            logger.info("BotMenu sheet created in Admin spreadsheet with defaults")
-        # Pre-load menu into cache
+        mc.reset_to_defaults(sheets._gc, admin_id)
         mc.get_menu(sheets._gc, admin_id)
+        logger.info("BotMenu sheet reset to defaults and loaded")
     except Exception as e:
-        logger.warning(f"Could not init BotMenu sheet: {e}")
+        logger.warning(f"Could not reset BotMenu sheet: {e}")
 
     try:
         import pytz
@@ -1041,9 +1039,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await cmd_envelopes(query._effective_message, ctx)
                 return
             elif command == "refresh":
-                mc.invalidate()
                 admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
-                mc.get_menu(sheets._gc, admin_id)
+                mc.reset_to_defaults(sheets._gc, admin_id)
+                tree = mc.get_menu(sheets._gc, admin_id)
                 await query.answer("🔄 Меню обновлено", show_alert=False)
                 kb = _build_inline_menu("settings", tree, role)
                 try:
