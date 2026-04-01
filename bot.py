@@ -110,18 +110,12 @@ def _build_inline_menu(parent_id: str = "", tree: dict = None,
         back_cb = None
 
     rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
     for nid, node in children:
         # Prefer i18n translation; fall back to sheet label
         label = i18n.t_menu(nid, lang) or node["label"]
         if node["type"] == "submenu":
             label = label + " ›"
-        row.append(InlineKeyboardButton(label, callback_data=f"nav:{nid}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+        rows.append([InlineKeyboardButton(label, callback_data=f"nav:{nid}")])
     if back_cb:
         rows.append([InlineKeyboardButton(i18n.t_menu("back", lang), callback_data=back_cb)])
     return InlineKeyboardMarkup(rows)
@@ -611,10 +605,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = session.user_name or "Mikhail"
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
 
-    # Welcome keyboard: 3 buttons [📊 Status] [📋 Report] [☰ Menu]
+    # Welcome keyboard: 1-per-row for full-width labels
     welcome_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status"),
-         InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
+        [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status")],
+        [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
         [InlineKeyboardButton("☰ " + i18n.t_menu("menu_title", lang).rstrip(":"),
                              callback_data="nav:__menu__")],
     ])
