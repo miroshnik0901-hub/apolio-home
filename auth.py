@@ -111,6 +111,7 @@ class SessionContext:
         # Format: "<domain>:<action>", e.g. "report:custom_period"
         # Set by free_text menu callbacks; cleared after use in handle_message.
         self.pending_prompt: Optional[str] = None
+        self.session_id: Optional[str] = None
 
 
 # In-memory session store (keyed by user_id)

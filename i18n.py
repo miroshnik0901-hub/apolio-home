@@ -248,6 +248,42 @@ SYS: dict[str, dict[str, str]] = {
         "en": "Command not supported.",
         "it": "Comando non supportato.",
     },
+    "unsupported_media": {
+        "ru": "Тип файла не поддерживается.",
+        "uk": "Тип файлу не підтримується.",
+        "en": "Unsupported media type.",
+        "it": "Tipo di file non supportato.",
+    },
+    "undo_nothing": {
+        "ru": "Нет действий для отмены.",
+        "uk": "Немає дій для скасування.",
+        "en": "Nothing to undo.",
+        "it": "Nessuna azione da annullare.",
+    },
+    "undo_done": {
+        "ru": "↩ Отменено",
+        "uk": "↩ Скасовано",
+        "en": "↩ Undone",
+        "it": "↩ Annullato",
+    },
+    "envelope_not_found": {
+        "ru": "❌ Конверт не найден.",
+        "uk": "❌ Конверт не знайдено.",
+        "en": "❌ Envelope not found.",
+        "it": "❌ Busta non trovata.",
+    },
+    "undo_edit_not_impl": {
+        "ru": "↩ Отмена изменения поля не реализована.\nНапишите, что нужно исправить.",
+        "uk": "↩ Скасування зміни поля не реалізовано.\nНапишіть, що треба виправити.",
+        "en": "↩ Field edit undo is not yet implemented.\nTell me what to fix.",
+        "it": "↩ Annullamento modifica campo non implementato.\nDimmi cosa correggere.",
+    },
+    "load_error": {
+        "ru": "❌ Ошибка загрузки: {detail}",
+        "uk": "❌ Помилка завантаження: {detail}",
+        "en": "❌ Load error: {detail}",
+        "it": "❌ Errore caricamento: {detail}",
+    },
     "input_prompt": {
         "ru": "✏️ Введите значение:",
         "uk": "✏️ Введіть значення:",

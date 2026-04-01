@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import datetime as dt
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,11 +45,18 @@ from telegram.error import BadRequest
 from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
+from tools.conversation_log import ConversationLogger, make_session_id
 
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
+
+# Conversation logger — writes to ConversationLog tab in MM_BUDGET spreadsheet
+_MM_BUDGET_FILE_ID = os.environ.get(
+    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+)
+conv_log: Optional[ConversationLogger] = None
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
@@ -463,6 +471,14 @@ async def post_init(app: Application):
         logger.info("Weekly summary job scheduled: Monday 09:00 Rome")
     except Exception as e:
         logger.warning(f"Could not schedule weekly summary: {e}")
+
+    # Initialize conversation logger
+    global conv_log
+    try:
+        conv_log = ConversationLogger(sheets._gc, _MM_BUDGET_FILE_ID)
+        logger.info("Conversation logger initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize conversation logger: {e}")
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
@@ -1282,6 +1298,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    # Ensure session has a session_id for conversation logging
+    if not getattr(session, "session_id", None):
+        session.session_id = make_session_id()
+
     msg = update.message
     text = ""
     media_type = "text"
@@ -1416,7 +1436,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif msg.photo:
         file_obj = await msg.photo[-1].get_file()
         media_data = bytes(await file_obj.download_as_bytearray())
-        text = msg.caption or ""
+        # Language-aware default prompt for photos
+        _photo_prompts = {
+            "ru": "Извлеки данные о транзакции из этого чека.",
+            "uk": "Витягни дані про транзакцію з цього чека.",
+            "en": "Extract transaction data from this receipt.",
+            "it": "Estrai i dati della transazione da questa ricevuta.",
+        }
+        text = msg.caption or _photo_prompts.get(lang, _photo_prompts["en"])
         media_type = "photo"
 
     elif msg.document and msg.document.mime_type in ("text/csv", "application/csv"):
@@ -1425,7 +1452,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = f"[CSV import]\n{csv_bytes.decode('utf-8', errors='replace')}"
 
     else:
-        await update.message.reply_text("Не поддерживаемый тип сообщения.")
+        await update.message.reply_text(i18n.ts("unsupported_media", lang))
         return
 
     # ── Inject pending edit context ────────────────────────────────────────
@@ -1449,11 +1476,25 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     typing_task = asyncio.create_task(_keep_typing())
     try:
+        # Log user message before agent call
+        try:
+            if conv_log:
+                conv_log.log_user_message(session.user_id, text, session.session_id)
+        except Exception:
+            pass  # Conversation logging is not critical
+
         response = await agent.run(
             text, session,
             media_type=media_type,
             media_data=media_data if media_type == "photo" else None,
         )
+
+        # Log bot response after agent call
+        try:
+            if conv_log:
+                conv_log.log_bot_message(session.user_id, response, session.session_id)
+        except Exception:
+            pass  # Conversation logging is not critical
     finally:
         typing_task.cancel()
 

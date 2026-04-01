@@ -1,13 +1,17 @@
 """
-Apolio Home — AI Agent
-Claude claude-sonnet-4-20250514 with tool use.
-System prompt is loaded from ApolioHome_Prompt.md at startup.
+Apolio Home — AI Agent v2.0 (Intelligence Architecture)
+Claude claude-sonnet-4-20250514 with tool use + enriched context.
+System prompt loaded from ApolioHome_Prompt.md, augmented at runtime with:
+  - budget snapshot (intelligence.py)
+  - user goals (user_context.py)
+  - conversation history (tools/conversation_log.py)
 """
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import anthropic
 
@@ -15,6 +19,10 @@ from sheets import SheetsClient
 from auth import AuthManager, SessionContext
 
 logger = logging.getLogger(__name__)
+
+_MM_BUDGET_FILE_ID = os.environ.get(
+    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+)
 
 # ── Tools schema ───────────────────────────────────────────────────────────────
 
@@ -208,6 +216,41 @@ TOOLS = [
             },
         },
     },
+    # ── Intelligence tools (v2.0) ─────────────────────────────────────────
+    {
+        "name": "save_goal",
+        "description": (
+            "Save a financial goal for the user. Examples: monthly savings target, "
+            "emergency fund target, custom goal. Use when user expresses a financial "
+            "goal or target. key must be one of: savings_target_monthly, "
+            "emergency_fund_target, emergency_fund_current, custom_goal."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["key", "value"],
+            "properties": {
+                "key":   {"type": "string",
+                          "enum": ["savings_target_monthly", "emergency_fund_target",
+                                   "emergency_fund_current", "custom_goal"]},
+                "value": {"type": "string", "description": "The goal value, e.g. '500' for 500 EUR/month"},
+            },
+        },
+    },
+    {
+        "name": "get_intelligence",
+        "description": (
+            "Get an intelligence analysis: category trends vs last month, "
+            "anomalies (categories significantly above average), budget pace forecast, "
+            "and large recent transactions. Use when user asks for analysis, trends, "
+            "recommendations, or 'what should I do?'"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -216,6 +259,10 @@ FALLBACK_PROMPT = """You are Apolio Home, a family budget assistant for Mikhail 
 Always respond. Never stay silent. Handle RU/UK/EN/IT mixed input naturally.
 Current date: {today}. User: {user_name} (role: {role}). Active envelope: {envelope_id}.
 Add transactions proactively from natural language. Respond in the user's language.
+
+{intelligence_context}
+{goals_context}
+{conversation_context}
 """
 
 
@@ -235,7 +282,11 @@ def _load_system_prompt() -> str:
                 if dashes == 2:  # second --- ends the header block
                     start = i + 1
                     break
-        return "\n".join(lines[start:]).strip()
+        template = "\n".join(lines[start:]).strip()
+        # Append intelligence context placeholders if not present
+        if "{intelligence_context}" not in template:
+            template += "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n{conversation_context}"
+        return template
     except Exception as e:
         logger.warning(f"Could not load ApolioHome_Prompt.md: {e}. Using fallback prompt.")
         return FALLBACK_PROMPT
@@ -243,6 +294,42 @@ def _load_system_prompt() -> str:
 
 # Load once at module startup
 _SYSTEM_PROMPT_TEMPLATE = _load_system_prompt()
+
+
+# ── Intelligence helpers (lazy-loaded singletons) ─────────────────────────────
+
+_intelligence_engine = None
+_user_context_mgr = None
+_conv_logger = None
+
+
+def _get_intelligence_engine(sheets: SheetsClient):
+    global _intelligence_engine
+    if _intelligence_engine is None:
+        from intelligence import IntelligenceEngine
+        _intelligence_engine = IntelligenceEngine(sheets)
+    return _intelligence_engine
+
+
+def _get_user_context_mgr(sheets: SheetsClient):
+    global _user_context_mgr
+    if _user_context_mgr is None:
+        from user_context import UserContextManager
+        _user_context_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+    return _user_context_mgr
+
+
+def _get_conv_logger():
+    """Try to get the conversation logger from bot.py (shared instance)."""
+    global _conv_logger
+    if _conv_logger is not None:
+        return _conv_logger
+    try:
+        import bot as _bot_module
+        _conv_logger = getattr(_bot_module, "conv_log", None)
+    except Exception:
+        pass
+    return _conv_logger
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
@@ -253,6 +340,51 @@ class ApolioAgent:
         self.auth = auth
         self.client = anthropic.AsyncAnthropic()
 
+    def _build_context(self, session: SessionContext) -> dict:
+        """
+        Pre-compute intelligence snapshot, goals, and conversation history.
+        Returns dict of context blocks for system prompt injection.
+        All errors are swallowed — context enrichment must never crash the agent.
+        """
+        intelligence_text = ""
+        goals_text = ""
+        conversation_text = ""
+
+        envelope_id = session.current_envelope_id or "MM_BUDGET"
+
+        # 1. Intelligence snapshot (budget status, trends, anomalies)
+        try:
+            engine = _get_intelligence_engine(self.sheets)
+            from intelligence import format_snapshot_for_prompt
+            snap = engine.compute_snapshot(envelope_id)
+            if not snap.get("error"):
+                intelligence_text = format_snapshot_for_prompt(snap)
+        except Exception as e:
+            logger.warning(f"Intelligence context failed: {e}")
+
+        # 2. User goals
+        try:
+            mgr = _get_user_context_mgr(self.sheets)
+            from user_context import format_goals_for_prompt
+            ctx = mgr.get_all(session.user_id)
+            goals_text = format_goals_for_prompt(ctx)
+        except Exception as e:
+            logger.warning(f"User context failed: {e}")
+
+        # 3. Conversation history
+        try:
+            conv = _get_conv_logger()
+            if conv:
+                conversation_text = conv.format_context_for_prompt(session.user_id)
+        except Exception as e:
+            logger.warning(f"Conversation context failed: {e}")
+
+        return {
+            "intelligence_context": intelligence_text,
+            "goals_context": goals_text,
+            "conversation_context": conversation_text,
+        }
+
     async def run(self, message: str, session: SessionContext,
                   media_type: str = "text",
                   media_data: bytes | None = None) -> str:
@@ -261,11 +393,18 @@ class ApolioAgent:
         Returns the bot's text response. Never returns empty string.
         """
         today = datetime.now().strftime("%Y-%m-%d")
+
+        # Build enriched context
+        context = self._build_context(session)
+
         system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,
             user_name=session.user_name,
             role=session.role,
             envelope_id=session.current_envelope_id or "MM_BUDGET",
+            intelligence_context=context.get("intelligence_context", ""),
+            goals_context=context.get("goals_context", ""),
+            conversation_context=context.get("conversation_context", ""),
         )
 
         # Build user content (text or with media)
@@ -384,6 +523,9 @@ class ApolioAgent:
             "add_authorized_user":    tool_add_authorized_user,
             "remove_authorized_user": tool_remove_authorized_user,
             "create_envelope":        tool_create_envelope,
+            # Intelligence tools (v2.0)
+            "save_goal":              self._tool_save_goal,
+            "get_intelligence":       self._tool_get_intelligence,
         }
 
         handler = dispatch.get(name)
@@ -394,7 +536,7 @@ class ApolioAgent:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
             if name not in ("find_transactions", "get_summary", "get_budget_status",
-                            "list_envelopes"):
+                            "list_envelopes", "get_intelligence"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -403,4 +545,36 @@ class ApolioAgent:
             return result
         except Exception as e:
             logger.error(f"Tool {name} failed: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    # ── Intelligence tool handlers ────────────────────────────────────────
+
+    async def _tool_save_goal(self, params: dict, session: SessionContext,
+                               sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Save a financial goal for the user."""
+        key = params.get("key", "")
+        value = params.get("value", "")
+        if not key or not value:
+            return {"error": "key and value are required"}
+
+        try:
+            mgr = _get_user_context_mgr(sheets)
+            mgr.set(session.user_id, key, value)
+            return {
+                "status": "ok",
+                "message": f"Goal saved: {key} = {value}",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_get_intelligence(self, params: dict, session: SessionContext,
+                                      sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Run intelligence analysis and return structured results."""
+        envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
+
+        try:
+            engine = _get_intelligence_engine(sheets)
+            snap = engine.compute_snapshot(envelope_id)
+            return snap
+        except Exception as e:
             return {"error": str(e)}
