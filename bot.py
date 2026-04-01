@@ -987,13 +987,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer("Команда не поддерживается в инлайн-режиме", show_alert=True)
                 return
-            try:
-                await query.edit_message_text(
-                    html, parse_mode=ParseMode.HTML,
-                    reply_markup=kb,
-                )
-            except BadRequest:
-                pass
+            # Send as NEW message (not edit) — keeps chat history
+            await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
             return
 
     # ── cb_envelopes ───────────────────────────────────────────────────────
@@ -1037,12 +1032,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
             InlineKeyboardButton("📝 Записи", callback_data="cb_transactions"),
         ]])
-        try:
-            await query.edit_message_text(
-                html, parse_mode=ParseMode.HTML, reply_markup=keyboard
-            )
-        except BadRequest:
-            pass
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
     # ── cb_report ──────────────────────────────────────────────────────────
     elif data == "cb_report":
@@ -1051,12 +1041,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
             InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
         ]])
-        try:
-            await query.edit_message_text(
-                html, parse_mode=ParseMode.HTML, reply_markup=keyboard
-            )
-        except BadRequest:
-            pass
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
     elif data == "cb_report_last":
         html = await _build_report_html(session, "last")
@@ -1064,12 +1049,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
             InlineKeyboardButton("▶ Тек. месяц", callback_data="cb_report"),
         ]])
-        try:
-            await query.edit_message_text(
-                html, parse_mode=ParseMode.HTML, reply_markup=keyboard
-            )
-        except BadRequest:
-            pass
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
     # ── cb_transactions ────────────────────────────────────────────────────
     elif data == "cb_transactions":
