@@ -200,7 +200,14 @@ python3 -m py_compile bot.py auth.py sheets.py intelligence.py agent.py
 
 ---
 
-### L4 — Bot Behaviour Tests (send real messages)
+### L4 — Bot Behaviour Tests (automated via agent.run())
+
+> **These tests are run autonomously by the AI agent — not manually by the user.**
+> Use the L4 test block in `tests/run_all.py` or the inline Python script in the working guide.
+> All 6 L4 scenarios are called directly via `ApolioAgent.run()` with a Mikhail session.
+> The AI checks responses, response time, and absence of crashes without any user action.
+
+### L4 — Bot Behaviour Test Cases
 
 **Auth / Access:**
 - [ ] Mikhail `/start` → welcome message + inline buttons

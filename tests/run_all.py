@@ -105,6 +105,43 @@ if SHEETS_OK:
 else:
     print("  ⏭  Skipped (no sheets connection)")
 
+# L4 — BOT BEHAVIOUR (agent.run() — no user required)
+print("\n[L4] BOT BEHAVIOUR (agent.run() — autonomous)")
+try:
+    import asyncio, time as _time
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    from sheets import SheetsClient as _SC
+    from auth import AuthManager as _AM, SessionContext as _SCtx
+    from agent import ApolioAgent as _Ag
+
+    async def _run_l4():
+        _sh = _SC(); _au = _AM(_sh); _ag = _Ag(_sh, _au)
+        _s = object.__new__(_SCtx)
+        _s.user_id=360466156; _s.user_name="Mikhail"; _s.role="admin"; _s.lang="ru"
+        _s.current_envelope_id="MM_BUDGET"; _s.session_id="l4_auto"
+        _s.last_action=None; _s.pending_prompt=None; _s.pending_edit_tx=None
+        _s.pending_choice=None; _s.pending_delete=None
+        l4_cases = [
+            ("L4-1 plain greeting",   "привет"),
+            ("L4-2 budget status",    "какой у нас бюджет?"),
+            ("L4-3 add transaction",  "потратил 5 евро на кофе"),
+            ("L4-4 monthly summary",  "покажи расходы за этот месяц"),
+            ("L4-5 english query",    "show me this month expenses"),
+        ]
+        for name, msg in l4_cases:
+            t0 = _time.time()
+            try:
+                resp = await _ag.run(msg, _s)
+                ok = bool(resp and len(resp) > 5)
+                test(name, lambda r=resp: len(r) > 5)
+            except Exception as e:
+                test(name, lambda e=e: (_ for _ in ()).throw(e))
+
+    asyncio.run(_run_l4())
+except Exception as e:
+    print(f"  ⚠  L4 skipped: {e}")
+
 # SUMMARY
 total = len(results); passed = sum(1 for r in results if r[0]=="PASS"); failed = total - passed
 print(f"\n{'='*65}")

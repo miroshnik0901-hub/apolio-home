@@ -246,6 +246,14 @@ Columns A–G are user-editable. H–P are automatic.
 2. Push → check Railway logs (no import errors, no traceback)
 3. Update this file if architecture changed
 
+### Autonomous testing — the AI does this, not the user
+All testing is done by the AI without asking the user:
+- **L1–L3**: run `python3 tests/run_all.py` (static + unit + Sheets live) — always automated
+- **L4 bot behaviour**: call `ApolioAgent.run()` directly with a Mikhail session (360466156) — no Telegram needed
+- **L5 UI/UX**: read Railway logs after deploy — check error rate drops, `[AuthManager] Loaded N users` present
+- **Railway logs**: read via Chrome MCP (javascript on the Railway logs page)
+- The user NEVER has to manually test or check logs — the AI does it all autonomously
+
 ---
 
 ## 10. LANGUAGE LOGIC (3 tiers)
