@@ -325,6 +325,26 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "get_contribution_status",
+        "description": (
+            "Show per-user contribution and expense split status for the current or given month. "
+            "Use when user asks: 'кто сколько внёс?', 'сколько должна Marina?', "
+            "'как распределились расходы?', 'покажи расчёт 50/50', 'contribution status', "
+            "'settlement', 'кто в плюсе / минусе?'. "
+            "Returns: total contributions per user, total expenses, threshold, "
+            "each user's share of expenses, and balance (positive = credit, negative = owes)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string",
+                                "description": "Envelope ID, default = current"},
+                "month": {"type": "string",
+                          "description": "YYYY-MM, default = current month"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -336,6 +356,7 @@ Add transactions proactively from natural language. Respond in the user's langua
 
 {intelligence_context}
 {goals_context}
+{contribution_context}
 {conversation_context}
 """
 
@@ -359,7 +380,10 @@ def _load_system_prompt() -> str:
         template = "\n".join(lines[start:]).strip()
         # Append intelligence context placeholders if not present
         if "{intelligence_context}" not in template:
-            template += "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n{conversation_context}"
+            template += (
+                "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n"
+                "{contribution_context}\n\n{conversation_context}"
+            )
         return template
     except Exception as e:
         logger.warning(f"Could not load ApolioHome_Prompt.md: {e}. Using fallback prompt.")
@@ -465,10 +489,20 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Conversation context failed: {e}")
 
+        # 4. Contribution & split status
+        contribution_text = ""
+        try:
+            from intelligence import compute_contribution_status, format_contribution_for_prompt
+            contrib_snap = compute_contribution_status(self.sheets, envelope_id)
+            contribution_text = format_contribution_for_prompt(contrib_snap)
+        except Exception as e:
+            logger.warning(f"Contribution context failed: {e}")
+
         return {
             "intelligence_context": intelligence_text,
             "goals_context": goals_text,
             "conversation_context": conversation_text,
+            "contribution_context": contribution_text,
         }
 
     async def run(self, message: str, session: SessionContext,
@@ -490,6 +524,7 @@ class ApolioAgent:
             envelope_id=session.current_envelope_id or "MM_BUDGET",
             intelligence_context=context.get("intelligence_context", ""),
             goals_context=context.get("goals_context", ""),
+            contribution_context=context.get("contribution_context", ""),
             conversation_context=context.get("conversation_context", ""),
         )
 
@@ -587,7 +622,7 @@ class ApolioAgent:
             tool_delete_transaction, tool_delete_transaction_rows,
             tool_sort_transactions, tool_find_transactions,
         )
-        from tools.summary import tool_get_summary, tool_get_budget_status
+        from tools.summary import tool_get_summary, tool_get_budget_status, tool_get_contribution_status
         from tools.wise import tool_import_wise_csv
         from tools.fx import tool_set_fx_rate
         from tools.config_tools import (
@@ -604,8 +639,9 @@ class ApolioAgent:
             "delete_transaction_rows": tool_delete_transaction_rows,
             "sort_transactions":      tool_sort_transactions,
             "find_transactions":      tool_find_transactions,
-            "get_summary":            tool_get_summary,
-            "get_budget_status":      tool_get_budget_status,
+            "get_summary":              tool_get_summary,
+            "get_budget_status":        tool_get_budget_status,
+            "get_contribution_status":  tool_get_contribution_status,
             "import_wise_csv":        tool_import_wise_csv,
             "set_fx_rate":            tool_set_fx_rate,
             "update_config":          tool_update_config,
@@ -627,7 +663,8 @@ class ApolioAgent:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
             if name not in ("find_transactions", "get_summary", "get_budget_status",
-                            "list_envelopes", "get_intelligence", "search_history"):
+                            "list_envelopes", "get_intelligence", "search_history",
+                            "get_contribution_status"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,

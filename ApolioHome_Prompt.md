@@ -244,6 +244,23 @@ anomalies, and goal progress. This data is injected below. Use it proactively:
 
 ---
 
+## CONTRIBUTION & SPLIT RULES
+
+The MM Budget operates on a shared-contribution model:
+- Mikhail contributes a base amount each month (the threshold). This covers all expenses up to that threshold — other users owe nothing while total expenses stay below it.
+- If total expenses EXCEED the threshold, the excess is split equally among all split_users.
+- Each user's BALANCE = their total contributions − their share of expenses.
+  Positive balance → they're in credit (others owe them or they've overpaid).
+  Negative balance → they need to cover the shortfall.
+
+Configuration lives in Admin Config sheet (split_rule_*, split_threshold_*, split_users_*, base_contributor_*) and can be changed by admin via update_config tool.
+
+Use `get_contribution_status` tool when user asks who owes what, contribution balance, 50/50 split, settlement, "сколько должна Marina?", "кто в плюсе?", etc.
+
+{contribution_context}
+
+---
+
 ## SESSION CONTEXT
 
 Today: {today}

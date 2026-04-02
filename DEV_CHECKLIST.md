@@ -77,6 +77,20 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 - [ ] User goals: `appdb.ctx_get_all()` with fallback to Google Sheets `UserContextManager`
 - [ ] `save_goal` tool: writes to PostgreSQL via `appdb.ctx_set()` (fallback to Sheets)
 
+### Contribution & Split Rules (intelligence.py, tools/summary.py, agent.py)
+- [x] Config keys written to Admin sheet: split_rule_*, split_threshold_*, split_users_*, base_contributor_*
+- [x] `compute_contribution_status()` in intelligence.py reads Config keys, falls back to Monthly_Cap
+- [x] `format_contribution_for_prompt()` returns compact text block; returns "" on error
+- [x] `tool_get_contribution_status` in tools/summary.py — permission-checked, async
+- [x] Tool registered in agent.py TOOLS schema + dispatch dict
+- [x] Tool excluded from audit log (`get_contribution_status` in the no-audit list)
+- [x] `_build_context()` includes step 4: contribution_context via compute_contribution_status()
+- [x] `{contribution_context}` placeholder in FALLBACK_PROMPT and ApolioHome_Prompt.md
+- [x] system prompt `format()` call passes `contribution_context=` kwarg
+- [ ] If split_rule == "solo" or split_users empty → solo mode, no split shown (handled in compute)
+- [x] Threshold from Config; fallback to Monthly_Cap if config key missing
+- [x] Balance = contributed − share (positive = credit, negative = owes)
+
 ### Receipt storage (tools/receipt_store.py)
 - [ ] `ReceiptStore` creates Receipts sheet on first use if not present
 - [ ] Receipt saved after photo analysis confirmation

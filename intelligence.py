@@ -197,6 +197,151 @@ class IntelligenceEngine:
             return {"error": str(e)}
 
 
+def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
+                                month: str = None) -> dict:
+    """
+    Compute per-user contribution and expense split for the given month.
+
+    Rules (from Config):
+      split_rule_<env>:         50_50 | solo
+      split_threshold_<env>:    base EUR covered by base_contributor
+      split_users_<env>:        comma-separated list of users in split
+      base_contributor_<env>:   user who covers up to threshold
+
+    Returns structured dict ready for formatting or tool response.
+    """
+    try:
+        if not month:
+            month = _current_month()
+
+        envelopes = sheets.get_envelopes()
+        env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+        if not env:
+            return {"error": "envelope_not_found"}
+
+        file_id = env.get("file_id", "")
+        currency = env.get("Currency", "EUR")
+        config = sheets.read_config()
+
+        split_rule        = config.get(f"split_rule_{envelope_id}", "solo")
+        threshold         = float(config.get(f"split_threshold_{envelope_id}",
+                                             env.get("Monthly_Cap", 0)) or 0)
+        split_users_raw   = config.get(f"split_users_{envelope_id}", "")
+        split_users       = [u.strip() for u in split_users_raw.split(",") if u.strip()]
+        base_contributor  = config.get(f"base_contributor_{envelope_id}", "Mikhail")
+
+        if not split_users:
+            split_users = [base_contributor]
+
+        all_txns = sheets.get_transactions(file_id)
+        month_txns = [t for t in all_txns if str(t.get("Date", "")).startswith(month)]
+
+        # Contributions = income-type transactions this month
+        contributions: dict[str, float] = defaultdict(float)
+        for t in month_txns:
+            if t.get("Type") in ("income", "transfer") and _parse_amount(t) > 0:
+                contributions[t.get("Who", "Unknown")] += _parse_amount(t)
+
+        # Total expenses
+        total_expenses = sum(
+            _parse_amount(t) for t in month_txns if t.get("Type") == "expense"
+        )
+
+        # Split calculation
+        if split_rule == "solo" or len(split_users) == 0:
+            user_shares = {base_contributor: total_expenses}
+            excess_amount = 0.0
+            excess_per_user = 0.0
+        else:
+            excess_amount = max(0.0, total_expenses - threshold)
+            covered_by_base = min(total_expenses, threshold)
+            excess_per_user = excess_amount / len(split_users) if split_users else 0.0
+
+            user_shares: dict[str, float] = {}
+            for u in split_users:
+                share = excess_per_user
+                if u == base_contributor:
+                    share += covered_by_base
+                user_shares[u] = round(share, 2)
+
+        # Balance = contributed − share_owed
+        balances: dict[str, float] = {}
+        for u in split_users:
+            contributed = float(contributions.get(u, 0.0))
+            owed = float(user_shares.get(u, 0.0))
+            balances[u] = round(contributed - owed, 2)
+
+        return {
+            "status": "ok",
+            "month": month,
+            "currency": currency,
+            "split_rule": split_rule,
+            "threshold": threshold,
+            "base_contributor": base_contributor,
+            "split_users": split_users,
+            "total_expenses": round(total_expenses, 2),
+            "contributions": dict(contributions),
+            "user_shares": user_shares,
+            "balances": balances,
+            "excess_amount": round(excess_amount, 2),
+            "excess_per_user": round(excess_per_user, 2),
+        }
+
+    except Exception as e:
+        logger.error(f"compute_contribution_status failed: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
+def format_contribution_for_prompt(snap: dict) -> str:
+    """
+    Compact text block injected into system prompt so the agent always
+    knows the current contribution/split state.
+    """
+    if snap.get("error") or snap.get("status") != "ok":
+        return ""
+
+    cur = snap["currency"]
+    month = snap["month"]
+    threshold = snap["threshold"]
+    total_exp = snap["total_expenses"]
+    contributions = snap["contributions"]
+    balances = snap["balances"]
+    excess = snap["excess_amount"]
+    excess_per = snap["excess_per_user"]
+    split_users = snap["split_users"]
+    base_c = snap["base_contributor"]
+
+    lines = [f"## CONTRIBUTION & SPLIT STATUS ({month})"]
+
+    # Contributions
+    contrib_parts = [f"{u}={contributions.get(u, 0):.2f} {cur}" for u in split_users]
+    if contrib_parts:
+        lines.append(f"Contributions: {', '.join(contrib_parts)}")
+
+    # Expenses
+    lines.append(f"Total expenses: {total_exp:.2f} {cur}")
+
+    if total_exp <= threshold:
+        lines.append(
+            f"Split: below threshold ({threshold} {cur}) → all on {base_c}"
+        )
+    else:
+        lines.append(
+            f"Split: excess {excess:.2f} {cur} over threshold {threshold} {cur} "
+            f"→ {excess_per:.2f} {cur} each ({', '.join(split_users)})"
+        )
+
+    # Balances
+    bal_parts = []
+    for u in split_users:
+        b = balances.get(u, 0)
+        sign = "+" if b >= 0 else ""
+        bal_parts.append(f"{u}={sign}{b:.2f} {cur}")
+    lines.append(f"Balances: {', '.join(bal_parts)}")
+
+    return "\n".join(lines)
+
+
 def format_snapshot_for_prompt(snap: dict) -> str:
     """
     Format the intelligence snapshot as a compact text block
