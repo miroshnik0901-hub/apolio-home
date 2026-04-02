@@ -786,19 +786,30 @@ class ApolioAgent:
 
         month = params.get("month") or datetime.utcnow().strftime("%Y-%m")
 
+        from intelligence import (IntelligenceEngine, compute_contribution_status,
+                                   compute_contribution_history)
+
+        # Budget snapshot
         try:
-            from intelligence import (IntelligenceEngine, format_snapshot_for_prompt,
-                                       compute_contribution_status,
-                                       compute_contribution_history)
             engine = IntelligenceEngine(sheets)
-            snap = engine.compute_snapshot(envelope_id=envelope_id, month=month)
-            contrib_snap = compute_contribution_status(sheets, envelope_id, month)
-            contrib_history = compute_contribution_history(sheets, envelope_id, months_back=6)
+            snap = engine.compute_snapshot(envelope_id=envelope_id)
         except Exception as e:
-            logger.warning(f"refresh_dashboard: intelligence/contrib failed: {e}")
+            logger.warning(f"refresh_dashboard: snapshot failed: {e}")
             snap = {"month": month, "cap": 0, "spent": 0, "remaining": 0,
                     "pct_used": 0, "currency": "EUR"}
+
+        # Contribution status
+        try:
+            contrib_snap = compute_contribution_status(sheets, envelope_id, month)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: contrib_snap failed: {e}")
             contrib_snap = None
+
+        # Multi-month history
+        try:
+            contrib_history = compute_contribution_history(sheets, envelope_id, months_back=6)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: contrib_history failed: {e}")
             contrib_history = None
 
         try:
