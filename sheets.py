@@ -85,6 +85,48 @@ class AdminSheets:
                 return
         ws.append_row([key, value])
 
+    # ── Dashboard config ──────────────────────────────────────────────────
+
+    # Default dashboard settings (used if DashboardConfig tab not found)
+    DASHBOARD_DEFAULTS = {
+        "auto_refresh_on_transaction": "FALSE",
+        "show_contribution_history": "TRUE",
+        "history_months": "3",
+        "budget_warning_pct": "80",
+        "show_category_breakdown": "TRUE",
+        "master_template_id": "",   # empty = use MM_BUDGET_FILE_ID env var
+        "mode": "prod",             # "prod" or "test"
+        "test_file_id": "",         # override file ID in test mode
+    }
+
+    def get_dashboard_config(self) -> dict:
+        """Read DashboardConfig tab from Admin sheet. Falls back to defaults if tab missing."""
+        try:
+            ws = self._ws("DashboardConfig")
+            rows = ws.get_all_values()
+            cfg = dict(self.DASHBOARD_DEFAULTS)
+            cfg.update({row[0]: row[1] for row in rows if len(row) >= 2 and row[0]})
+            return cfg
+        except Exception:
+            return dict(self.DASHBOARD_DEFAULTS)
+
+    def write_dashboard_config(self, key: str, value: str):
+        """Write a single key-value to DashboardConfig tab. Creates tab if missing."""
+        try:
+            ws = self._ws("DashboardConfig")
+        except Exception:
+            wb = self._workbook()
+            ws = wb.add_worksheet(title="DashboardConfig", rows=30, cols=3)
+            ws.update("A1", [["Key", "Value", "Description"]])
+            for k, v in self.DASHBOARD_DEFAULTS.items():
+                ws.append_row([k, v, ""])
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows):
+            if row and row[0] == key:
+                ws.update_cell(i + 1, 2, value)
+                return
+        ws.append_row([key, value, ""])
+
     # ── Envelopes registry ────────────────────────────────────────────────
 
     def get_envelopes(self) -> list[dict]:
@@ -117,6 +159,19 @@ class AdminSheets:
             datetime.utcnow().isoformat()
         ])
 
+    def get_user_names(self) -> list[str]:
+        """Return list of user display names from the Users tab."""
+        try:
+            users = self.get_users()
+            names = []
+            for u in users:
+                name = u.get("name") or u.get("Name") or u.get("username") or ""
+                if name:
+                    names.append(name.strip())
+            return names
+        except Exception:
+            return []
+
     def remove_user(self, telegram_id: int):
         ws = self._ws("Users")
         records = ws.get_all_records()
@@ -124,14 +179,6 @@ class AdminSheets:
             if str(row.get("telegram_id")) == str(telegram_id):
                 ws.delete_rows(i + 2)
                 return
-
-    def get_user_names(self) -> list[str]:
-        """Return list of user display names from Users tab."""
-        try:
-            users = self.get_users()
-            return [u["name"] for u in users if u.get("name")]
-        except Exception:
-            return []
 
     # ── Audit log ─────────────────────────────────────────────────────────
 
@@ -192,9 +239,91 @@ class EnvelopeSheets:
         ])
         return tx_id
 
+    # ── Reference data ────────────────────────────────────────────────────
+
+    def get_categories(self) -> list[dict]:
+        """Read categories from the Categories tab.
+        Each row: Category, Subcategory (optional), Description (optional).
+        Returns list of dicts with 'category' and 'subcategory' keys.
+        If the tab doesn't exist, falls back to unique values from Transactions."""
+        try:
+            ws = self._ws("Categories")
+            records = ws.get_all_records()
+            if records:
+                return records
+        except Exception:
+            pass
+        # Fallback: derive unique categories from existing transactions
+        try:
+            ws = self._ws("Transactions")
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            headers = all_values[0]
+            cat_idx = headers.index("Category") if "Category" in headers else -1
+            sub_idx = headers.index("Subcategory") if "Subcategory" in headers else -1
+            seen = {}
+            for row in all_values[1:]:
+                padded = row + [""] * max(0, len(headers) - len(row))
+                if padded[cat_idx].strip() if cat_idx >= 0 else "":
+                    cat = padded[cat_idx].strip()
+                    sub = padded[sub_idx].strip() if sub_idx >= 0 else ""
+                    if cat not in seen:
+                        seen[cat] = set()
+                    if sub:
+                        seen[cat].add(sub)
+            result = []
+            for cat, subs in seen.items():
+                if subs:
+                    for sub in sorted(subs):
+                        result.append({"Category": cat, "Subcategory": sub})
+                else:
+                    result.append({"Category": cat, "Subcategory": ""})
+            return result
+        except Exception:
+            return []
+
+    def get_accounts(self) -> list[str]:
+        """Read accounts from the Accounts tab, or derive from transactions."""
+        try:
+            ws = self._ws("Accounts")
+            records = ws.get_all_records()
+            if records:
+                return [r.get("Account", r.get("Name", "")) for r in records if r.get("Account") or r.get("Name")]
+        except Exception:
+            pass
+        # Fallback: derive from transactions
+        try:
+            ws = self._ws("Transactions")
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            headers = all_values[0]
+            acc_idx = headers.index("Account") if "Account" in headers else -1
+            if acc_idx < 0:
+                return []
+            accounts = set()
+            for row in all_values[1:]:
+                padded = row + [""] * max(0, len(headers) - len(row))
+                acc = padded[acc_idx].strip()
+                if acc:
+                    accounts.add(acc)
+            return sorted(accounts)
+        except Exception:
+            return []
+
     def get_transactions(self, filters: dict = None) -> list[dict]:
         ws = self._ws("Transactions")
-        records = ws.get_all_records()
+        all_values = ws.get_all_values()
+        if not all_values:
+            return []
+        headers = all_values[0]
+        records = []
+        for i, row in enumerate(all_values[1:], start=2):  # row 2 = first data row
+            padded = row + [""] * max(0, len(headers) - len(row))
+            rec = dict(zip(headers, padded))
+            rec["_row"] = i  # physical sheet row number (header=1, data starts at 2)
+            records.append(rec)
         active = [r for r in records if str(r.get("Deleted", "FALSE")).upper() != "TRUE"]
         if not filters:
             return active
@@ -227,7 +356,37 @@ class EnvelopeSheets:
         return False
 
     def delete_transaction(self, tx_id: str) -> bool:
+        """Soft-delete: set Deleted=TRUE (kept for backward compat, prefer hard_delete_by_tx_id)."""
         return self.edit_transaction(tx_id, "Deleted", "TRUE")
+
+    def hard_delete_by_tx_id(self, tx_id: str) -> bool:
+        """
+        Physically remove the row matching tx_id from the Transactions sheet.
+        Returns True if a row was deleted, False if tx_id not found.
+        """
+        ws = self._ws("Transactions")
+        all_values = ws.get_all_values()
+        if not all_values:
+            return False
+        headers = all_values[0]
+        try:
+            id_col = headers.index("ID")
+        except ValueError:
+            return False
+
+        # Find the physical row number (1-based; row 1 = header)
+        target_row = None
+        for i, row in enumerate(all_values[1:], start=2):
+            padded = row + [""] * max(0, len(headers) - len(row))
+            if padded[id_col] == tx_id:
+                target_row = i
+                break
+
+        if target_row is None:
+            return False
+
+        ws.delete_rows(target_row)
+        return True
 
     def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:
         """Return raw cell values for rows start_row..end_row (1-based) from Transactions."""
@@ -250,6 +409,36 @@ class EnvelopeSheets:
         ws.delete_rows(start_row, end_row)
         return end_row - start_row + 1
 
+    def sort_by_date(self, order: str = "asc") -> int:
+        """Sort Transactions data rows by Date (col A) in-place.
+        Header (row 1) is preserved. Returns number of rows sorted.
+        order: 'asc' (oldest first) or 'desc' (newest first)."""
+        ws = self._ws("Transactions")
+        all_rows = ws.get_all_values()
+        if len(all_rows) < 2:
+            return 0
+
+        header = all_rows[0]
+        data_rows = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
+        if not data_rows:
+            return 0
+
+        # Pad rows to header width so the update range is uniform
+        width = len(header)
+        padded = [r + [""] * max(0, width - len(r)) for r in data_rows]
+
+        # ISO dates (YYYY-MM-DD) sort correctly as strings; empty dates go last
+        reverse = (order.lower() == "desc")
+        padded.sort(key=lambda r: r[0] if r[0].strip() else "9999-99-99",
+                    reverse=reverse)
+
+        # Overwrite data area with sorted rows (single API call)
+        end_row = 1 + len(padded)
+        col_letter = chr(ord('A') + width - 1)  # e.g. 'P' for 16 columns
+        ws.update(f"A2:{col_letter}{end_row}", padded,
+                  value_input_option="USER_ENTERED")
+        return len(padded)
+
     def sum_expenses(self, month: str) -> float:
         txs = self.get_transactions({"date_from": f"{month}-01", "date_to": f"{month}-31"})
         return sum(
@@ -258,57 +447,232 @@ class EnvelopeSheets:
             if t.get("Type", "expense") == "expense"
         )
 
-    # ── Reference data ────────────────────────────────────────────────────
-
-    def get_categories(self) -> list[str]:
-        """Return list of category names from Categories tab, or derive from Transactions."""
-        try:
-            ws = self._workbook().worksheet("Categories")
-            values = ws.col_values(1)
-            cats = [v.strip() for v in values if v.strip() and v.strip().lower() != "category"]
-            if cats:
-                return cats
-        except Exception:
-            pass
-        # Derive from Transactions
-        try:
-            txs = self.get_transactions()
-            seen = []
-            for t in txs:
-                c = t.get("Category", "").strip()
-                if c and c not in seen:
-                    seen.append(c)
-            return seen
-        except Exception:
-            return []
-
-    def get_accounts(self) -> list[str]:
-        """Return list of account names from Accounts tab, or derive from Transactions."""
-        try:
-            ws = self._workbook().worksheet("Accounts")
-            values = ws.col_values(1)
-            accs = [v.strip() for v in values if v.strip() and v.strip().lower() != "account"]
-            if accs:
-                return accs
-        except Exception:
-            pass
-        try:
-            txs = self.get_transactions()
-            seen = []
-            for t in txs:
-                a = t.get("Account", "").strip()
-                if a and a not in seen:
-                    seen.append(a)
-            return seen
-        except Exception:
-            return []
-
     # ── Config ────────────────────────────────────────────────────────────
 
     def read_config(self) -> dict:
         ws = self._ws("Config")
         rows = ws.get_all_values()
         return {row[0]: row[1] for row in rows if len(row) >= 2 and row[0]}
+
+    # ── Dashboard writer ─────────────────────────────────────────────────
+
+    def update_dashboard(self, snap: dict, contrib_snap: dict = None,
+                          contrib_history: list = None) -> None:
+        """
+        Overwrite the Dashboard tab with budget snapshot, current month contribution
+        table, and multi-month contribution history.
+
+        Args:
+            snap            = compute_snapshot() result from intelligence.py
+            contrib_snap    = compute_contribution_status() for current month (optional)
+            contrib_history = list of compute_contribution_status() snapshots,
+                              one per month, oldest first (from compute_contribution_history)
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        try:
+            ws = self._ws("Dashboard")
+            ws.clear()
+
+            month = snap.get("month", datetime.utcnow().strftime("%Y-%m"))
+            cap = snap.get("cap", 0)
+            spent = snap.get("spent", 0)
+            remaining = snap.get("remaining", cap - spent)
+            pct = snap.get("pct_used", 0)
+            cur = snap.get("currency", "EUR")
+            pace = snap.get("pace_status", "")
+            pace_label = {
+                "on_track": "✅ В норме",
+                "over_pace": "⚠️ Превышает темп",
+                "under_pace": "📉 Ниже темпа",
+            }.get(pace, "")
+
+            rows = []
+
+            # ── Header ───────────────────────────────────────────────────
+            rows.append(["📊 APOLIO HOME — MM Budget", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
+            rows.append([f"Дашборд за {month}", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
+
+            # ── Budget summary (current month) ───────────────────────────
+            rows.append(["Месяц:", month, "", "", ""])
+            rows.append(["Лимит бюджета:", f"{cap:,.2f} {cur}", "", "", ""])
+            rows.append(["Расходы:", f"{spent:,.2f} {cur}", "", "", ""])
+            rows.append(["Остаток:", f"{remaining:,.2f} {cur}", "", "", ""])
+            rows.append(["Использовано:", f"{pct:.1f}%", "", "", ""])
+            if pace_label:
+                rows.append(["Темп:", pace_label, "", "", ""])
+            rows.append(["", "", "", "", ""])
+
+            # ── Current month contribution table ─────────────────────────
+            if contrib_snap and contrib_snap.get("status") == "ok":
+                rows.append(["━━━ Взносы — текущий месяц ━━━", "", "", "", ""])
+                rows.append([
+                    "Порог (базовый взнос):",
+                    f"{contrib_snap['threshold']:,.2f} {cur}",
+                    "", "", "",
+                ])
+                rows.append([
+                    "Правило сплита:",
+                    contrib_snap.get("split_rule", "50_50").replace("_", "/"),
+                    "", "", "",
+                ])
+                rows.append(["", "", "", "", ""])
+                rows.append(["Пользователь", "Взнос", "Доля расходов", "Баланс", "Статус"])
+
+                for u in contrib_snap.get("split_users", []):
+                    contributed = float(contrib_snap.get("contributions", {}).get(u, 0))
+                    share = float(contrib_snap.get("user_shares", {}).get(u, 0))
+                    balance = float(contrib_snap.get("balances", {}).get(u, 0))
+                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
+                    rows.append([
+                        u,
+                        f"{contributed:,.2f} {cur}",
+                        f"{share:,.2f} {cur}",
+                        f"{balance:+,.2f} {cur}",
+                        status,
+                    ])
+
+                excess = contrib_snap.get("excess_amount", 0)
+                if excess > 0:
+                    rows.append(["", "", "", "", ""])
+                    rows.append([
+                        "Превышение порога:",
+                        f"{excess:,.2f} {cur}",
+                        f"→ по {contrib_snap.get('excess_per_user', 0):,.2f} {cur}/чел.",
+                        "", "",
+                    ])
+                rows.append(["", "", "", "", ""])
+
+            # ── Multi-month contribution history ─────────────────────────
+            if contrib_history:
+                # Collect all users across all months
+                all_users: list = []
+                for h in contrib_history:
+                    for u in h.get("split_users", []):
+                        if u not in all_users:
+                            all_users.append(u)
+
+                # Table: Month | Total expenses | [User: contributed, share, balance] per user
+                # Column layout (6 cols per user): user | contributed | share | balance | status | (spacer)
+                # Keep it readable: one row per month, separate sub-columns per user
+                rows.append(["━━━ История взносов по месяцам ━━━", "", "", "", ""])
+                rows.append(["", "", "", "", ""])
+
+                # Build a wide table — need more than 5 cols; use column G+ for extra users
+                # Row 1: header
+                h_row = ["Месяц", "Расходы EUR", "Лимит EUR", "% лимита", ""]
+                for u in all_users:
+                    h_row += [f"{u}: внёс", f"{u}: доля", f"{u}: баланс", ""]
+                rows.append(h_row)
+
+                # Data rows
+                for h in contrib_history:
+                    if h.get("status") != "ok":
+                        continue
+                    h_cur = h.get("currency", "EUR")
+                    h_threshold = h.get("threshold", 0)
+                    h_spent = h.get("total_expenses", 0)
+                    h_pct = f"{(h_spent / h_threshold * 100):.1f}%" if h_threshold else "—"
+                    data_row = [
+                        h.get("month", ""),
+                        f"{h_spent:,.2f}",
+                        f"{h_threshold:,.2f}",
+                        h_pct,
+                        "",
+                    ]
+                    for u in all_users:
+                        contributed = float(h.get("contributions", {}).get(u, 0))
+                        share = float(h.get("user_shares", {}).get(u, 0))
+                        balance = float(h.get("balances", {}).get(u, 0))
+                        data_row += [
+                            f"{contributed:,.2f}",
+                            f"{share:,.2f}",
+                            f"{balance:+,.2f}",
+                            "",
+                        ]
+                    rows.append(data_row)
+
+                rows.append(["", "", "", "", ""])
+
+                # ── Running totals (YTD) ──────────────────────────────────
+                rows.append(["━━━ Итого за период (YTD) ━━━", "", "", "", ""])
+                ytd_contrib: dict[str, float] = {u: 0.0 for u in all_users}
+                ytd_share:   dict[str, float] = {u: 0.0 for u in all_users}
+                ytd_spent = 0.0
+                for h in contrib_history:
+                    if h.get("status") != "ok":
+                        continue
+                    ytd_spent += float(h.get("total_expenses", 0))
+                    for u in all_users:
+                        ytd_contrib[u] += float(h.get("contributions", {}).get(u, 0))
+                        ytd_share[u]   += float(h.get("user_shares", {}).get(u, 0))
+
+                rows.append(["Итого расходов:", f"{ytd_spent:,.2f} {cur}", "", "", ""])
+                for u in all_users:
+                    balance = ytd_contrib[u] - ytd_share[u]
+                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
+                    rows.append([
+                        f"{u} — взнос:",
+                        f"{ytd_contrib[u]:,.2f} {cur}",
+                        f"доля: {ytd_share[u]:,.2f} {cur}",
+                        f"баланс: {balance:+,.2f} {cur}",
+                        status,
+                    ])
+                rows.append(["", "", "", "", ""])
+
+            # ── Category breakdown ───────────────────────────────────────
+            top_cats = snap.get("top_categories", {})
+            if top_cats:
+                rows.append(["━━━ По категориям (текущий месяц) ━━━", "", "", "", ""])
+                for cat, amt in top_cats.items():
+                    rows.append([f"  {cat}:", f"{amt:,.2f} {cur}", "", "", ""])
+                rows.append(["", "", "", "", ""])
+
+            # ── Recent transactions ──────────────────────────────────────
+            txs = self.get_transactions({"date_from": f"{month}-01"})
+            active_txs = [t for t in txs if t.get("Type") == "expense"][-10:]
+            if active_txs:
+                rows.append(["━━━ Последние 10 транзакций ━━━", "", "", "", ""])
+                rows.append(["Дата", "Сумма EUR", "Категория", "Заметка", "Кто"])
+                for t in reversed(active_txs):
+                    rows.append([
+                        t.get("Date", ""),
+                        f"{float(t.get('Amount_EUR') or t.get('Amount_Orig') or 0):,.2f}",
+                        t.get("Category", ""),
+                        t.get("Note", "")[:40],
+                        t.get("Who", ""),
+                    ])
+
+            rows.append(["", "", "", "", ""])
+            rows.append([
+                f"Обновлено: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
+                "", "", "", "",
+            ])
+
+            # Determine actual column width needed
+            max_cols = max(len(r) for r in rows) if rows else 5
+            # Pad all rows to same width
+            for r in rows:
+                while len(r) < max_cols:
+                    r.append("")
+
+            def _col_letter(n: int) -> str:
+                """Convert 1-based column number to letter(s): 1→A, 26→Z, 27→AA…"""
+                result = ""
+                while n > 0:
+                    n, rem = divmod(n - 1, 26)
+                    result = chr(65 + rem) + result
+                return result
+
+            end_col = _col_letter(max_cols)
+            end_row = len(rows)
+            ws.update(f"A1:{end_col}{end_row}", rows, value_input_option="USER_ENTERED")
+
+        except Exception as e:
+            import logging as _logging2
+            _logging2.getLogger(__name__).warning(f"update_dashboard failed: {e}")
 
 
 def get_credentials() -> Credentials:
@@ -397,10 +761,111 @@ class SheetsClient:
         return self._admin.get_users()
 
     def read_config(self) -> dict:
+        """Read global settings from Admin Config tab."""
         return self._admin.read_config()
 
     def write_config(self, key: str, value: str):
         self._admin.write_config(key, value)
+
+    def read_envelope_config(self, file_id: str) -> dict:
+        """Read settings from the envelope's own Config tab.
+
+        Envelope-specific keys (split_rule, split_threshold, split_users,
+        base_contributor, budget_cap, etc.) live HERE, not in Admin Config.
+        Returns empty dict if file_id is blank or tab is missing.
+        """
+        if not file_id:
+            return {}
+        try:
+            return self._env_sheets(file_id).read_config()
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"read_envelope_config({file_id}): {e}"
+            )
+            return {}
+
+    def ensure_envelope_config(self, envelope_id: str) -> dict:
+        """Check envelope's Config tab and write any missing split/budget keys.
+
+        Reads defaults from the Envelopes registry (Monthly_Cap, Split_Rule, etc.).
+        Only writes keys that are not already present — never overwrites existing values.
+        Returns a dict with keys: written (list), skipped (list), error (str|None).
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        try:
+            envelopes = self.get_envelopes()
+            env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+            if not env:
+                return {"written": [], "skipped": [], "error": f"Envelope {envelope_id!r} not found"}
+
+            file_id = env.get("file_id", "")
+            if not file_id:
+                return {"written": [], "skipped": [], "error": "No file_id for this envelope"}
+
+            env_sheets = self._env_sheets(file_id)
+            existing = env_sheets.read_config()
+
+            # Derive sensible defaults from the Envelopes registry row
+            split_rule_default = env.get("Split_Rule", "solo").lower().replace("/", "_")
+            threshold_default  = str(env.get("Monthly_Cap", "0") or "0")
+            # Try to infer split_users from Users sheet
+            users = self.get_users()
+            active_users = [
+                u.get("name", "") for u in users
+                if envelope_id in str(u.get("envelopes", ""))
+                and str(u.get("status", "active")).lower() == "active"
+            ]
+            split_users_default = ",".join(active_users) if active_users else env.get("Owner_TG", "Mikhail")
+            # base_contributor = first user in list (admin preference)
+            admin_users = [
+                u.get("name", "") for u in users
+                if envelope_id in str(u.get("envelopes", ""))
+                and u.get("role", "") == "admin"
+            ]
+            base_contrib_default = admin_users[0] if admin_users else (active_users[0] if active_users else "Mikhail")
+
+            # Build per-user min/split defaults from active users list
+            per_user_defaults: dict[str, str] = {}
+            for u in active_users:
+                is_admin = any(
+                    usr.get("name") == u and usr.get("role") == "admin"
+                    for usr in users
+                )
+                per_user_defaults[f"min_{u}"] = threshold_default if is_admin else "0"
+                per_user_defaults[f"split_{u}"] = str(
+                    round(100 / len(active_users)) if active_users else 50
+                )
+
+            DEFAULTS = {
+                "split_rule":        split_rule_default,
+                "split_threshold":   threshold_default,
+                "split_users":       split_users_default,
+                "base_contributor":  base_contrib_default,
+                **per_user_defaults,
+            }
+
+            written, skipped = [], []
+            for key, default_val in DEFAULTS.items():
+                if key in existing:
+                    skipped.append(key)
+                else:
+                    env_sheets.write_config(key, default_val)
+                    written.append(f"{key}={default_val}")
+                    _log.info(f"[ensure_envelope_config] {envelope_id}: wrote {key}={default_val!r}")
+
+            return {"written": written, "skipped": skipped, "error": None}
+
+        except Exception as e:
+            _log.error(f"ensure_envelope_config({envelope_id}): {e}", exc_info=True)
+            return {"written": [], "skipped": [], "error": str(e)}
+
+    def get_dashboard_config(self) -> dict:
+        return self._admin.get_dashboard_config()
+
+    def write_dashboard_config(self, key: str, value: str):
+        self._admin.write_dashboard_config(key, value)
 
     def register_envelope(self, envelope_id: str, name: str, file_id: str,
                           owner_id: int, settings: dict):
@@ -425,68 +890,6 @@ class SheetsClient:
     # Envelope operations
     def _env_sheets(self, sheet_id: str) -> EnvelopeSheets:
         return EnvelopeSheets(self._gc, sheet_id)
-
-    def _envelope(self, sheet_id: str) -> EnvelopeSheets:
-        """Alias for _env_sheets — used by db.py pattern detection."""
-        return self._env_sheets(sheet_id)
-
-    def get_reference_data(self, envelope_id: str) -> dict:
-        """
-        Load reference data for an envelope: categories, accounts, users, currencies.
-        Uses TTL cache (60s) to avoid repeated Sheets reads.
-        envelope_id is the logical ID (e.g. 'MM_BUDGET'), not the file_id.
-        """
-        cache_key = f"ref_{envelope_id}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        # Find file_id for this envelope
-        file_id = None
-        envelopes = self.get_envelopes()
-        for e in envelopes:
-            if e.get("ID") == envelope_id:
-                file_id = e.get("file_id")
-                break
-
-        categories: list[str] = []
-        accounts: list[str] = []
-
-        if file_id:
-            try:
-                env = self._env_sheets(file_id)
-                categories = env.get_categories()
-                accounts = env.get_accounts()
-            except Exception as ex:
-                pass  # Return empty lists on error — never crash
-
-        users = []
-        try:
-            users = self._admin.get_user_names()
-        except Exception:
-            pass
-
-        # Currencies from FX_Rates headers
-        currencies = ["EUR"]
-        try:
-            ws = self._admin._workbook().worksheet("FX_Rates")
-            headers = ws.row_values(1)
-            # Headers: Month, EUR, PLN, UAH, ... — skip "Month"
-            for h in headers:
-                h = h.strip().upper()
-                if h and h != "MONTH" and h not in currencies:
-                    currencies.append(h)
-        except Exception:
-            pass
-
-        result = {
-            "categories": categories,
-            "accounts": accounts,
-            "users": users,
-            "currencies": currencies,
-        }
-        self._cache.set(cache_key, result)
-        return result
 
     def add_transaction(self, sheet_id: str, row) -> str:
         """Accept either a pre-formatted list (from tools) or a dict."""
@@ -514,7 +917,13 @@ class SheetsClient:
         return self._env_sheets(sheet_id).edit_transaction(tx_id, field, value)
 
     def soft_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
+        """Soft-delete: sets Deleted=TRUE flag. Kept for backward compat."""
         return self._env_sheets(sheet_id).delete_transaction(tx_id)
+
+    def hard_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
+        """Physically remove the row for tx_id from the Transactions sheet."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).hard_delete_by_tx_id(tx_id)
 
     def delete_transaction_rows(self, sheet_id: str, start_row: int, end_row: int) -> int:
         """Physically delete rows start_row..end_row from Transactions sheet.
@@ -526,6 +935,76 @@ class SheetsClient:
                                       start_row: int, end_row: int) -> list[list]:
         """Return raw cell values for preview before deletion."""
         return self._env_sheets(sheet_id).get_rows_raw(start_row, end_row)
+
+    def sort_transactions_by_date(self, sheet_id: str, order: str = "asc") -> int:
+        """Sort Transactions sheet by date and invalidate cache."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).sort_by_date(order)
+
+    def get_reference_data(self, sheet_id: str) -> dict:
+        """Return all reference lists for the given envelope:
+        categories, subcategories, accounts, known users (from Admin), currencies.
+        Used for input validation before recording transactions."""
+        cache_key = f"ref_{sheet_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        env = self._env_sheets(sheet_id)
+
+        # Categories + subcategories
+        cat_records = env.get_categories()
+        categories = sorted({r.get("Category", "") for r in cat_records if r.get("Category", "")})
+        subcategories = sorted({r.get("Subcategory", "") for r in cat_records if r.get("Subcategory", "")})
+
+        # Accounts
+        accounts = env.get_accounts()
+
+        # Users from Admin file
+        try:
+            who_values = self._admin.get_user_names()
+        except Exception:
+            who_values = []
+
+        # Envelope base currency from Admin (look up by file_id)
+        base_currency = "EUR"
+        try:
+            all_envs = self._admin.get_envelopes()
+            env_meta = next((e for e in all_envs if e.get("file_id") == sheet_id), None)
+            if env_meta:
+                base_currency = env_meta.get("Currency", "EUR") or "EUR"
+        except Exception:
+            pass
+
+        # Known currencies from FX_Rates
+        currencies = [base_currency]
+        try:
+            fx_ws = env._ws("FX_Rates")
+            fx_headers = fx_ws.row_values(1)
+            for h in fx_headers:
+                if h.startswith("EUR_"):
+                    c = h[4:]  # e.g. "EUR_PLN" → "PLN"
+                    if c and c not in currencies:
+                        currencies.append(c)
+        except Exception:
+            pass
+
+        result = {
+            "categories": categories,
+            "subcategories": subcategories,
+            "accounts": accounts,
+            "who": who_values,
+            "currencies": currencies,
+            "base_currency": base_currency,
+        }
+        self._cache.set(cache_key, result)
+        return result
+
+    def update_dashboard_sheet(self, sheet_id: str, snap: dict,
+                                contrib_snap: dict = None,
+                                contrib_history: list = None) -> None:
+        """Write computed budget + contribution data to the Dashboard tab."""
+        self._env_sheets(sheet_id).update_dashboard(snap, contrib_snap, contrib_history)
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.

@@ -17,73 +17,6 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _fuzzy_suggest(value: str, known: list[str]) -> list[str]:
-    """
-    Case-insensitive substring match.
-    Returns up to 3 known values that contain or are contained in `value`.
-    """
-    if not value or not known:
-        return []
-    val_lower = value.lower()
-    matches = [
-        k for k in known
-        if val_lower in k.lower() or k.lower() in val_lower
-    ]
-    return matches[:3]
-
-
-def _validate_transaction_params(params: dict, ref: dict) -> dict:
-    """
-    Validate category, who, and account against reference data.
-    Returns {} if all values are valid or empty.
-    Returns {unknown: [...], suggestions: {...}} if unknown values found.
-    `force_new=True` in params bypasses this check entirely.
-    """
-    if params.get("force_new"):
-        return {}
-
-    categories = ref.get("categories", [])
-    users      = ref.get("users", [])
-    accounts   = ref.get("accounts", [])
-
-    unknown = []
-    suggestions = {}
-
-    category = params.get("category", "")
-    if category and categories and category not in categories:
-        sugg = _fuzzy_suggest(category, categories)
-        unknown.append(f"category: {category!r}")
-        if sugg:
-            suggestions["category"] = sugg
-
-    who = params.get("who", "")
-    if who and users and who not in users:
-        sugg = _fuzzy_suggest(who, users)
-        unknown.append(f"who: {who!r}")
-        if sugg:
-            suggestions["who"] = sugg
-
-    account = params.get("account", "")
-    if account and accounts and account not in accounts:
-        sugg = _fuzzy_suggest(account, accounts)
-        unknown.append(f"account: {account!r}")
-        if sugg:
-            suggestions["account"] = sugg
-
-    if not unknown:
-        return {}
-
-    return {
-        "unknown": unknown,
-        "suggestions": suggestions,
-        "known": {
-            "categories": categories[:15],
-            "users": users,
-            "accounts": accounts[:10],
-        },
-    }
-
-
 def _resolve_envelope(params: dict, session: SessionContext,
                        sheets: SheetsClient) -> dict:
     """Find the envelope file_id for the given envelope_id."""
@@ -97,6 +30,55 @@ def _resolve_envelope(params: dict, session: SessionContext,
     raise ValueError(f"Конверт {env_id} не найден. Проверьте список конвертов командой /envelope.")
 
 
+def _fuzzy_suggest(value: str, known: list[str], max_results: int = 3) -> list[str]:
+    """Return known values that are similar to value (case-insensitive substring match)."""
+    value_l = value.lower()
+    exact = [k for k in known if k.lower() == value_l]
+    if exact:
+        return []  # it's actually a match
+    contains = [k for k in known if value_l in k.lower() or k.lower() in value_l]
+    return contains[:max_results] if contains else known[:max_results]
+
+
+def _validate_transaction_params(params: dict, ref: dict) -> dict:
+    """Check category, who, account against reference data.
+    Returns dict of unknown fields and suggestions, or empty dict if all OK.
+    Skip validation if force_new=True or if reference list is empty (not set up yet)."""
+    if params.get("force_new"):
+        return {}
+
+    unknown = {}
+    suggestions = {}
+
+    # Validate category
+    category = params.get("category", "")
+    known_cats = ref.get("categories", [])
+    if category and known_cats:
+        if not any(k.lower() == category.lower() for k in known_cats):
+            unknown["category"] = category
+            suggestions["category"] = _fuzzy_suggest(category, known_cats)
+
+    # Validate subcategory (only if parent category is known)
+    subcategory = params.get("subcategory", "")
+    known_subs = ref.get("subcategories", [])
+    if subcategory and known_subs and "category" not in unknown:
+        if not any(k.lower() == subcategory.lower() for k in known_subs):
+            unknown["subcategory"] = subcategory
+            suggestions["subcategory"] = _fuzzy_suggest(subcategory, known_subs)
+
+    # Validate who
+    who = params.get("who", "")
+    known_who = ref.get("who", [])
+    if who and known_who:
+        if not any(k.lower() == who.lower() for k in known_who):
+            unknown["who"] = who
+            suggestions["who"] = _fuzzy_suggest(who, known_who)
+
+    if unknown:
+        return {"unknown": unknown, "suggestions": suggestions, "known": ref}
+    return {}
+
+
 async def tool_add_transaction(params: dict, session: SessionContext,
                                 sheets: SheetsClient, auth: AuthManager) -> Any:
     if not auth.can_write(session.user_id):
@@ -106,23 +88,35 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     if not auth.can_access_envelope(session.user_id, envelope["ID"]):
         return {"error": "You don't have access to this envelope."}
 
-    # Validate against reference data (unless force_new=True)
-    if not params.get("force_new"):
-        try:
-            ref = sheets.get_reference_data(envelope["ID"])
-            validation = _validate_transaction_params(params, ref)
-            if validation:
-                return {
-                    "status": "confirm_required",
-                    "type": "unknown_values",
-                    "message": (
-                        "Некоторые значения не найдены в справочнике. "
-                        "Уточни или добавь force_new=true для записи без проверки."
-                    ),
-                    **validation,
-                }
-        except Exception:
-            pass  # Validation failure must never block transaction recording
+    # ── Validation against reference data ────────────────────────────────
+    try:
+        ref = sheets.get_reference_data(envelope["file_id"])
+        issues = _validate_transaction_params(params, ref)
+        if issues:
+            unknown = issues["unknown"]
+            sug = issues["suggestions"]
+            known = issues["known"]
+
+            lines = []
+            for field, val in unknown.items():
+                s = sug.get(field, [])
+                hint = f"Похожие: {', '.join(s)}" if s else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}"
+                lines.append(f"• {field} = «{val}» — не найдено. {hint}")
+
+            return {
+                "status": "confirm_required",
+                "type": "unknown_values",
+                "message": (
+                    "Обнаружены неизвестные значения:\n" + "\n".join(lines) +
+                    "\n\nУточни у пользователя: использовать одно из предложенных "
+                    "или добавить новое значение в справочник? "
+                    "При подтверждении вызови снова с force_new=true."
+                ),
+                "unknown_fields": unknown,
+                "suggestions": sug,
+            }
+    except Exception:
+        pass  # validation is best-effort; don't block the write
 
     tx_id = _gen_id()
     now = datetime.utcnow().isoformat()
@@ -148,7 +142,11 @@ async def tool_add_transaction(params: dict, session: SessionContext,
             fx_rows = fx_ws.get_all_records()
             fx_row = next((r for r in fx_rows if r.get("Month") == month), None)
             if fx_row:
-                rate = float(fx_row.get(currency.upper(), 0) or 0)
+                # FX_Rates columns are named EUR_PLN, EUR_UAH, EUR_USD etc.
+                # Each value means: 1 EUR = N <currency>
+                # To convert to EUR: amount_eur = amount_orig / rate
+                col_key = f"EUR_{currency.upper()}"
+                rate = float(fx_row.get(col_key, 0) or 0)
                 if rate:
                     amount_eur = round(float(amount) / rate, 2)
         except Exception:
@@ -187,29 +185,11 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                    "date": date, "category": category}
     )
 
-    # Pattern detection (async, fire-and-forget — never blocks response)
-    try:
-        import asyncio
-        import db as appdb
-        asyncio.create_task(
-            appdb.check_and_save_pattern(
-                user_id=session.user_id,
-                envelope_id=envelope["ID"],
-                category=category,
-                who=who,
-                amount=float(amount),
-                sheets_client=sheets,
-            )
-        )
-    except Exception:
-        pass  # Pattern detection is non-critical
-
     symbol = "✓" if tx_type == "expense" else "+"
-    cat_display = category or "—"
     return {
         "status": "ok",
         "message": (
-            f"{symbol} {cat_display} · {amount} {currency} · {who} · {date}"
+            f"{symbol} {category} · {amount} {currency} · {who} · {date}"
             + (f" · {note}" if note else "")
         ),
         "tx_id": tx_id,
@@ -262,8 +242,11 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
     envelopes = sheets.get_envelopes()
     for e in envelopes:
         if e.get("ID") == envelope_id:
-            sheets.soft_delete_transaction(e["file_id"], tx_id)
-            return {"status": "ok", "message": f"✓ Deleted ({tx_id})"}
+            deleted = sheets.hard_delete_transaction(e["file_id"], tx_id)
+            if deleted:
+                return {"status": "ok", "message": f"✓ Строка удалена физически ({tx_id})"}
+            else:
+                return {"error": f"Транзакция {tx_id} не найдена."}
 
     return {"error": "Envelope not found."}
 
@@ -324,14 +307,21 @@ async def tool_delete_transaction_rows(params: dict, session: SessionContext,
 
         preview = "\n".join(lines) if lines else "  (нет данных)"
 
+        # Store pending action in session for inline-button confirmation
+        session.pending_delete = {
+            "start_row": start_row,
+            "end_row": end_row,
+            "file_id": envelope["file_id"],
+            "count": count,
+        }
+
         return {
             "status": "confirm_required",
             "message": (
                 f"⚠️ ВНИМАНИЕ — безвозвратное удаление {count} {_row_word(count)} "
                 f"({start_row}–{end_row}):\n\n"
                 f"{preview}\n\n"
-                "Это действие нельзя отменить. "
-                "Подтвердите: напишите «да, удалить» или «отмена»."
+                "Это действие нельзя отменить. Нажмите кнопку ниже для подтверждения."
             ),
         }
 
@@ -356,6 +346,32 @@ def _row_word(n: int) -> str:
     if r in (2, 3, 4):
         return "строки"
     return "строк"
+
+
+async def tool_sort_transactions(params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager) -> Any:
+    """Sort Transactions sheet by date (ascending = oldest first, descending = newest first)."""
+    if not auth.can_write(session.user_id):
+        return {"error": "Permission denied."}
+
+    order = params.get("order", "asc").lower()
+    if order not in ("asc", "desc"):
+        order = "asc"
+
+    envelope = _resolve_envelope(params, session, sheets)
+    if not auth.can_access_envelope(session.user_id, envelope["ID"]):
+        return {"error": "You don't have access to this envelope."}
+
+    try:
+        count = sheets.sort_transactions_by_date(envelope["file_id"], order)
+    except Exception as e:
+        return {"error": f"Ошибка сортировки: {e}"}
+
+    direction = "старые → новые" if order == "asc" else "новые → старые"
+    return {
+        "status": "ok",
+        "message": f"✓ Отсортировано {count} {_row_word(count)} по дате ({direction})",
+    }
 
 
 async def tool_find_transactions(params: dict, session: SessionContext,
