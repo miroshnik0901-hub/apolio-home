@@ -826,11 +826,24 @@ class SheetsClient:
             ]
             base_contrib_default = admin_users[0] if admin_users else (active_users[0] if active_users else "Mikhail")
 
+            # Build per-user min/split defaults from active users list
+            per_user_defaults: dict[str, str] = {}
+            for u in active_users:
+                is_admin = any(
+                    usr.get("name") == u and usr.get("role") == "admin"
+                    for usr in users
+                )
+                per_user_defaults[f"min_{u}"] = threshold_default if is_admin else "0"
+                per_user_defaults[f"split_{u}"] = str(
+                    round(100 / len(active_users)) if active_users else 50
+                )
+
             DEFAULTS = {
                 "split_rule":        split_rule_default,
                 "split_threshold":   threshold_default,
                 "split_users":       split_users_default,
                 "base_contributor":  base_contrib_default,
+                **per_user_defaults,
             }
 
             written, skipped = [], []

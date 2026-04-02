@@ -227,15 +227,15 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # Admin Config holds only global settings.
         env_config = sheets.read_envelope_config(file_id) if file_id else {}
 
-        split_rule        = env_config.get("split_rule", "solo")
-        threshold         = float(env_config.get("split_threshold",
-                                                  env.get("Monthly_Cap", 0)) or 0)
-        split_users_raw   = env_config.get("split_users", "")
-        split_users       = [u.strip() for u in split_users_raw.split(",") if u.strip()]
-        base_contributor  = env_config.get("base_contributor", "Mikhail")
+        split_users_raw  = env_config.get("split_users", "")
+        split_users      = [u.strip() for u in split_users_raw.split(",") if u.strip()]
+        base_contributor = env_config.get("base_contributor", "Mikhail")
 
         if not split_users:
             split_users = [base_contributor]
+
+        # Detect new per-user model (min_<user> / split_<user> keys in Config).
+        _has_per_user_min = any(f"min_{u}" in env_config for u in split_users)
 
         all_txns = sheets.get_transactions(file_id)
         month_txns = [t for t in all_txns if str(t.get("Date", "")).startswith(month)]
@@ -251,22 +251,48 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             _parse_amount(t) for t in month_txns if t.get("Type") == "expense"
         )
 
-        # Split calculation
-        if split_rule == "solo" or len(split_users) == 0:
-            user_shares = {base_contributor: total_expenses}
-            excess_amount = 0.0
-            excess_per_user = 0.0
-        else:
-            excess_amount = max(0.0, total_expenses - threshold)
-            covered_by_base = min(total_expenses, threshold)
-            excess_per_user = excess_amount / len(split_users) if split_users else 0.0
-
+        # ── New per-user model (min_<user> + split_<user> keys in Config) ─
+        if _has_per_user_min and split_users:
+            total_min_pool = sum(
+                float(env_config.get(f"min_{u}", 0) or 0) for u in split_users
+            )
+            overflow = max(0.0, total_expenses - total_min_pool)
             user_shares: dict[str, float] = {}
             for u in split_users:
-                share = excess_per_user
-                if u == base_contributor:
-                    share += covered_by_base
-                user_shares[u] = round(share, 2)
+                u_min   = float(env_config.get(f"min_{u}", 0) or 0)
+                u_split = float(env_config.get(f"split_{u}", 0) or 0)
+                if total_min_pool == 0:
+                    obligation = total_expenses * u_split / 100
+                else:
+                    obligation = (
+                        min(total_expenses, total_min_pool) * (u_min / total_min_pool)
+                        + overflow * u_split / 100
+                    )
+                user_shares[u] = round(obligation, 2)
+            threshold       = total_min_pool
+            excess_amount   = overflow
+            excess_per_user = overflow / len(split_users) if split_users else 0.0
+            split_rule      = "per_user"
+
+        # ── Legacy split_rule model ────────────────────────────────────────
+        else:
+            split_rule    = env_config.get("split_rule", "solo")
+            threshold     = float(env_config.get("split_threshold",
+                                                  env.get("Monthly_Cap", 0)) or 0)
+            if split_rule == "solo" or len(split_users) == 0:
+                user_shares   = {base_contributor: total_expenses}
+                excess_amount = 0.0
+                excess_per_user = 0.0
+            else:
+                excess_amount   = max(0.0, total_expenses - threshold)
+                covered_by_base = min(total_expenses, threshold)
+                excess_per_user = excess_amount / len(split_users) if split_users else 0.0
+                user_shares = {}
+                for u in split_users:
+                    share = excess_per_user
+                    if u == base_contributor:
+                        share += covered_by_base
+                    user_shares[u] = round(share, 2)
 
         # Balance = contributed − share_owed
         balances: dict[str, float] = {}
