@@ -1724,7 +1724,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         lines.append("")
                         lines.append("Откройте Config вкладку конверта чтобы проверить.")
                         if _was_init:
-                        lines.insert(2, f"🔧 <i>Авто-инициализировано: {', '.join(_init_result['written'])}</i>")
+                            lines.insert(2, f"🔧 <i>Авто-инициализировано: {', '.join(_init_result['written'])}</i>")
                     html = "\n".join(lines)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"

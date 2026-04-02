@@ -147,3 +147,132 @@ Read CLAUDE_WORKING_GUIDE.md first. Then use this checklist before and after eve
 - [ ] Shows Google Sheets URL with clickable link
 - [ ] Shows envelope Config tab keys separately from Admin global keys
 - [ ] Shows hint when envelope Config is empty (what keys to add)
+
+---
+
+## TESTING SCHEME — Best Practices
+
+> Run before every deployment. Levels: L1 (static) → L5 (live E2E).
+
+---
+
+### L1 — Static Analysis (always, takes < 30s)
+
+```bash
+python3 -m py_compile bot.py auth.py sheets.py intelligence.py agent.py
+```
+
+- [ ] All .py files compile without SyntaxError
+- [ ] `{contribution_context}` placeholder in ApolioHome_Prompt.md
+- [ ] No `FINANCIAL CONTEXT` hardcode in prompt
+- [ ] No hardcoded amounts (2500, 650) in prompt or intelligence.py
+- [ ] `read_envelope_config` in intelligence.py (not `read_config`)
+- [ ] `_thinking_msg` + `delete_message` in bot.py
+- [ ] `ensure_envelope_config` in sheets.py AND bot.py
+- [ ] `set_init_config` in menu_config.py
+- [ ] `DEFAULT_ENVELOPE` assigned in auth.py for contributors
+
+---
+
+### L2 — Unit Tests (logic, no network)
+
+- [ ] `auth._reload`: empty `telegram_id` → skipped, no crash
+- [ ] `auth._reload`: `"suspended"` status → excluded from cache
+- [ ] `auth._reload`: valid int ID → enters cache
+- [ ] `auth._reload`: string `"219501159"` → parsed as int 219501159
+- [ ] Config split: `ensure_envelope_config` writes only missing keys
+- [ ] Regression math: OLS `β = (X'X)⁻¹X'y` — check with known dataset
+- [ ] `_offset_month("2026-01", 2)` → `"2026-03"` (no overflow)
+- [ ] `_offset_month("2026-12", 1)` → `"2027-01"` (year rollover)
+
+---
+
+### L3 — Integration Tests (Google Sheets live)
+
+- [ ] Admin/Users: Mikhail (360466156) admin + active
+- [ ] Admin/Users: Maryna (219501159) contributor + active + MM_BUDGET
+- [ ] Admin/Users: no empty rows with blank telegram_id that could crash _reload
+- [ ] Admin/Envelopes: MM_BUDGET registered with file_id
+- [ ] MM_BUDGET/Config: `split_rule=50_50`, `split_threshold=2500`, `split_users=Mikhail,Maryna`, `base_contributor=Mikhail`
+- [ ] MM_BUDGET/Transactions: schema has Date, Amount_EUR, Category, Who, Type, ID
+- [ ] MM_BUDGET: tabs Transactions, Categories, Accounts, Config all exist
+- [ ] `ensure_envelope_config(MM_BUDGET)` → skipped (all keys already present)
+
+---
+
+### L4 — Bot Behaviour Tests (send real messages)
+
+**Auth / Access:**
+- [ ] Mikhail `/start` → welcome message + inline buttons
+- [ ] Maryna `/start` → welcome (not "access denied")
+- [ ] Unknown user → "доступ запрещён"
+
+**Thinking indicator:**
+- [ ] Free text message → "🏠 _думаю..._" appears briefly, then disappears
+- [ ] Long agent call → thinking message stays until response arrives
+
+**Core flows:**
+- [ ] "кофе 3.50" → agent adds expense 3.50 EUR, confirms in one line
+- [ ] Photo without caption → agent lists found items, asks confirmation
+- [ ] "отмени" → reverses last transaction
+- [ ] "покажи статус" → budget status with progress bar
+- [ ] "как дела?" → warm response (not robotic)
+
+**Menu navigation:**
+- [ ] ☰ Меню → main menu (5 items)
+- [ ] Analytics → sub-menu with Report, Week, Contribution, Trends
+- [ ] ⚙️ Администрирование (admin only) → sub-submenu
+- [ ] ⚙️ Конфигурация → shows file name, URL, Config keys (auto-inits if needed)
+- [ ] 🔧 Инит Config → shows written/skipped keys
+- [ ] Language switch → bot responds in new language next message
+- [ ] ◀ Back → returns to parent menu correctly
+
+**Maryna specifically:**
+- [ ] Maryna sends any message → gets response (not "access denied")
+- [ ] Maryna sees own expenses only (no admin panel)
+- [ ] Maryna can add transaction and view status
+
+---
+
+### L5 — UI/UX Quality Checks (visual + subjective)
+
+**Response quality:**
+- [ ] Confirmations are 1 line: `✓ Category · Amount EUR · Who · date`
+- [ ] Reports have visual progress bars (████████)
+- [ ] Thinking indicator is visible for ≥1 second before response
+- [ ] Error messages are friendly Russian, no Python tracebacks
+- [ ] No raw JSON in any response
+
+**Response time:**
+- [ ] Simple text message → first thinking message within 1s
+- [ ] Full agent response → within 10s for simple queries
+
+**Menu layout:**
+- [ ] Buttons are single-column (no truncation)
+- [ ] Back button always visible in submenus
+- [ ] Admin items hidden for non-admins
+
+---
+
+### Automated Test Runner
+
+```bash
+# From apolio-home/ directory:
+python3 tests/run_all.py
+```
+
+Tests: 48 checks across L1–L3. Results → `/tmp/test_results_latest.json`.
+
+---
+
+### Marina Troubleshooting Checklist
+
+If Maryna (219501159) gets "доступ запрещён":
+1. [ ] Her telegram_id = 219501159 is in Users sheet
+2. [ ] Status = active (not suspended)
+3. [ ] auth.py has `if not str(raw_id).strip(): continue` fix
+4. [ ] Railway deployed latest main (check Railway logs for startup)
+5. [ ] No other Users rows with blank telegram_id (would crash _reload for all)
+6. [ ] She starts with `/start`, NOT by typing to old bot version
+7. [ ] If still failing: check Railway logs for `[AuthManager] Loaded N users` — N should be 2
+
