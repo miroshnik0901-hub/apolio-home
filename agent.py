@@ -466,6 +466,56 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "update_dashboard_config",
+        "description": (
+            "Update a DashboardConfig setting in the Admin sheet. Use when user wants to change "
+            "how the dashboard behaves: e.g. 'обновляй дашборд автоматически', "
+            "'покажи историю за 6 месяцев', 'отключи историю взносов', "
+            "'установи предупреждение при 75%'. "
+            "Valid keys: auto_refresh_on_transaction (TRUE/FALSE), "
+            "show_contribution_history (TRUE/FALSE), history_months (number), "
+            "budget_warning_pct (number), show_category_breakdown (TRUE/FALSE), "
+            "master_template_id (file_id), mode (prod/test), test_file_id (file_id)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["key", "value"],
+            "properties": {
+                "key": {"type": "string", "description": "Config key to update"},
+                "value": {"type": "string", "description": "New value"},
+            },
+        },
+    },
+    {
+        "name": "present_options",
+        "description": (
+            "Attach inline choice buttons to your response. Call this tool BEFORE writing your "
+            "response text whenever you need the user to confirm or choose from options. "
+            "Common use cases: confirming a transaction ('Записать?'), "
+            "choosing between suggestions ('Какую категорию использовать?'), "
+            "yes/no confirmations before deleting, etc. "
+            "Do NOT call for routine confirmations where no choice is needed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["choices"],
+            "properties": {
+                "choices": {
+                    "type": "array",
+                    "description": "List of options to show as buttons",
+                    "items": {
+                        "type": "object",
+                        "required": ["label", "value"],
+                        "properties": {
+                            "label": {"type": "string", "description": "Button text, e.g. '✅ Да, записать'"},
+                            "value": {"type": "string", "description": "Short value passed back, e.g. 'yes', 'no', 'cat_food'"},
+                        },
+                    },
+                },
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -835,6 +885,10 @@ class ApolioAgent:
             "save_receipt":           self._tool_save_receipt,
             # Learning summary → Google Sheets
             "refresh_learning_summary": self._tool_refresh_learning_summary,
+            # Dashboard config management
+            "update_dashboard_config":  self._tool_update_dashboard_config,
+            # Inline choice buttons for user confirmation
+            "present_options":          self._tool_present_options,
         }
 
         handler = dispatch.get(name)
@@ -847,7 +901,8 @@ class ApolioAgent:
             if name not in ("find_transactions", "get_summary", "get_budget_status",
                             "list_envelopes", "get_intelligence", "search_history",
                             "get_contribution_status", "refresh_dashboard",
-                            "save_learning", "save_receipt", "get_reference_data"):
+                            "save_learning", "save_receipt", "get_reference_data",
+                            "present_options", "update_dashboard_config"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -967,12 +1022,24 @@ class ApolioAgent:
             logger.warning(f"refresh_dashboard: contrib_snap failed: {e}")
             contrib_snap = None
 
-        # Multi-month history
+        # Read dashboard config to determine history depth
         try:
-            contrib_history = compute_contribution_history(sheets, envelope_id, months_back=6)
-        except Exception as e:
-            logger.warning(f"refresh_dashboard: contrib_history failed: {e}")
-            contrib_history = None
+            dash_cfg = sheets.get_dashboard_config()
+            history_months = int(dash_cfg.get("history_months", 3))
+            show_history = str(dash_cfg.get("show_contribution_history", "TRUE")).upper() == "TRUE"
+        except Exception:
+            history_months = 3
+            show_history = True
+
+        # Multi-month history (if enabled in config)
+        contrib_history = None
+        if show_history:
+            try:
+                contrib_history = compute_contribution_history(
+                    sheets, envelope_id, months_back=history_months
+                )
+            except Exception as e:
+                logger.warning(f"refresh_dashboard: contrib_history failed: {e}")
 
         try:
             sheets.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history)
@@ -1125,3 +1192,38 @@ class ApolioAgent:
             return {"status": "ok", "message": f"✓ {count} learning records written to Learning tab."}
         except Exception as e:
             return {"error": str(e)}
+
+    async def _tool_update_dashboard_config(self, params: dict, session: SessionContext,
+                                             sheets: SheetsClient, auth: AuthManager):
+        """Update a DashboardConfig key in the Admin sheet."""
+        if not auth.can_write(session.user_id):
+            return {"error": "Permission denied."}
+        key = params.get("key", "").strip()
+        value = params.get("value", "").strip()
+        if not key:
+            return {"error": "key is required"}
+        valid_keys = {
+            "auto_refresh_on_transaction", "show_contribution_history",
+            "history_months", "budget_warning_pct", "show_category_breakdown",
+            "master_template_id", "mode", "test_file_id",
+        }
+        if key not in valid_keys:
+            return {"error": f"Unknown config key: {key}. Valid: {', '.join(sorted(valid_keys))}"}
+        try:
+            sheets.write_dashboard_config(key, value)
+            return {"status": "ok", "message": f"✓ DashboardConfig: {key} = {value}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_present_options(self, params: dict, session: SessionContext,
+                                     sheets: SheetsClient, auth: AuthManager):
+        """Store inline choice buttons to be attached to the next bot message."""
+        choices = params.get("choices", [])
+        if not choices:
+            return {"error": "choices list is empty"}
+        # Validate structure
+        for c in choices:
+            if not isinstance(c, dict) or "label" not in c or "value" not in c:
+                return {"error": "Each choice must have 'label' and 'value' keys"}
+        session.pending_choice = choices
+        return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}

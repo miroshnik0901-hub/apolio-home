@@ -43,7 +43,8 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 | Mikhail Telegram ID | `360466156` |
 
 Env vars: `TELEGRAM_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GOOGLE_SERVICE_ACCOUNT_B64`, `MM_BUDGET_FILE_ID`, `ADMIN_SHEET_ID`, `DATABASE_URL`
+`GOOGLE_SERVICE_ACCOUNT_B64`, `MM_BUDGET_FILE_ID`, `ADMIN_SHEET_ID`, `DATABASE_URL`,
+`MM_TEST_FILE_ID` (optional, for test mode)
 
 ---
 
@@ -141,7 +142,7 @@ Photo passed to Claude for the CURRENT message only.
 
 ---
 
-## 6. AGENT TOOLS (20 total)
+## 6. AGENT TOOLS (26 total)
 
 | # | Tool | Description |
 |---|------|-------------|
@@ -149,22 +150,28 @@ Photo passed to Claude for the CURRENT message only.
 | 2 | `edit_transaction` | Edit a field by ID |
 | 3 | `delete_transaction` | Soft-delete (Deleted=TRUE); 2-step confirmation |
 | 4 | `delete_transaction_rows` | Physical row deletion (2-step!) |
-| 5 | `find_transactions` | Search by filters |
-| 6 | `get_summary` | Aggregated report |
-| 7 | `get_budget_status` | Current month snapshot |
-| 8 | `import_wise_csv` | Import Wise CSV |
-| 9 | `set_fx_rate` | Exchange rate (admin) |
-| 10 | `update_config` | Config (admin) |
-| 11 | `add_authorized_user` | Add user (admin) |
-| 12 | `remove_authorized_user` | Remove user (admin) |
-| 13 | `list_envelopes` | List envelopes |
-| 14 | `create_envelope` | Create envelope (admin) |
-| 15 | `save_goal` | Save financial goal |
-| 16 | `get_intelligence` | Trends, anomalies, forecast analysis |
-| 17 | `get_reference_data` | Reference data: categories / accounts / users / currencies (TTL cache 60s) |
-| 18 | `save_receipt` | Save receipt data to Receipts tab after photo transaction confirmed |
-| 19 | `save_learning` | Write learning event to agent_learning (PostgreSQL) |
-| 20 | `refresh_learning_summary` | Write agent_learning summary to Admin sheet Learning tab |
+| 5 | `sort_transactions` | Sort Transactions tab by date |
+| 6 | `find_transactions` | Search by filters |
+| 7 | `get_summary` | Aggregated report |
+| 8 | `get_budget_status` | Current month snapshot |
+| 9 | `import_wise_csv` | Import Wise CSV |
+| 10 | `set_fx_rate` | Exchange rate (admin) |
+| 11 | `update_config` | Config (admin) |
+| 12 | `add_authorized_user` | Add user (admin) |
+| 13 | `remove_authorized_user` | Remove user (admin) |
+| 14 | `list_envelopes` | List envelopes |
+| 15 | `create_envelope` | Create envelope (**contributor or admin**; clones Categories/Accounts from master template) |
+| 16 | `search_history` | Search conversation history in PostgreSQL |
+| 17 | `save_goal` | Save financial goal |
+| 18 | `get_intelligence` | Trends, anomalies, forecast analysis |
+| 19 | `get_contribution_status` | Household split contribution status |
+| 20 | `refresh_dashboard` | Write Dashboard tab from budget snapshot + config |
+| 21 | `save_receipt` | Save receipt data to Receipts tab after photo transaction confirmed |
+| 22 | `save_learning` | Write learning event to agent_learning (PostgreSQL) |
+| 23 | `refresh_learning_summary` | Write agent_learning summary to Admin sheet Learning tab |
+| 24 | `get_reference_data` | Reference data: categories / accounts / users / currencies (TTL cache 60s) |
+| 25 | `update_dashboard_config` | Update DashboardConfig in Admin sheet (history months, mode, etc.) |
+| 26 | `present_options` | Store inline choice buttons to attach to next bot message |
 
 **Rule:** a new tool must be added to BOTH `TOOLS` schema AND `dispatch` dict.
 
@@ -173,12 +180,21 @@ Photo passed to Claude for the CURRENT message only.
 ## 7. GOOGLE SHEETS STRUCTURE
 
 ### Admin sheet (separate file)
-Tabs: `Config`, `Users`, `Envelopes`, `FX_Rates`, `UserContext`
+Tabs: `Config`, `Users`, `Envelopes`, `FX_Rates`, `UserContext`, `DashboardConfig`, `Learning`
 
-- **Users** → list of authorized users with roles
+- **Users** → list of authorized users with roles (`admin` / `contributor` / `readonly`)
 - **Envelopes** → envelope list: `ID`, `name`, `file_id`, `monthly_cap`, `currency`
 - **FX_Rates** → exchange rates by month (headers = currencies)
 - **UserContext** → user goals and language preferences
+- **DashboardConfig** → key-value dashboard settings (created on first `update_dashboard_config` call):
+  - `auto_refresh_on_transaction` — TRUE/FALSE
+  - `show_contribution_history` — TRUE/FALSE
+  - `history_months` — number (default 3)
+  - `budget_warning_pct` — number (default 80)
+  - `master_template_id` — file ID of master template (empty = MM_BUDGET_FILE_ID)
+  - `mode` — `prod` or `test`
+  - `test_file_id` — file ID for test mode
+- **Learning** → dumped by `refresh_learning_summary` tool
 
 ### MM_BUDGET and each envelope (separate files)
 Tabs: `Transactions`, `Summary`, `Dashboard`, `Categories`, `Accounts`,

@@ -114,6 +114,10 @@ class SessionContext:
         # Short ID grouping messages in one conversation session.
         # Assigned on first message; used by ConversationLogger.
         self.session_id: Optional[str] = None
+        # Inline choice buttons requested by the agent.
+        # Format: [{"label": "✅ Да", "value": "yes"}, ...]
+        # Bot.py attaches these as InlineKeyboard after the agent response, then clears.
+        self.pending_choice: Optional[list] = None
 
 
 # In-memory session store (keyed by user_id)

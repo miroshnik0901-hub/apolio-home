@@ -85,6 +85,48 @@ class AdminSheets:
                 return
         ws.append_row([key, value])
 
+    # ── Dashboard config ──────────────────────────────────────────────────
+
+    # Default dashboard settings (used if DashboardConfig tab not found)
+    DASHBOARD_DEFAULTS = {
+        "auto_refresh_on_transaction": "FALSE",
+        "show_contribution_history": "TRUE",
+        "history_months": "3",
+        "budget_warning_pct": "80",
+        "show_category_breakdown": "TRUE",
+        "master_template_id": "",   # empty = use MM_BUDGET_FILE_ID env var
+        "mode": "prod",             # "prod" or "test"
+        "test_file_id": "",         # override file ID in test mode
+    }
+
+    def get_dashboard_config(self) -> dict:
+        """Read DashboardConfig tab from Admin sheet. Falls back to defaults if tab missing."""
+        try:
+            ws = self._ws("DashboardConfig")
+            rows = ws.get_all_values()
+            cfg = dict(self.DASHBOARD_DEFAULTS)
+            cfg.update({row[0]: row[1] for row in rows if len(row) >= 2 and row[0]})
+            return cfg
+        except Exception:
+            return dict(self.DASHBOARD_DEFAULTS)
+
+    def write_dashboard_config(self, key: str, value: str):
+        """Write a single key-value to DashboardConfig tab. Creates tab if missing."""
+        try:
+            ws = self._ws("DashboardConfig")
+        except Exception:
+            wb = self._workbook()
+            ws = wb.add_worksheet(title="DashboardConfig", rows=30, cols=3)
+            ws.update("A1", [["Key", "Value", "Description"]])
+            for k, v in self.DASHBOARD_DEFAULTS.items():
+                ws.append_row([k, v, ""])
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows):
+            if row and row[0] == key:
+                ws.update_cell(i + 1, 2, value)
+                return
+        ws.append_row([key, value, ""])
+
     # ── Envelopes registry ────────────────────────────────────────────────
 
     def get_envelopes(self) -> list[dict]:
@@ -723,6 +765,12 @@ class SheetsClient:
 
     def write_config(self, key: str, value: str):
         self._admin.write_config(key, value)
+
+    def get_dashboard_config(self) -> dict:
+        return self._admin.get_dashboard_config()
+
+    def write_dashboard_config(self, key: str, value: str):
+        self._admin.write_dashboard_config(key, value)
 
     def register_envelope(self, envelope_id: str, name: str, file_id: str,
                           owner_id: int, settings: dict):

@@ -55,9 +55,28 @@ auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
 receipt_store: Optional[ReceiptStore] = None
 
-_MM_BUDGET_FILE_ID = os.environ.get(
+_PROD_FILE_ID = os.environ.get(
     "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
 )
+_TEST_FILE_ID = os.environ.get("MM_TEST_FILE_ID", "")
+
+
+def _get_active_file_id() -> str:
+    """Return the active budget file ID based on mode in DashboardConfig.
+    mode=test → use MM_TEST_FILE_ID env var (or test_file_id from config).
+    mode=prod → use MM_BUDGET_FILE_ID (default)."""
+    try:
+        cfg = sheets.get_dashboard_config()
+        if cfg.get("mode", "prod").lower() == "test":
+            test_id = cfg.get("test_file_id", "") or _TEST_FILE_ID
+            if test_id:
+                return test_id
+    except Exception:
+        pass
+    return _PROD_FILE_ID
+
+
+_MM_BUDGET_FILE_ID = _PROD_FILE_ID  # legacy alias — use _get_active_file_id() for new code
 # Flag: True once PostgreSQL is ready (set in post_init)
 _db_ready = False
 
@@ -312,8 +331,17 @@ async def _build_status_html(session) -> str:
             env_label = env_id
         warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
 
+        # Show TEST mode warning if active
+        try:
+            mode_tag = ""
+            dash_cfg = sheets.get_dashboard_config()
+            if dash_cfg.get("mode", "prod").lower() == "test":
+                mode_tag = "  🧪 <b>TEST</b>"
+        except Exception:
+            mode_tag = ""
+
         lines = [
-            f"📊 <b>Бюджет {label}</b>  ·  📁 {env_label}",
+            f"📊 <b>Бюджет {label}</b>  ·  📁 {env_label}{mode_tag}",
             "",
             f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  ({pct:.0f}%){warn}",
             f"Осталось: <b>{remaining:,.0f} EUR</b>",
@@ -729,25 +757,25 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = ["📁 <b>Список конвертов:</b>\n"]
-    for e in envelopes:
-        cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else "без лимита"
-        rule = e.get("split_rule", "solo")
-        url = e.get("url", "")
-        link = f'  <a href="{url}">открыть таблицу</a>' if url else ""
+    keyboard = []
+    for i, e in enumerate(envelopes, 1):
+        cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else "—"
         active_mark = " ✅" if e["id"] == session.current_envelope_id else ""
-        lines.append(
-            f"▸ <b>{e['name']}</b> (<code>{e['id']}</code>){active_mark}\n"
-            f"  Лимит: {cap} · Правило: {rule}{link}"
-        )
+        # Each envelope gets its own row with select button
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{i}. {e['name']}{active_mark}  ·  {cap}",
+                callback_data=f"cb_env_{e['id']}"
+            )
+        ])
 
-    keyboard = [[InlineKeyboardButton(e["name"], callback_data=f"cb_env_{e['id']}")] for e in envelopes]
+    active_name = next((e["name"] for e in envelopes if e["id"] == session.current_envelope_id), "—")
+    header = f"📁 <b>Конверты</b>\nАктивный: <b>{active_name}</b>\n\nВыбери конверт:"
 
     await update.message.reply_text(
-        "\n\n".join(lines),
+        header,
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
-        disable_web_page_preview=True,
     )
 
 
@@ -1229,19 +1257,28 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 try:
                     envelopes = sheets.list_envelopes_with_links()
                     if envelopes:
-                        elines = ["📁 <b>Список конвертов:</b>\n"]
-                        for e in envelopes:
-                            cap_str = f"{e['monthly_cap']:,} {e['currency']}" if e.get('monthly_cap') else "без лимита"
-                            active = " ✅" if e["id"] == session.current_envelope_id else ""
-                            url = e.get("url", "")
-                            link = f'  <a href="{url}">открыть</a>' if url else ""
-                            elines.append(f"▸ <b>{e['name']}</b>{active}\n  Лимит: {cap_str}{link}")
-                        html = "\n".join(elines)
+                        active_name = next(
+                            (e["name"] for e in envelopes if e["id"] == session.current_envelope_id), "—"
+                        )
+                        html = f"📁 <b>Конверты</b>\nАктивный: <b>{active_name}</b>\n\nВыбери конверт:"
+                        def _env_btn_label(i, e, active_id):
+                            cap = f"{e['monthly_cap']:,} {e['currency']}" if e.get('monthly_cap') else "—"
+                            mark = "  ✅" if e["id"] == active_id else ""
+                            return f"{i}. {e['name']}{mark}  ·  {cap}"
+                        env_rows = [
+                            [InlineKeyboardButton(
+                                _env_btn_label(i, e, session.current_envelope_id),
+                                callback_data=f"cb_env_{e['id']}"
+                            )]
+                            for i, e in enumerate(envelopes, 1)
+                        ]
+                        kb = _with_menu_btn(*env_rows, lang=lang)
                     else:
                         html = "📁 Нет конвертов."
+                        kb = _with_menu_btn(lang=lang)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
-                kb = _with_menu_btn(lang=lang)
+                    kb = _with_menu_btn(lang=lang)
             elif command == "refresh":
                 admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
                 mc.reset_to_defaults(sheets._gc, admin_id)
@@ -1430,17 +1467,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.debug(f"Could not save active_envelope: {e}")
 
-        # Build confirmation with envelope info
+        # Build confirmation with envelope info + sheet link button
         cap = match.get("Monthly_Cap") or match.get("monthly_cap", 0)
         cap_str = f"{float(cap):,.0f} {match.get('Currency', 'EUR')}" if cap else "без лимита"
+        file_id_val = match.get("file_id", "")
+        sheet_url = f"https://docs.google.com/spreadsheets/d/{file_id_val}" if file_id_val else ""
+        extra_rows = []
+        if sheet_url:
+            extra_rows.append([InlineKeyboardButton("📊 Открыть таблицу", url=sheet_url)])
         try:
             await query.edit_message_text(
-                f"✅ <b>Активный конверт изменён</b>\n\n"
-                f"📁 <b>{match['Name']}</b>  (<code>{env_id}</code>)\n"
-                f"Лимит: {cap_str}\n\n"
-                f"Все новые расходы будут записаны в этот конверт.",
+                f"✅ <b>Активный конверт: {match['Name']}</b>  (<code>{env_id}</code>)\n"
+                f"Лимит: {cap_str}",
                 parse_mode=ParseMode.HTML,
-                reply_markup=_with_menu_btn(lang=lang),
+                reply_markup=_with_menu_btn(*extra_rows, lang=lang),
             )
         except BadRequest:
             pass
@@ -1468,6 +1508,35 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             session.last_action = None
         except Exception as ex:
             await query.edit_message_text(f"❌ Ошибка: {ex}")
+
+    # ── cb_choice_<value> — agent choice buttons ───────────────────────────
+    elif data.startswith("cb_choice_"):
+        chosen_value = data[10:]
+        await query.answer()
+        # Pass chosen value back to agent as if the user sent it as text
+        try:
+            await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+            response = await agent.run(chosen_value, session)
+            pending_ch2 = getattr(session, "pending_choice", None)
+            if pending_ch2:
+                session.pending_choice = None
+                choice_rows2 = [
+                    [InlineKeyboardButton(c["label"], callback_data=f"cb_choice_{c['value']}")]
+                    for c in pending_ch2
+                ]
+                kb = _with_menu_btn(*choice_rows2, lang=lang)
+            else:
+                kb = _with_menu_btn(lang=lang)
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=response,
+                reply_markup=kb,
+            )
+        except Exception as e:
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ {e}",
+            )
 
     # ── cb_del_<tx_id> ─────────────────────────────────────────────────────
     elif data.startswith("cb_del_"):
@@ -1753,10 +1822,20 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         typing_task.cancel()
 
     # ── Post-response inline buttons ──────────────────────────────────────
+    # Check pending_choice from agent's present_options tool call first
+    pending_ch = getattr(session, "pending_choice", None)
     pd = getattr(session, "pending_delete", None)
     la = session.last_action
 
-    if pd:
+    if pending_ch:
+        session.pending_choice = None  # consume
+        choice_rows = [
+            [InlineKeyboardButton(c["label"], callback_data=f"cb_choice_{c['value']}")]
+            for c in pending_ch
+        ]
+        kb = _with_menu_btn(*choice_rows, lang=lang)
+        await _safe_reply(update.message, response, reply_markup=kb)
+    elif pd:
         # Pending hard-delete: show confirm/cancel buttons instead of standard menu
         s, e = pd["start_row"], pd["end_row"]
         kb = InlineKeyboardMarkup([

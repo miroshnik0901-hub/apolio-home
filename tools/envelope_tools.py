@@ -79,6 +79,43 @@ DEFAULT_CATEGORIES_POLINA = [
 ]
 
 
+def _get_master_file_id(sheets: SheetsClient) -> str:
+    """Return the master template file ID from Config, or fall back to MM_BUDGET env var."""
+    try:
+        config = sheets.read_config()
+        master = config.get("master_template_id", "")
+        if master:
+            return master
+    except Exception:
+        pass
+    return os.environ.get("MM_BUDGET_FILE_ID", "")
+
+
+def _clone_reference_tabs(target: "gspread.Spreadsheet",
+                           source_file_id: str,
+                           gc: "gspread.Client") -> None:
+    """Copy Categories and Accounts tabs from source file to target (without transactions)."""
+    tabs_to_copy = ["Categories", "Accounts"]
+    try:
+        source = gc.open_by_key(source_file_id)
+    except Exception:
+        return
+    for tab_name in tabs_to_copy:
+        try:
+            src_ws = source.worksheet(tab_name)
+            data = src_ws.get_all_values()
+            if not data:
+                continue
+            try:
+                tgt_ws = target.worksheet(tab_name)
+            except Exception:
+                tgt_ws = target.add_worksheet(tab_name, rows=max(len(data) + 10, 100), cols=10)
+            tgt_ws.clear()
+            tgt_ws.update(data)
+        except Exception:
+            pass  # If tab doesn't exist in source, skip silently
+
+
 async def tool_list_envelopes(params: dict, session: SessionContext,
                               sheets: SheetsClient, auth: AuthManager) -> Any:
     """Return all active envelopes with Google Sheets links."""
@@ -94,8 +131,9 @@ async def tool_list_envelopes(params: dict, session: SessionContext,
 
 async def tool_create_envelope(params: dict, session: SessionContext,
                                 sheets: SheetsClient, auth: AuthManager) -> Any:
-    if not auth.is_admin(session.user_id):
-        return {"error": "Admin only."}
+    # Admin or contributor can create envelopes; readonly/guest cannot
+    if not auth.can_write(session.user_id):
+        return {"error": "Requires contributor or admin role."}
 
     name = params["name"]
     currency = params.get("currency", "EUR")
@@ -136,13 +174,17 @@ async def tool_create_envelope(params: dict, session: SessionContext,
     except Exception:
         pass
 
-    # Add default categories based on name hint
-    ws_cat = spreadsheet.worksheet("Categories")
-    if "polina" in name.lower():
-        ws_cat.update([DEFAULT_CATEGORIES_POLINA[0]] + DEFAULT_CATEGORIES_POLINA,
-                      "A2")
+    # Try to copy Categories + Accounts from the master template (MM_BUDGET or config)
+    master_file_id = _get_master_file_id(sheets)
+    if master_file_id:
+        _clone_reference_tabs(spreadsheet, master_file_id, gc)
     else:
-        ws_cat.update([DEFAULT_CATEGORIES_A[0]] + DEFAULT_CATEGORIES_A, "A2")
+        # Fall back to built-in category lists
+        ws_cat = spreadsheet.worksheet("Categories")
+        if "polina" in name.lower():
+            ws_cat.update([DEFAULT_CATEGORIES_POLINA[0]] + DEFAULT_CATEGORIES_POLINA, "A2")
+        else:
+            ws_cat.update([DEFAULT_CATEGORIES_A[0]] + DEFAULT_CATEGORIES_A, "A2")
 
     settings = {
         "monthly_cap": monthly_cap,
