@@ -422,6 +422,50 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "save_receipt",
+        "description": (
+            "Save itemized receipt data after a photo transaction is confirmed and recorded. "
+            "Call this after add_transaction succeeds for a photo/receipt message. "
+            "Stores merchant, items, and AI summary to the Receipts tab."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["transaction_id", "total_amount"],
+            "properties": {
+                "transaction_id": {"type": "string"},
+                "merchant":       {"type": "string", "default": ""},
+                "date":           {"type": "string", "description": "YYYY-MM-DD"},
+                "total_amount":   {"type": "number"},
+                "currency":       {"type": "string", "default": "EUR"},
+                "items":          {
+                    "type": "array",
+                    "description": "List of {name, amount, category}",
+                    "items": {"type": "object"},
+                },
+                "ai_summary":     {"type": "string",
+                                   "description": "One-line summary, e.g. 'Esselunga weekly shop, 12 items'"},
+                "raw_text":       {"type": "string", "default": ""},
+                "tg_file_id":     {"type": "string", "default": ""},
+            },
+        },
+    },
+    {
+        "name": "refresh_learning_summary",
+        "description": (
+            "Write a human-readable summary of all learned vocabulary, patterns and corrections "
+            "from the agent_learning PostgreSQL table to the 'Learning' tab in the Admin Google Sheet. "
+            "Call when the user asks: 'покажи что ты выучил', 'обнови Learning', "
+            "'refresh learning', 'what have you learned', 'запиши обучение в таблицу'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string", "description": "Filter by envelope, default = all"},
+                "min_confidence": {"type": "number", "description": "Min confidence threshold 0.0–1.0, default 0.5"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -787,6 +831,10 @@ class ApolioAgent:
             "get_reference_data":     self._tool_get_reference_data,
             # Self-learning
             "save_learning":          self._tool_save_learning,
+            # Receipt storage
+            "save_receipt":           self._tool_save_receipt,
+            # Learning summary → Google Sheets
+            "refresh_learning_summary": self._tool_refresh_learning_summary,
         }
 
         handler = dispatch.get(name)
@@ -798,7 +846,8 @@ class ApolioAgent:
             # Write audit log for state-changing operations
             if name not in ("find_transactions", "get_summary", "get_budget_status",
                             "list_envelopes", "get_intelligence", "search_history",
-                            "get_contribution_status", "refresh_dashboard"):
+                            "get_contribution_status", "refresh_dashboard",
+                            "save_learning", "save_receipt", "get_reference_data"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -1001,3 +1050,78 @@ class ApolioAgent:
                 ),
             }
         return {"error": "Failed to save learning event"}
+
+    async def _tool_save_receipt(self, params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager):
+        """Save itemized receipt data to Receipts tab."""
+        try:
+            import bot as _bot_module
+            rs = getattr(_bot_module, "receipt_store", None)
+            if rs is None:
+                return {"status": "skipped", "reason": "ReceiptStore not initialized"}
+            receipt_id = rs.save_receipt(
+                transaction_id=params.get("transaction_id", ""),
+                date=params.get("date", "") or "",
+                merchant=params.get("merchant", "") or "",
+                total_amount=float(params.get("total_amount", 0)),
+                currency=params.get("currency", "EUR"),
+                items=params.get("items", []),
+                ai_summary=params.get("ai_summary", "") or "",
+                raw_text=params.get("raw_text", "") or "",
+                tg_file_id=params.get("tg_file_id", "") or "",
+            )
+            return {"status": "ok", "receipt_id": receipt_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_refresh_learning_summary(self, params: dict, session: SessionContext,
+                                              sheets: SheetsClient, auth: AuthManager):
+        """Write agent_learning summary to Admin Google Sheet Learning tab."""
+        try:
+            import db as _db
+            if not _db.is_ready():
+                return {"status": "skipped", "reason": "DB not available"}
+
+            envelope_id   = params.get("envelope_id", "") or session.current_envelope_id or ""
+            min_confidence = float(params.get("min_confidence", 0.5))
+
+            # Load all learning rows from PostgreSQL
+            rows = await _db.get_all_learning(
+                user_id=session.user_id,
+                envelope_id=envelope_id,
+                min_confidence=min_confidence,
+            )
+            if not rows:
+                return {"status": "ok", "message": "No learning data above threshold."}
+
+            # Format rows for Google Sheets: [event_type, trigger, learned, confidence, updated_at]
+            header = ["event_type", "trigger", "learned", "confidence", "updated_at", "envelope_id"]
+            sheet_rows = [header]
+            for r in rows:
+                sheet_rows.append([
+                    r.get("event_type", ""),
+                    r.get("trigger_text", ""),
+                    json.dumps(r.get("learned", {}), ensure_ascii=False),
+                    str(round(r.get("confidence", 0), 3)),
+                    str(r.get("updated_at", ""))[:19],
+                    r.get("envelope_id", ""),
+                ])
+
+            # Write to Admin sheet Learning tab
+            admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+            if not admin_id:
+                return {"error": "ADMIN_SHEETS_ID not set"}
+
+            gc = sheets._gc
+            wb = gc.open_by_key(admin_id)
+            try:
+                ws = wb.worksheet("Learning")
+                ws.clear()
+            except Exception:
+                ws = wb.add_worksheet(title="Learning", rows=500, cols=10)
+
+            ws.update("A1", sheet_rows)
+            count = len(sheet_rows) - 1
+            return {"status": "ok", "message": f"✓ {count} learning records written to Learning tab."}
+        except Exception as e:
+            return {"error": str(e)}

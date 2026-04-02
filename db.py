@@ -646,3 +646,50 @@ async def get_learning_context_for_prompt(user_id: int) -> str:
             lines.append(f"  • {desc} (seen {p['times_seen']}x, last {p['last_seen']})")
 
     return "\n".join(lines)
+
+
+async def get_all_learning(user_id: int, envelope_id: str = "",
+                            min_confidence: float = 0.5) -> list[dict]:
+    """Return all learning rows for a user above min_confidence threshold.
+    Used by refresh_learning_summary tool to write to Google Sheets."""
+    pool = await get_pool()
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            if envelope_id:
+                rows = await conn.fetch(
+                    """SELECT event_type, trigger_text, learned, confidence,
+                              updated_at, envelope_id
+                       FROM agent_learning
+                       WHERE user_id=$1 AND envelope_id=$2 AND confidence >= $3
+                       ORDER BY updated_at DESC""",
+                    user_id, envelope_id, min_confidence,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT event_type, trigger_text, learned, confidence,
+                              updated_at, envelope_id
+                       FROM agent_learning
+                       WHERE user_id=$1 AND confidence >= $2
+                       ORDER BY updated_at DESC""",
+                    user_id, min_confidence,
+                )
+            result = []
+            for r in rows:
+                try:
+                    learned = json.loads(r["learned"]) if isinstance(r["learned"], str) else r["learned"]
+                except Exception:
+                    learned = {}
+                result.append({
+                    "event_type":   r["event_type"],
+                    "trigger_text": r["trigger_text"],
+                    "learned":      learned,
+                    "confidence":   float(r["confidence"]),
+                    "updated_at":   str(r["updated_at"]),
+                    "envelope_id":  r["envelope_id"] or "",
+                })
+            return result
+    except Exception as e:
+        logger.warning(f"[DB] get_all_learning failed: {e}")
+        return []

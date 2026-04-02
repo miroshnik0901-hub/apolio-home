@@ -46,12 +46,14 @@ from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
 from tools.conversation_log import make_session_id
+from tools.receipt_store import ReceiptStore
 import db as appdb
 
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
+receipt_store: Optional[ReceiptStore] = None
 
 _MM_BUDGET_FILE_ID = os.environ.get(
     "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
@@ -491,6 +493,14 @@ async def post_init(app: Application):
             logger.warning("PostgreSQL not available — conversation history disabled")
     except Exception as e:
         logger.warning(f"Could not initialize PostgreSQL: {e}")
+
+    # Initialize ReceiptStore
+    global receipt_store
+    try:
+        receipt_store = ReceiptStore(sheets._gc, _MM_BUDGET_FILE_ID)
+        logger.info("ReceiptStore initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize ReceiptStore: {e}")
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
