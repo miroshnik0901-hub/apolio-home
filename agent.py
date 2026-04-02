@@ -73,6 +73,45 @@ TOOLS = [
         },
     },
     {
+        "name": "save_learning",
+        "description": (
+            "Record a learning event to improve future interpretations. "
+            "Call this when: (1) user CORRECTS something you interpreted wrong, "
+            "(2) user CONFIRMS your interpretation (3+ confirmations = use automatically), "
+            "(3) user approves a NEW category/user/account via force_new, "
+            "(4) you identify a recurring PATTERN in the user's transactions, "
+            "(5) you resolved an AMBIGUITY and know the correct interpretation. "
+            "Do NOT call for read-only queries or data lookups."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["event_type"],
+            "properties": {
+                "event_type": {
+                    "type": "string",
+                    "enum": ["vocabulary", "correction", "confirmation", "pattern",
+                             "new_value", "ambiguity_resolved"],
+                },
+                "trigger": {
+                    "type": "string",
+                    "description": "The word/phrase that triggered this (e.g. 'шаурма', 'садик')",
+                },
+                "learned": {
+                    "type": "object",
+                    "description": "What was learned: {field, value, category, subcategory, who, ...}",
+                },
+                "confidence_delta": {
+                    "type": "number",
+                    "description": "+0.1 for confirmation, -0.3 for correction. Default 0.",
+                },
+                "original_input": {
+                    "type": "string",
+                    "description": "The user's original message that produced this event",
+                },
+            },
+        },
+    },
+    {
         "name": "edit_transaction",
         "description": "Edit a single field of an existing transaction by ID.",
         "input_schema": {
@@ -419,8 +458,8 @@ def _load_system_prompt() -> str:
         # Append intelligence context placeholders if not present
         if "{intelligence_context}" not in template:
             template += (
-                "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n"
-                "{contribution_context}\n\n{conversation_context}"
+                "\n\n---\n\n{learning_context}\n\n{intelligence_context}\n\n"
+                "{goals_context}\n\n{contribution_context}\n\n{conversation_context}"
             )
         return template
     except Exception as e:
@@ -527,11 +566,20 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Contribution context failed: {e}")
 
+        # 4. Self-learning context (vocabulary mappings + patterns)
+        learning_text = ""
+        try:
+            if appdb.is_ready():
+                learning_text = await appdb.get_learning_context_for_prompt(session.user_id)
+        except Exception as e:
+            logger.warning(f"Learning context failed: {e}")
+
         return {
             "intelligence_context": intelligence_text,
             "goals_context": goals_text,
             "conversation_context": "",   # intentionally blank — history is in messages[]
             "contribution_context": contribution_text,
+            "learning_context": learning_text,
         }
 
     async def run(self, message: str, session: SessionContext,
@@ -559,6 +607,7 @@ class ApolioAgent:
             goals_context=context.get("goals_context", ""),
             contribution_context=context.get("contribution_context", ""),
             conversation_context=context.get("conversation_context", ""),
+            learning_context=context.get("learning_context", ""),
         )
 
         # Build user content (text or with media)
@@ -736,6 +785,8 @@ class ApolioAgent:
             "refresh_dashboard":      self._tool_refresh_dashboard,
             # Reference data
             "get_reference_data":     self._tool_get_reference_data,
+            # Self-learning
+            "save_learning":          self._tool_save_learning,
         }
 
         handler = dispatch.get(name)
@@ -912,3 +963,41 @@ class ApolioAgent:
             "currencies": ref.get("currencies", []),
             "base_currency": ref.get("base_currency", "EUR"),
         }
+
+    async def _tool_save_learning(self, params: dict, session: SessionContext,
+                                   sheets: SheetsClient, auth: AuthManager):
+        """Persist a learning event to the agent_learning PostgreSQL table."""
+        import db as _db
+        if not _db.is_ready():
+            return {"status": "skipped", "reason": "DB not available"}
+
+        event_type = params.get("event_type", "")
+        if event_type not in ("vocabulary", "correction", "confirmation",
+                               "pattern", "new_value", "ambiguity_resolved"):
+            return {"error": f"Unknown event_type: {event_type}"}
+
+        # For corrections: apply confidence penalty automatically
+        confidence_delta = float(params.get("confidence_delta", 0.0))
+        if event_type == "correction" and confidence_delta == 0.0:
+            confidence_delta = -0.3
+        elif event_type == "confirmation" and confidence_delta == 0.0:
+            confidence_delta = 0.1
+
+        ok = await _db.save_learning(
+            user_id=session.user_id,
+            event_type=event_type,
+            trigger_text=params.get("trigger", ""),
+            context={"original_input": params.get("original_input", "")},
+            learned=params.get("learned", {}),
+            confidence_delta=confidence_delta,
+            envelope_id=session.current_envelope_id or "",
+        )
+
+        if ok:
+            return {
+                "status": "ok",
+                "message": f"✓ Learning saved: {event_type}" + (
+                    f" — '{params.get('trigger')}'" if params.get("trigger") else ""
+                ),
+            }
+        return {"error": "Failed to save learning event"}

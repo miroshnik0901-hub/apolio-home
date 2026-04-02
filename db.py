@@ -66,6 +66,28 @@ CREATE TABLE IF NOT EXISTS user_context (
 
 CREATE INDEX IF NOT EXISTS idx_uctx_user
     ON user_context (user_id);
+
+
+-- Self-learning table: vocabulary, corrections, confirmations, patterns
+CREATE TABLE IF NOT EXISTS agent_learning (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    envelope_id     VARCHAR(64) DEFAULT '',
+    event_type      VARCHAR(50) NOT NULL,   -- vocabulary|correction|confirmation|pattern|new_value|ambiguity_resolved
+    trigger_text    TEXT DEFAULT '',        -- the word/phrase that triggered this entry
+    context_json    JSONB DEFAULT '{}',     -- original input and surrounding context
+    learned_json    JSONB DEFAULT '{}',     -- what was learned: {field, value, category, ...}
+    confidence      FLOAT DEFAULT 0.7,      -- 0.0–1.0
+    times_seen      INT DEFAULT 1,
+    last_seen_ts    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_user_type
+    ON agent_learning (user_id, event_type);
+
+CREATE INDEX IF NOT EXISTS idx_learning_trigger
+    ON agent_learning (user_id, trigger_text);
 """
 
 
@@ -460,3 +482,167 @@ async def ctx_delete(user_id: int, key: str):
             )
     except Exception as e:
         logger.error(f"[DB] ctx_delete failed: {e}")
+
+
+# ── Agent Learning operations ─────────────────────────────────────────────────
+
+async def save_learning(
+    *,
+    user_id: int,
+    event_type: str,
+    trigger_text: str = "",
+    context: dict = None,
+    learned: dict = None,
+    confidence_delta: float = 0.0,
+    envelope_id: str = "",
+) -> bool:
+    """
+    Upsert a learning event.
+    - For vocabulary: upsert by (user_id, event_type='vocabulary', trigger_text)
+      → increment times_seen, adjust confidence, update learned_json
+    - For other types: insert new row.
+    Returns True on success, False on failure.
+    """
+    if not is_ready():
+        return False
+    try:
+        import json as _json
+        ctx_str = _json.dumps(context or {}, ensure_ascii=False)
+        learned_str = _json.dumps(learned or {}, ensure_ascii=False)
+
+        async with acquire() as conn:
+            if event_type in ("vocabulary", "pattern"):
+                # Upsert: update existing entry if same trigger exists
+                existing = await conn.fetchrow(
+                    """
+                    SELECT id, confidence, times_seen
+                    FROM agent_learning
+                    WHERE user_id = $1 AND event_type = $2 AND trigger_text = $3
+                    ORDER BY ts DESC LIMIT 1
+                    """,
+                    user_id, event_type, trigger_text.lower().strip(),
+                )
+                if existing:
+                    new_confidence = max(0.0, min(0.98, existing["confidence"] + confidence_delta))
+                    new_times = existing["times_seen"] + 1
+                    await conn.execute(
+                        """
+                        UPDATE agent_learning
+                        SET confidence = $1, times_seen = $2, last_seen_ts = NOW(),
+                            learned_json = $3, context_json = $4
+                        WHERE id = $5
+                        """,
+                        new_confidence, new_times, learned_str, ctx_str, existing["id"],
+                    )
+                    return True
+            # Insert new row for all other cases (or new vocabulary entry)
+            initial_confidence = max(0.0, min(0.98, 0.7 + confidence_delta))
+            await conn.execute(
+                """
+                INSERT INTO agent_learning
+                    (user_id, envelope_id, event_type, trigger_text,
+                     context_json, learned_json, confidence, times_seen, last_seen_ts)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW())
+                """,
+                user_id, envelope_id, event_type, trigger_text.lower().strip(),
+                ctx_str, learned_str, initial_confidence,
+            )
+        return True
+    except Exception as e:
+        logger.error(f"[DB] save_learning failed: {e}")
+        return False
+
+
+async def get_vocabulary(user_id: int, min_confidence: float = 0.4) -> list[dict]:
+    """
+    Load vocabulary entries for a user with confidence >= min_confidence.
+    Returns list sorted by confidence desc.
+    """
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT trigger_text, learned_json, confidence, times_seen
+                FROM agent_learning
+                WHERE user_id = $1 AND event_type = 'vocabulary'
+                  AND confidence >= $2
+                ORDER BY confidence DESC, times_seen DESC
+                """,
+                user_id, min_confidence,
+            )
+            return [
+                {
+                    "trigger": row["trigger_text"],
+                    "learned": _json.loads(row["learned_json"]),
+                    "confidence": row["confidence"],
+                    "times_seen": row["times_seen"],
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logger.error(f"[DB] get_vocabulary failed: {e}")
+        return []
+
+
+async def get_patterns(user_id: int) -> list[dict]:
+    """Load recognized recurring patterns for a user."""
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT trigger_text, learned_json, confidence, times_seen, last_seen_ts
+                FROM agent_learning
+                WHERE user_id = $1 AND event_type = 'pattern'
+                ORDER BY times_seen DESC
+                """,
+                user_id,
+            )
+            return [
+                {
+                    "trigger": row["trigger_text"],
+                    "pattern": _json.loads(row["learned_json"]),
+                    "confidence": row["confidence"],
+                    "times_seen": row["times_seen"],
+                    "last_seen": row["last_seen_ts"].strftime("%Y-%m-%d") if row["last_seen_ts"] else "",
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logger.error(f"[DB] get_patterns failed: {e}")
+        return []
+
+
+async def get_learning_context_for_prompt(user_id: int) -> str:
+    """
+    Return a compact text block of vocabulary and patterns for injection
+    into the system prompt. Only includes high-confidence entries.
+    """
+    vocab = await get_vocabulary(user_id, min_confidence=0.75)
+    patterns = await get_patterns(user_id)
+
+    if not vocab and not patterns:
+        return ""
+
+    lines = []
+    if vocab:
+        lines.append("LEARNED VOCABULARY (use these mappings directly without asking):")
+        for v in vocab[:20]:
+            learned = v["learned"]
+            mapping = ", ".join(f"{k}={val}" for k, val in learned.items() if val)
+            conf_label = "✓✓" if v["confidence"] >= 0.95 else "✓"
+            lines.append(f"  {conf_label} '{v['trigger']}' → {mapping} (seen {v['times_seen']}x)")
+
+    if patterns:
+        lines.append("\nRECURRING PATTERNS (suggest these when input matches):")
+        for p in patterns[:10]:
+            pat = p["pattern"]
+            desc = pat.get("description", p["trigger"])
+            lines.append(f"  • {desc} (seen {p['times_seen']}x, last {p['last_seen']})")
+
+    return "\n".join(lines)

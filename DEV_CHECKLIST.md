@@ -183,11 +183,11 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 ---
 
 ### Data architecture
-- **PostgreSQL (Railway):** `conversation_log`, `user_context` — history, goals, patterns, preferences
-- **Google Sheets:** transactions, budgets, summary formulas, receipts — human-accessible
+- **PostgreSQL (Railway):** `conversation_log`, `user_context`, `agent_learning` — history, goals, vocabulary, patterns
+- **Google Sheets:** transactions, budgets, summary formulas, receipts, learning summary — human-accessible
 - `db.py` handles all PostgreSQL operations (async via asyncpg)
 - `sheets.py` handles all Google Sheets operations (sync via gspread)
-- Intelligence engine reads from Sheets (transaction data), user context from PostgreSQL
+- Intelligence engine reads from Sheets (transaction data), user context and learning from PostgreSQL
 
 ### Intelligence layer / Context architecture
 Two-layer context model (do NOT mix them):
@@ -200,7 +200,7 @@ Two-layer context model (do NOT mix them):
 
 Checks:
 - [ ] `_build_context()` returns `conversation_context=""` — intentional, NOT a bug
-- [ ] System prompt template has `{intelligence_context}`, `{goals_context}`, `{contribution_context}`
+- [ ] System prompt template has `{learning_context}`, `{intelligence_context}`, `{goals_context}`, `{contribution_context}`
 - [ ] `get_recent_messages_for_api(telegram_bot=bot)` called with bot instance for image memory
 - [ ] History starts with a user turn (drops leading assistant turns)
 - [ ] History size: n_turns=6 turns (≈12 rows), max_tokens=4096
@@ -209,6 +209,24 @@ Checks:
 - [ ] `get_intelligence` tool in TOOLS schema + dispatch dict + excluded from audit
 - [ ] IntelligenceEngine.compute_snapshot returns structured dict (budget, pace, trends, anomalies)
 - [ ] format_snapshot_for_prompt handles missing data / errors gracefully
+
+### Self-Learning (SELF_LEARNING_ALGORITHM.md is the spec)
+- [ ] PostgreSQL `agent_learning` table created by SCHEMA_SQL (with ALTER TABLE migration)
+- [ ] `db.py`: save_learning(), get_vocabulary(), get_patterns(), get_learning_context_for_prompt()
+- [ ] `save_learning` tool in TOOLS schema + dispatch dict + `_tool_save_learning` handler
+- [ ] Agent calls `save_learning` after: corrections, confirmations, new vocabulary, ambiguity resolved
+- [ ] `{learning_context}` placeholder in system prompt template; injected from `get_learning_context_for_prompt()`
+- [ ] Vocabulary entries: upsert by (user_id, event_type, trigger_text) — no duplicates
+- [ ] Confidence scoring: 0.7 initial, +0.1 confirmation, -0.3 correction, capped 0.0–0.98
+- [ ] Entries with confidence >= 0.95: used directly without asking user
+- [ ] Entries with confidence < 0.75: used as hints only, not executed automatically
+
+### Ambiguity detection
+- [ ] EXECUTE IMMEDIATELY: amount explicit + intent clear + confidence >= 0.75
+- [ ] ASK FIRST: missing amount / unclear intent / multiple transactions in image / new values / vague input
+- [ ] Confirmation format: "📋 Вижу: X · Y EUR · Z · date\nЗаписать?"
+- [ ] After confirmation: execute + save_learning(confirmation)
+- [ ] After correction: edit + save_learning(correction, confidence_delta=-0.3)
 
 ### Google Sheets formulas
 - [ ] Summary sheet formulas use `value_input_option="USER_ENTERED"` (not RAW)
