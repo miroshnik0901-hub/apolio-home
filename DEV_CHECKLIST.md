@@ -128,3 +128,22 @@ Read CLAUDE_WORKING_GUIDE.md first. Then use this checklist before and after eve
 - [ ] Free text "coffee 3.50" → expense added, confirm/edit/delete buttons shown
 - [ ] Delete button → confirmation prompt → "Да, удалить" → transaction deleted
 - [ ] Free text "переключи язык на русский" → agent switches language via tool
+
+### Config architecture (envelope-specific vs global)
+- [ ] `compute_contribution_status()` reads from `sheets.read_envelope_config(file_id)` — NOT `sheets.read_config()`
+- [ ] Keys in envelope Config tab are unprefixed: `split_rule`, `split_threshold`, `split_users`, `base_contributor`
+- [ ] Admin Config tab has global settings only (no `split_rule_MM_BUDGET` etc.)
+- [ ] `SheetsClient.read_envelope_config(file_id)` returns `{}` on error — never raises
+- [ ] Each new envelope gets its own Config tab with split settings populated
+
+### Thinking indicator
+- [ ] "🏠 _думаю..._" message sent BEFORE `agent.run()`, stored as `_thinking_msg`
+- [ ] Thinking message deleted in `finally` block after agent returns
+- [ ] `_thinking_msg` deletion silently swallowed on error (message already deleted, etc.)
+- [ ] Thinking phrase is language-aware (ru/uk/en/it variants)
+
+### Admin config_view
+- [ ] Shows active envelope name (not just ID)
+- [ ] Shows Google Sheets URL with clickable link
+- [ ] Shows envelope Config tab keys separately from Admin global keys
+- [ ] Shows hint when envelope Config is empty (what keys to add)

@@ -202,11 +202,11 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
     """
     Compute per-user contribution and expense split for the given month.
 
-    Rules (from Config):
-      split_rule_<env>:         50_50 | solo
-      split_threshold_<env>:    base EUR covered by base_contributor
-      split_users_<env>:        comma-separated list of users in split
-      base_contributor_<env>:   user who covers up to threshold
+    Rules (from envelope's own Config tab):
+      split_rule:         50_50 | solo
+      split_threshold:    base EUR covered by base_contributor
+      split_users:        comma-separated list of users in split
+      base_contributor:   user who covers up to threshold
 
     Returns structured dict ready for formatting or tool response.
     """
@@ -221,14 +221,18 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
 
         file_id = env.get("file_id", "")
         currency = env.get("Currency", "EUR")
-        config = sheets.read_config()
 
-        split_rule        = config.get(f"split_rule_{envelope_id}", "solo")
-        threshold         = float(config.get(f"split_threshold_{envelope_id}",
-                                             env.get("Monthly_Cap", 0)) or 0)
-        split_users_raw   = config.get(f"split_users_{envelope_id}", "")
+        # Read split settings from the envelope's own Config tab (not Admin Config).
+        # Keys in the envelope Config tab are unprefixed: split_rule, split_threshold, etc.
+        # Admin Config holds only global settings.
+        env_config = sheets.read_envelope_config(file_id) if file_id else {}
+
+        split_rule        = env_config.get("split_rule", "solo")
+        threshold         = float(env_config.get("split_threshold",
+                                                  env.get("Monthly_Cap", 0)) or 0)
+        split_users_raw   = env_config.get("split_users", "")
         split_users       = [u.strip() for u in split_users_raw.split(",") if u.strip()]
-        base_contributor  = config.get(f"base_contributor_{envelope_id}", "Mikhail")
+        base_contributor  = env_config.get("base_contributor", "Mikhail")
 
         if not split_users:
             split_users = [base_contributor]

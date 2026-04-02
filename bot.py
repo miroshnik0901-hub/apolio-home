@@ -1644,19 +1644,51 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Только для администратора.", show_alert=True)
                     return
                 try:
-                    config = sheets.read_config()
-                    dash_cfg = sheets.get_dashboard_config()
                     env_id = session.current_envelope_id or "MM_BUDGET"
-                    lines = [f"⚙️ <b>Конфигурация</b>  (<code>{env_id}</code>)", ""]
-                    # Budget-relevant keys
-                    relevant = [k for k in config if any(x in k.lower() for x in [
-                        "split", "threshold", "base_contributor", "alert", "cap", "budget"
-                    ])]
-                    if relevant:
-                        lines.append("<b>Правила бюджета:</b>")
-                        for k in sorted(relevant):
-                            lines.append(f"  <code>{k}</code> = {config[k]}")
+                    # Resolve envelope name and file URL
+                    envelopes = sheets.get_envelopes()
+                    env_obj = next((e for e in envelopes if e.get("ID") == env_id), None)
+                    env_name = env_obj.get("Name", env_id) if env_obj else env_id
+                    env_file_id = env_obj.get("file_id", "") if env_obj else ""
+                    env_url = (
+                        f"https://docs.google.com/spreadsheets/d/{env_file_id}"
+                        if env_file_id else ""
+                    )
+
+                    # Admin global config
+                    admin_cfg = sheets.read_config()
+                    # Envelope-specific config (from envelope's own Config tab)
+                    env_config = sheets.read_envelope_config(env_file_id)
+                    dash_cfg = sheets.get_dashboard_config()
+
+                    lines = [f"⚙️ <b>Конфигурация</b>", ""]
+                    lines.append(f"📁 <b>Активный файл:</b> {env_name}")
+                    if env_url:
+                        lines.append(f"🔗 <a href=\"{env_url}\">Открыть в Google Sheets</a>")
+                    lines.append(f"🆔 <code>{env_id}</code>")
                     lines.append("")
+
+                    # Envelope-specific settings
+                    if env_config:
+                        lines.append("<b>Настройки конверта:</b>")
+                        for k in sorted(env_config):
+                            lines.append(f"  <code>{k}</code> = {env_config[k]}")
+                    else:
+                        lines.append("<b>Настройки конверта:</b> пусто")
+                        lines.append("  <i>Добавьте split_rule, split_threshold, split_users,</i>")
+                        lines.append("  <i>base_contributor в Config вкладку файла конверта</i>")
+                    lines.append("")
+
+                    # Global admin config (non-envelope keys only)
+                    global_keys = [k for k in admin_cfg if not any(
+                        env_id_check in k for env_id_check in ["_MM_", "_TEST_"]
+                    )]
+                    if global_keys:
+                        lines.append("<b>Admin Config (глобальные):</b>")
+                        for k in sorted(global_keys):
+                            lines.append(f"  <code>{k}</code> = {admin_cfg[k]}")
+                        lines.append("")
+
                     lines.append("<b>Dashboard Config:</b>")
                     for k, v in sorted(dash_cfg.items()):
                         lines.append(f"  <code>{k}</code> = {v}")
@@ -2180,7 +2212,26 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         session.pending_edit_tx = None
         text = f"[edit tx_id={pending_tx}] {text}"
 
-    # ── Typing indicator ───────────────────────────────────────────────────
+    # ── Thinking indicator ────────────────────────────────────────────────
+    # Send a visible "thinking" message so the user sees something immediately.
+    # It will be deleted once the agent finishes.
+    _thinking_phrases = {
+        "ru": "🏠 _думаю..._",
+        "uk": "🏠 _думаю..._",
+        "en": "🏠 _thinking..._",
+        "it": "🏠 _sto pensando..._",
+    }
+    _thinking_text = _thinking_phrases.get(lang, "🏠 _думаю..._")
+    _thinking_msg = None
+    try:
+        _thinking_msg = await ctx.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=_thinking_text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception:
+        pass  # Non-critical
+
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     async def _keep_typing():
@@ -2232,6 +2283,15 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass  # Conversation logging is not critical
     finally:
         typing_task.cancel()
+        # Remove the thinking indicator
+        if _thinking_msg:
+            try:
+                await ctx.bot.delete_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=_thinking_msg.message_id,
+                )
+            except Exception:
+                pass
 
     # ── Post-response inline buttons ──────────────────────────────────────
     # Check pending_choice from agent's present_options tool call first

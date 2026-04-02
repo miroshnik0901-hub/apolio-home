@@ -761,10 +761,29 @@ class SheetsClient:
         return self._admin.get_users()
 
     def read_config(self) -> dict:
+        """Read global settings from Admin Config tab."""
         return self._admin.read_config()
 
     def write_config(self, key: str, value: str):
         self._admin.write_config(key, value)
+
+    def read_envelope_config(self, file_id: str) -> dict:
+        """Read settings from the envelope's own Config tab.
+
+        Envelope-specific keys (split_rule, split_threshold, split_users,
+        base_contributor, budget_cap, etc.) live HERE, not in Admin Config.
+        Returns empty dict if file_id is blank or tab is missing.
+        """
+        if not file_id:
+            return {}
+        try:
+            return self._env_sheets(file_id).read_config()
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"read_envelope_config({file_id}): {e}"
+            )
+            return {}
 
     def get_dashboard_config(self) -> dict:
         return self._admin.get_dashboard_config()
