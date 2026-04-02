@@ -301,6 +301,21 @@ async def _safe_edit(query, text: str, reply_markup=None, **kwargs):
 
 # ── Direct budget renderers ────────────────────────────────────────────────────
 
+def _offset_month(month_str: str, delta: int) -> str:
+    """Add/subtract months from a YYYY-MM string."""
+    y, m = map(int, month_str.split("-"))
+    m += delta
+    while m > 12:
+        m -= 12; y += 1
+    while m < 1:
+        m += 12; y -= 1
+    return f"{y:04d}-{m:02d}"
+
+
+def _current_month_str() -> str:
+    return dt.date.today().strftime("%Y-%m")
+
+
 async def _build_status_html(session) -> str:
     """Render budget status as HTML without going through the agent."""
     try:
@@ -312,6 +327,11 @@ async def _build_status_html(session) -> str:
         summary = await tool_get_summary(
             {"breakdown_by": "category"}, session, sheets, auth
         )
+        # Previous month for trend comparison
+        prev_period = _offset_month(_current_month_str(), -1)
+        summary_prev = await tool_get_summary(
+            {"breakdown_by": "category", "period": prev_period}, session, sheets, auth
+        )
 
         cap = float(status.get("cap") or 0)
         spent = float(status.get("spent") or 0)
@@ -322,14 +342,12 @@ async def _build_status_html(session) -> str:
 
         label = _month_label_ru(month)
         env_id = session.current_envelope_id or "?"
-        # Try to get the envelope display name
         try:
             env_list = sheets.get_envelopes()
             env_match = next((e for e in env_list if e.get("ID") == env_id), None)
             env_label = env_match.get("Name", env_id) if env_match else env_id
         except Exception:
             env_label = env_id
-        warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
 
         # Show TEST mode warning if active
         try:
@@ -340,23 +358,61 @@ async def _build_status_html(session) -> str:
         except Exception:
             mode_tag = ""
 
+        # Progress bar + status emoji
+        bar = _progress_bar(spent, cap, 10) if cap else ""
+        if pct >= 100:
+            status_emoji = "🔴"
+        elif pct >= 80:
+            status_emoji = "⚠️"
+        elif pct >= 50:
+            status_emoji = "🟡"
+        else:
+            status_emoji = "✅"
+
+        # Days left + daily pace + projection
+        today_num = dt.date.today().day
+        days_in_month = (dt.date(dt.date.today().year, dt.date.today().month % 12 + 1, 1)
+                         - dt.timedelta(days=1)).day if dt.date.today().month < 12 else 31
+        days_left = days_in_month - today_num
+        daily_rate = spent / today_num if today_num > 0 else 0
+        projected = daily_rate * days_in_month if cap else 0
+
         lines = [
             f"📊 <b>Бюджет {label}</b>  ·  📁 {env_label}{mode_tag}",
             "",
-            f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  ({pct:.0f}%){warn}",
-            f"Осталось: <b>{remaining:,.0f} EUR</b>",
         ]
+
+        if cap:
+            lines.append(f"{bar}  {status_emoji}")
+            lines.append(f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  <b>({pct:.0f}%)</b>")
+            lines.append(f"Осталось: <b>{remaining:,.0f} EUR</b>  ·  {days_left} дн.")
+        else:
+            lines.append(f"Потрачено: <b>{spent:,.0f} EUR</b>")
+
+        if daily_rate > 0 and cap:
+            pace_delta = projected - cap
+            pace_str = (f"+{pace_delta:,.0f}" if pace_delta > 0 else f"{pace_delta:,.0f}")
+            lines.append(f"Темп: <i>{daily_rate:,.0f} EUR/день → прогноз {projected:,.0f} EUR ({pace_str})</i>")
 
         if summary.get("status") == "ok":
             cats = summary.get("categories", {})
+            prev_cats = summary_prev.get("categories", {}) if summary_prev.get("status") == "ok" else {}
             by_who = summary.get("by_who", {})
 
             if cats:
                 lines.append("")
                 lines.append("<b>По категориям:</b>")
-                for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:10]:
+                for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:8]:
                     icon = _cat_icon(cat)
-                    lines.append(f"  {icon} {cat}: {amt:,.0f} EUR")
+                    pct_cat = round(amt / spent * 100) if spent else 0
+                    prev_amt = prev_cats.get(cat, 0)
+                    if prev_amt > 0:
+                        delta = amt - prev_amt
+                        sign = "↑" if delta > 0 else "↓"
+                        trend = f"  <i>{sign}{abs(delta):,.0f}</i>"
+                    else:
+                        trend = ""
+                    lines.append(f"  {icon} {cat}: {amt:,.0f} EUR  ({pct_cat}%){trend}")
 
             if len(by_who) > 1:
                 lines.append("")
@@ -374,6 +430,11 @@ async def _build_report_html(session, period: str = "current") -> str:
     """Render monthly report as HTML without going through the agent."""
     try:
         from tools.summary import tool_get_summary
+        if period == "current":
+            period = _current_month_str()
+        elif period == "last":
+            period = _offset_month(_current_month_str(), -1)
+
         summary = await tool_get_summary(
             {"breakdown_by": "category", "period": period},
             session, sheets, auth
@@ -381,37 +442,76 @@ async def _build_report_html(session, period: str = "current") -> str:
         if summary.get("error"):
             return f"❌ {summary['error']}"
 
+        # Previous period for comparison
+        prev_period = _offset_month(period, -1)
+        summary_prev = await tool_get_summary(
+            {"breakdown_by": "category", "period": prev_period}, session, sheets, auth
+        )
+
         total = float(summary.get("total_spent") or 0)
-        period_str = summary.get("period", period)
-        label = _month_label_ru(period_str)
+        total_prev = float(summary_prev.get("total_spent") or 0) if summary_prev.get("status") == "ok" else 0
+        label = _month_label_ru(period)
         cats = summary.get("categories", {})
         by_who = summary.get("by_who", {})
+        prev_cats = summary_prev.get("categories", {}) if summary_prev.get("status") == "ok" else {}
 
-        lines = [
-            f"📋 <b>Отчёт за {label}</b>",
-            "",
-            f"Итого расходов: <b>{total:,.0f} EUR</b>",
-        ]
+        # Envelope cap for reference
+        try:
+            env_id = session.current_envelope_id or "MM_BUDGET"
+            env_list = sheets.get_envelopes()
+            env_match = next((e for e in env_list if e.get("ID") == env_id), None)
+            cap = float(env_match.get("Monthly_Cap") or env_match.get("monthly_cap") or 0) if env_match else 0
+        except Exception:
+            cap = 0
+
+        lines = [f"📋 <b>Отчёт — {label}</b>", ""]
+
+        if total == 0:
+            lines.append("Записей за этот период нет.")
+            return "\n".join(lines)
+
+        # Total with comparison
+        if total_prev > 0:
+            delta = total - total_prev
+            pct_delta = round(delta / total_prev * 100)
+            arrow = "↑" if delta > 0 else "↓"
+            lines.append(
+                f"Итого: <b>{total:,.0f} EUR</b>  "
+                f"<i>{arrow}{abs(pct_delta)}% vs {_month_label_ru(prev_period)}</i>"
+            )
+        else:
+            lines.append(f"Итого расходов: <b>{total:,.0f} EUR</b>")
+
+        if cap:
+            bar = _progress_bar(total, cap, 10)
+            pct_of_cap = round(total / cap * 100)
+            lines.append(f"{bar}  {pct_of_cap}% от бюджета ({cap:,.0f} EUR)")
 
         if cats:
             lines.append("")
-            lines.append("<b>Расходы по категориям:</b>")
+            lines.append("<b>По категориям:</b>")
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
-                pct = round(amt / total * 100) if total else 0
+                pct_share = round(amt / total * 100) if total else 0
+                bar = _progress_bar(amt, total, 6)
                 icon = _cat_icon(cat)
+                prev_amt = prev_cats.get(cat, 0)
+                if prev_amt > 0:
+                    delta = amt - prev_amt
+                    sign = "↑" if delta > 0 else "↓"
+                    trend = f"  <i>{sign}{abs(delta):,.0f}</i>"
+                else:
+                    trend = ""
                 lines.append(
-                    f"  {icon} <b>{cat}</b>: {amt:,.0f} EUR  ({pct}%)"
+                    f"{icon} <b>{cat}</b>  {bar}\n"
+                    f"   {amt:,.0f} EUR  ({pct_share}%){trend}"
                 )
 
         if len(by_who) > 1:
             lines.append("")
             lines.append("<b>По кому:</b>")
             for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
-                pct = round(amt / total * 100) if total else 0
-                lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct}%)")
-
-        if not cats and not by_who:
-            lines.append("\nЗаписей за этот период нет.")
+                pct_share = round(amt / total * 100) if total else 0
+                lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct_share}%)")
 
         return "\n".join(lines)
     except Exception as e:
@@ -424,7 +524,6 @@ async def _build_week_html(session) -> str:
     try:
         from tools.transactions import tool_find_transactions
         today = dt.date.today()
-        # Monday of current week
         monday = today - dt.timedelta(days=today.weekday())
         result = await tool_find_transactions(
             {"date_from": monday.isoformat(), "date_to": today.isoformat(), "limit": 50},
@@ -439,26 +538,189 @@ async def _build_week_html(session) -> str:
 
         total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
         cats: dict = {}
+        by_day: dict = {}
         for r in txs:
             cat = r.get("Category", "Other")
-            cats[cat] = cats.get(cat, 0) + float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+            amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+            cats[cat] = cats.get(cat, 0) + amt
+            day = r.get("Date", "")[:10]
+            by_day[day] = by_day.get(day, 0) + amt
 
         week_label = f"{monday.strftime('%d.%m')} — {today.strftime('%d.%m')}"
+        days_elapsed = max(today.weekday() + 1, 1)
+        daily_avg = total / days_elapsed
+
         lines = [
             f"📅 <b>Эта неделя</b>  ({week_label})",
             "",
-            f"Итого: <b>{total:,.0f} EUR</b>  ({len(txs)} {_ru_plural(len(txs), 'запись', 'записи', 'записей')})",
+            f"Итого: <b>{total:,.0f} EUR</b>  ·  {len(txs)} {_ru_plural(len(txs), 'запись', 'записи', 'записей')}",
+            f"В среднем: <i>{daily_avg:,.0f} EUR/день</i>",
         ]
+
+        if by_day:
+            lines.append("")
+            lines.append("<b>По дням:</b>")
+            for day in sorted(by_day.keys()):
+                day_label = dt.datetime.strptime(day, "%Y-%m-%d").strftime("%d.%m %a").replace(
+                    "Mon", "Пн").replace("Tue", "Вт").replace("Wed", "Ср").replace(
+                    "Thu", "Чт").replace("Fri", "Пт").replace("Sat", "Сб").replace("Sun", "Вс")
+                amt = by_day[day]
+                lines.append(f"  {day_label}: {amt:,.0f} EUR")
+
         if cats:
             lines.append("")
             lines.append("<b>По категориям:</b>")
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 icon = _cat_icon(cat)
-                lines.append(f"  {icon} {cat}: {amt:,.0f} EUR")
+                pct_share = round(amt / total * 100) if total else 0
+                lines.append(f"  {icon} {cat}: {amt:,.0f} EUR  ({pct_share}%)")
 
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_week_html failed: {e}", exc_info=True)
+        return f"❌ Ошибка: {e}"
+
+
+async def _build_contribution_html(session) -> str:
+    """Render contribution/split status — who owes what."""
+    try:
+        from intelligence import compute_contribution_status
+        envelope_id = session.current_envelope_id or "MM_BUDGET"
+        snap = compute_contribution_status(sheets, envelope_id)
+        if snap.get("error"):
+            return f"❌ {snap['error']}"
+        if snap.get("status") != "ok":
+            return "Данные о взносах недоступны."
+
+        cur = snap["currency"]
+        month = snap["month"]
+        label = _month_label_ru(month)
+        total_exp = snap["total_expenses"]
+        threshold = snap["threshold"]
+        excess = snap["excess_amount"]
+        excess_per = snap["excess_per_user"]
+        contributions = snap["contributions"]
+        balances = snap["balances"]
+        user_shares = snap["user_shares"]
+        split_users = snap["split_users"]
+        base_c = snap["base_contributor"]
+        split_rule = snap["split_rule"]
+
+        lines = [f"💸 <b>Взносы — {label}</b>", ""]
+
+        # Contributions (who put in how much)
+        if contributions:
+            lines.append("<b>Внесено:</b>")
+            for u in split_users:
+                amt = float(contributions.get(u, 0))
+                lines.append(f"  👤 {u}: {amt:,.0f} {cur}")
+            lines.append("")
+
+        # Total expenses and split
+        lines.append(f"Общие расходы: <b>{total_exp:,.0f} {cur}</b>")
+
+        if split_rule == "solo" or len(split_users) <= 1:
+            lines.append(f"Схема: всё на {base_c}")
+        else:
+            if total_exp <= threshold:
+                lines.append(f"До порога ({threshold:,.0f} {cur}) — всё на {base_c}")
+            else:
+                lines.append(
+                    f"Порог: {threshold:,.0f} {cur}  →  превышение: <b>{excess:,.0f} {cur}</b>\n"
+                    f"Каждый платит: {excess_per:,.0f} {cur} (плюс доля {base_c})"
+                )
+
+        # Shares
+        if user_shares:
+            lines.append("")
+            lines.append("<b>Доля каждого:</b>")
+            for u in split_users:
+                share = float(user_shares.get(u, 0))
+                lines.append(f"  👤 {u}: {share:,.0f} {cur}")
+
+        # Balances
+        lines.append("")
+        lines.append("<b>Итог (внесено − доля):</b>")
+        for u in split_users:
+            b = float(balances.get(u, 0))
+            if b > 0:
+                lines.append(f"  👤 {u}: <b>+{b:,.0f} {cur}</b>  ✅ в плюсе")
+            elif b < 0:
+                lines.append(f"  👤 {u}: <b>{b:,.0f} {cur}</b>  ⚠️ должен")
+            else:
+                lines.append(f"  👤 {u}: 0 {cur}  ≈ ровно")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_contribution_html failed: {e}", exc_info=True)
+        return f"❌ Ошибка: {e}"
+
+
+async def _build_trends_html(session) -> str:
+    """Render intelligence snapshot: budget trends + anomalies."""
+    try:
+        from intelligence import IntelligenceEngine
+        envelope_id = session.current_envelope_id or "MM_BUDGET"
+        engine = IntelligenceEngine(sheets)
+        snap = engine.compute_snapshot(envelope_id)
+        if snap.get("error"):
+            return f"❌ {snap['error']}"
+
+        cur = snap.get("currency", "EUR")
+        month = snap.get("month", "")
+        label = _month_label_ru(month)
+        lines = [f"📈 <b>Тренды — {label}</b>", ""]
+
+        trends = snap.get("trends", [])
+        if trends:
+            lines.append("<b>Изменения по категориям (vs пред. месяц):</b>")
+            for t in trends:
+                direction = t["direction"]
+                cat = t["category"]
+                cur_amt = t["current"]
+                prev_amt = t["previous"]
+                chg = t["change_pct"]
+                icon = _cat_icon(cat)
+                lines.append(
+                    f"  {direction} {icon} <b>{cat}</b>: {cur_amt:,.0f} → "
+                    f"({chg:+.0f}%  vs {prev_amt:,.0f} {cur})"
+                )
+        else:
+            lines.append("Трендов пока нет (нужны данные за 2+ месяца).")
+
+        anomalies = snap.get("anomalies", [])
+        if anomalies:
+            lines.append("")
+            lines.append("⚠️ <b>Аномалии (значительно выше среднего):</b>")
+            for a in anomalies:
+                icon = _cat_icon(a["category"])
+                lines.append(
+                    f"  {icon} {a['category']}: {a['current']:,.0f} {cur}  "
+                    f"(среднее {a['average']:,.0f}, ×{a['ratio']})"
+                )
+
+        large = snap.get("large_recent", [])
+        if large:
+            lines.append("")
+            lines.append("💸 <b>Крупные расходы (7 дней):</b>")
+            for r in large:
+                icon = _cat_icon(r.get("category", ""))
+                note = f" — {r['note']}" if r.get("note") else ""
+                lines.append(
+                    f"  {icon} {r['amount']:,.0f} {cur}  {r['date']}{note}"
+                )
+
+        pace = snap.get("pace_status", "unknown")
+        if pace == "over_pace":
+            projected = snap.get("projected_total", 0)
+            cap = snap.get("cap", 0)
+            lines.append(f"\n⚠️ Темп: прогноз {projected:,.0f} {cur} при бюджете {cap:,.0f} {cur}")
+        elif pace == "under_pace":
+            lines.append(f"\n✅ Темп: расходы ниже плана")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_trends_html failed: {e}", exc_info=True)
         return f"❌ Ошибка: {e}"
 
 
@@ -650,6 +912,22 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
             await cmd_undo(update, ctx)
         elif command == "settings":
             await cmd_settings(update, ctx)
+        elif command == "contribution":
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+            html = await _build_contribution_html(session)
+            kb = _with_menu_btn(
+                [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
+                 InlineKeyboardButton("📈 Тренды", callback_data="nav:rep_trends")],
+            )
+            await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+        elif command == "trends":
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+            html = await _build_trends_html(session)
+            kb = _with_menu_btn(
+                [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
+                 InlineKeyboardButton("💸 Взносы", callback_data="nav:rep_contribution")],
+            )
+            await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         else:
             return False
         return True
@@ -1221,9 +1499,17 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "report":
                 period = params.get("period", "current")
                 html = await _build_report_html(session, period)
+                # Compute month labels for nav buttons
+                cur_m = _current_month_str()
+                m1 = _offset_month(cur_m, -1)
+                m2 = _offset_month(cur_m, -2)
+                m3 = _offset_month(cur_m, -3)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
-                     InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
+                    [InlineKeyboardButton(_month_label_ru(m3)[:3], callback_data=f"cb_report_m:{m3}"),
+                     InlineKeyboardButton(_month_label_ru(m2)[:3], callback_data=f"cb_report_m:{m2}"),
+                     InlineKeyboardButton(_month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
+                     InlineKeyboardButton("▶ " + _month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
+                    lang=lang,
                 )
             elif command == "week":
                 html = await _build_week_html(session)
@@ -1315,6 +1601,109 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
+            elif command == "contribution":
+                html = await _build_contribution_html(session)
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
+                     InlineKeyboardButton("📈 Тренды", callback_data="nav:rep_trends")],
+                    lang=lang,
+                )
+            elif command == "trends":
+                html = await _build_trends_html(session)
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
+                     InlineKeyboardButton("💸 Взносы", callback_data="nav:rep_contribution")],
+                    lang=lang,
+                )
+            elif command == "dashboard_refresh":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    result = await agent._tool_refresh_dashboard({}, session, sheets, auth)
+                    status_msg = result.get("status", "error")
+                    html = "🔄 <b>Дашборд обновлён</b>" if status_msg == "ok" else f"❌ {result.get('error', 'Ошибка')}"
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
+            elif command == "mode_toggle":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    cfg = sheets.get_dashboard_config()
+                    current_mode = cfg.get("mode", "prod").lower()
+                    new_mode = "test" if current_mode == "prod" else "prod"
+                    sheets.write_dashboard_config("mode", new_mode)
+                    html = f"{'🧪 Переключено в TEST режим' if new_mode == 'test' else '🟢 Переключено в PROD режим'}"
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
+            elif command == "config_view":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    config = sheets.read_config()
+                    dash_cfg = sheets.get_dashboard_config()
+                    env_id = session.current_envelope_id or "MM_BUDGET"
+                    lines = [f"⚙️ <b>Конфигурация</b>  (<code>{env_id}</code>)", ""]
+                    # Budget-relevant keys
+                    relevant = [k for k in config if any(x in k.lower() for x in [
+                        "split", "threshold", "base_contributor", "alert", "cap", "budget"
+                    ])]
+                    if relevant:
+                        lines.append("<b>Правила бюджета:</b>")
+                        for k in sorted(relevant):
+                            lines.append(f"  <code>{k}</code> = {config[k]}")
+                    lines.append("")
+                    lines.append("<b>Dashboard Config:</b>")
+                    for k, v in sorted(dash_cfg.items()):
+                        lines.append(f"  <code>{k}</code> = {v}")
+                    html = "\n".join(lines)
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
+            elif command == "users_view":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    users = sheets._admin.get_users()
+                    lines = [f"👥 <b>Пользователи</b>  ({len(users)} чел.)", ""]
+                    for u in users:
+                        name = u.get("name", "?")
+                        role = u.get("role", "?")
+                        tid = u.get("telegram_id", "—")
+                        status = u.get("status", "active")
+                        envelopes = u.get("envelopes", "")
+                        status_icon = "✅" if status == "active" else "❌"
+                        lines.append(f"{status_icon} <b>{name}</b>  [{role}]")
+                        lines.append(f"   ID: <code>{tid}</code>")
+                        if envelopes:
+                            lines.append(f"   Конверты: {envelopes}")
+                    html = "\n".join(lines)
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
+            elif command == "learning_summary":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    import db as appdb
+                    if appdb.is_ready():
+                        # Use refresh_learning_summary tool result as text
+                        ctx_text = await appdb.get_learning_context_for_prompt(session.user_id)
+                        if ctx_text.strip():
+                            html = f"🧠 <b>База знаний</b>\n\n<code>{ctx_text[:2000]}</code>"
+                        else:
+                            html = "🧠 <b>База знаний</b>\n\nДанных пока нет."
+                    else:
+                        html = "🧠 База знаний недоступна (БД не подключена)."
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
             else:
                 await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
                 return
@@ -1372,19 +1761,42 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── cb_report ──────────────────────────────────────────────────────────
     elif data == "cb_report":
-        html = await _build_report_html(session, "current")
+        cur_m = _current_month_str()
+        m1 = _offset_month(cur_m, -1)
+        m2 = _offset_month(cur_m, -2)
+        html = await _build_report_html(session, cur_m)
         kb = _with_menu_btn(
-            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+            [InlineKeyboardButton(_month_label_ru(m2)[:4], callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton(_month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton("▶ " + _month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     elif data == "cb_report_last":
-        html = await _build_report_html(session, "last")
+        cur_m = _current_month_str()
+        m1 = _offset_month(cur_m, -1)
+        m2 = _offset_month(cur_m, -2)
+        html = await _build_report_html(session, m1)
         kb = _with_menu_btn(
-            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+            [InlineKeyboardButton(_month_label_ru(m2)[:4], callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton("▶ " + _month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton(_month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
         )
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+    elif data.startswith("cb_report_m:"):
+        period = data.split(":", 1)[1]
+        cur_m = _current_month_str()
+        m1 = _offset_month(cur_m, -1)
+        m2 = _offset_month(cur_m, -2)
+        m3 = _offset_month(cur_m, -3)
+        html = await _build_report_html(session, period)
+        nav_months = [m3, m2, m1, cur_m]
+        nav_btns = []
+        for nm in nav_months:
+            label = ("▶ " if nm == period else "") + _month_label_ru(nm)[:4]
+            nav_btns.append(InlineKeyboardButton(label, callback_data=f"cb_report_m:{nm}"))
+        kb = _with_menu_btn(nav_btns)
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_transactions ────────────────────────────────────────────────────
