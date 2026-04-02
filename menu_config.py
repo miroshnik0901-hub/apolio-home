@@ -129,7 +129,7 @@ DEFAULT_MENU: dict[str, dict] = {
         },
         "order": 6, "roles": [],
     },
-    # ── System submenu ────────────────────────────────────────────────────────
+    # ── System submenu — пользовательские настройки ──────────────────────────
     "set_lang": {
         "label": "🌍 Язык интерфейса", "parent": "settings",
         "type": "submenu", "command": "", "params": {}, "order": 1,
@@ -165,29 +165,35 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "cmd", "command": "undo", "params": {}, "order": 3,
         "roles": [],
     },
+    # ── Admin panel submenu (скрыто от не-admin) ──────────────────────────────
+    "admin_panel": {
+        "label": "🔧 Администрирование", "parent": "settings",
+        "type": "submenu", "command": "", "params": {}, "order": 4,
+        "roles": ["admin"],
+    },
     "set_dashboard": {
-        "label": "🔄 Обновить дашборд", "parent": "settings",
-        "type": "cmd", "command": "dashboard_refresh", "params": {}, "order": 4,
+        "label": "🔄 Обновить дашборд", "parent": "admin_panel",
+        "type": "cmd", "command": "dashboard_refresh", "params": {}, "order": 1,
         "roles": ["admin"],
     },
     "set_mode": {
-        "label": "🧪 Режим Тест/Прод", "parent": "settings",
-        "type": "cmd", "command": "mode_toggle", "params": {}, "order": 5,
+        "label": "🧪 Режим Тест/Прод", "parent": "admin_panel",
+        "type": "cmd", "command": "mode_toggle", "params": {}, "order": 2,
         "roles": ["admin"],
     },
     "set_config_view": {
-        "label": "⚙️ Конфигурация", "parent": "settings",
-        "type": "cmd", "command": "config_view", "params": {}, "order": 6,
+        "label": "⚙️ Конфигурация", "parent": "admin_panel",
+        "type": "cmd", "command": "config_view", "params": {}, "order": 3,
         "roles": ["admin"],
     },
     "set_users": {
-        "label": "👥 Пользователи", "parent": "settings",
-        "type": "cmd", "command": "users_view", "params": {}, "order": 7,
+        "label": "👥 Пользователи", "parent": "admin_panel",
+        "type": "cmd", "command": "users_view", "params": {}, "order": 4,
         "roles": ["admin"],
     },
     "set_learning": {
-        "label": "🧠 База знаний", "parent": "settings",
-        "type": "cmd", "command": "learning_summary", "params": {}, "order": 8,
+        "label": "🧠 База знаний", "parent": "admin_panel",
+        "type": "cmd", "command": "learning_summary", "params": {}, "order": 5,
         "roles": ["admin"],
     },
     "set_refresh": {
@@ -219,20 +225,22 @@ _DEFAULT_ROWS = [
     ("txn_search",    "🔍 Поиск...",              "transactions", "free_text", "",                '{"prompt":"Введите поисковой запрос:\\nПо категории, сумме или дате","pending_key":"transactions:search"}', 4, "TRUE", ""),
     ("txn_category",  "🏷 По категории...",       "transactions", "free_text", "",                '{"prompt":"Введите категорию:\\nНапример: Продукты, Ресторан, Транспорт","pending_key":"transactions:category"}', 5, "TRUE", ""),
     ("txn_who",       "👤 По кому...",            "transactions", "free_text", "",                '{"prompt":"Чьи расходы?\\nВведите имя: Mikhail, Marina, ...","pending_key":"transactions:who"}',            6, "TRUE", ""),
-    # System submenu
-    ("set_lang",         "🌍 Язык интерфейса",   "settings",     "submenu",   "",                "",                     1, "TRUE", ""),
+    # System submenu — user settings
+    ("set_lang",         "🌍 Язык интерфейса",    "settings",     "submenu",   "",                "",                     1, "TRUE", ""),
     ("set_lang_ru",      "🇷🇺 Русский",            "set_lang",     "cmd",       "set_language",    '{"lang":"ru"}',        1, "TRUE", ""),
     ("set_lang_uk",      "🇺🇦 Українська",         "set_lang",     "cmd",       "set_language",    '{"lang":"uk"}',        2, "TRUE", ""),
     ("set_lang_en",      "🇬🇧 English",            "set_lang",     "cmd",       "set_language",    '{"lang":"en"}',        3, "TRUE", ""),
     ("set_lang_it",      "🇮🇹 Italiano",           "set_lang",     "cmd",       "set_language",    '{"lang":"it"}',        4, "TRUE", ""),
     ("set_envelope",     "📁 Сменить конверт",    "settings",     "cmd",       "envelopes",       "",                     2, "TRUE", ""),
     ("set_undo",         "↩️ Отменить последнее", "settings",     "cmd",       "undo",            "",                     3, "TRUE", ""),
-    ("set_dashboard",    "🔄 Обновить дашборд",   "settings",     "cmd",       "dashboard_refresh","",                    4, "TRUE", "admin"),
-    ("set_mode",         "🧪 Режим Тест/Прод",    "settings",     "cmd",       "mode_toggle",     "",                     5, "TRUE", "admin"),
-    ("set_config_view",  "⚙️ Конфигурация",       "settings",     "cmd",       "config_view",     "",                     6, "TRUE", "admin"),
-    ("set_users",        "👥 Пользователи",        "settings",     "cmd",       "users_view",      "",                     7, "TRUE", "admin"),
-    ("set_learning",     "🧠 База знаний",         "settings",     "cmd",       "learning_summary","",                    8, "TRUE", "admin"),
-    ("set_refresh",      "🔄 Обновить меню",       "settings",     "cmd",       "refresh",         "",                     9, "TRUE", "admin"),
+    # Admin panel submenu
+    ("admin_panel",      "🔧 Администрирование",  "settings",     "submenu",   "",                "",                     4, "TRUE", "admin"),
+    ("set_dashboard",    "🔄 Обновить дашборд",   "admin_panel",  "cmd",       "dashboard_refresh","",                    1, "TRUE", "admin"),
+    ("set_mode",         "🧪 Режим Тест/Прод",    "admin_panel",  "cmd",       "mode_toggle",     "",                     2, "TRUE", "admin"),
+    ("set_config_view",  "⚙️ Конфигурация",       "admin_panel",  "cmd",       "config_view",     "",                     3, "TRUE", "admin"),
+    ("set_users",        "👥 Пользователи",        "admin_panel",  "cmd",       "users_view",      "",                     4, "TRUE", "admin"),
+    ("set_learning",     "🧠 База знаний",         "admin_panel",  "cmd",       "learning_summary","",                    5, "TRUE", "admin"),
+    ("set_refresh",      "🔄 Обновить меню",       "admin_panel",  "cmd",       "refresh",         "",                     6, "TRUE", "admin"),
 ]
 
 _HEADERS = ["ID", "Label", "Parent", "Type", "Command", "Params", "Order", "Visible", "Roles"]
