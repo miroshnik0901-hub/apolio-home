@@ -785,6 +785,69 @@ class SheetsClient:
             )
             return {}
 
+    def ensure_envelope_config(self, envelope_id: str) -> dict:
+        """Check envelope's Config tab and write any missing split/budget keys.
+
+        Reads defaults from the Envelopes registry (Monthly_Cap, Split_Rule, etc.).
+        Only writes keys that are not already present — never overwrites existing values.
+        Returns a dict with keys: written (list), skipped (list), error (str|None).
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        try:
+            envelopes = self.get_envelopes()
+            env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+            if not env:
+                return {"written": [], "skipped": [], "error": f"Envelope {envelope_id!r} not found"}
+
+            file_id = env.get("file_id", "")
+            if not file_id:
+                return {"written": [], "skipped": [], "error": "No file_id for this envelope"}
+
+            env_sheets = self._env_sheets(file_id)
+            existing = env_sheets.read_config()
+
+            # Derive sensible defaults from the Envelopes registry row
+            split_rule_default = env.get("Split_Rule", "solo").lower().replace("/", "_")
+            threshold_default  = str(env.get("Monthly_Cap", "0") or "0")
+            # Try to infer split_users from Users sheet
+            users = self.get_users()
+            active_users = [
+                u.get("name", "") for u in users
+                if envelope_id in str(u.get("envelopes", ""))
+                and str(u.get("status", "active")).lower() == "active"
+            ]
+            split_users_default = ",".join(active_users) if active_users else env.get("Owner_TG", "Mikhail")
+            # base_contributor = first user in list (admin preference)
+            admin_users = [
+                u.get("name", "") for u in users
+                if envelope_id in str(u.get("envelopes", ""))
+                and u.get("role", "") == "admin"
+            ]
+            base_contrib_default = admin_users[0] if admin_users else (active_users[0] if active_users else "Mikhail")
+
+            DEFAULTS = {
+                "split_rule":        split_rule_default,
+                "split_threshold":   threshold_default,
+                "split_users":       split_users_default,
+                "base_contributor":  base_contrib_default,
+            }
+
+            written, skipped = [], []
+            for key, default_val in DEFAULTS.items():
+                if key in existing:
+                    skipped.append(key)
+                else:
+                    env_sheets.write_config(key, default_val)
+                    written.append(f"{key}={default_val}")
+                    _log.info(f"[ensure_envelope_config] {envelope_id}: wrote {key}={default_val!r}")
+
+            return {"written": written, "skipped": skipped, "error": None}
+
+        except Exception as e:
+            _log.error(f"ensure_envelope_config({envelope_id}): {e}", exc_info=True)
+            return {"written": [], "skipped": [], "error": str(e)}
+
     def get_dashboard_config(self) -> dict:
         return self._admin.get_dashboard_config()
 

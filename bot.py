@@ -1644,7 +1644,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Только для администратора.", show_alert=True)
                     return
                 try:
-                    env_id = session.current_envelope_id or "MM_BUDGET"
+                    # Auto-init missing keys on every config view
+                    env_id_for_init = session.current_envelope_id or "MM_BUDGET"
+                    _init_result = sheets.ensure_envelope_config(env_id_for_init)
+                    _was_init = bool(_init_result.get("written"))
+                    env_id = env_id_for_init
                     # Resolve envelope name and file URL
                     envelopes = sheets.get_envelopes()
                     env_obj = next((e for e in envelopes if e.get("ID") == env_id), None)
@@ -1692,6 +1696,35 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     lines.append("<b>Dashboard Config:</b>")
                     for k, v in sorted(dash_cfg.items()):
                         lines.append(f"  <code>{k}</code> = {v}")
+                    html = "\n".join(lines)
+                except Exception as e:
+                    html = f"❌ Ошибка: {e}"
+                kb = _with_menu_btn(lang=lang)
+            elif command == "init_config":
+                if not auth.is_admin(session.user_id):
+                    await query.answer("Только для администратора.", show_alert=True)
+                    return
+                try:
+                    env_id = session.current_envelope_id or "MM_BUDGET"
+                    result = sheets.ensure_envelope_config(env_id)
+                    if result.get("error"):
+                        html = f"❌ Ошибка: {result['error']}"
+                    else:
+                        written = result.get("written", [])
+                        skipped = result.get("skipped", [])
+                        lines = [f"🔧 <b>Init Config: {env_id}</b>", ""]
+                        if written:
+                            lines.append(f"✅ <b>Записано ({len(written)}):</b>")
+                            for k in written:
+                                lines.append(f"  <code>{k}</code>")
+                        else:
+                            lines.append("✅ Все ключи уже присутствуют")
+                        if skipped:
+                            lines.append(f"⏭ <b>Пропущено (уже есть):</b> {', '.join(skipped)}")
+                        lines.append("")
+                        lines.append("Откройте Config вкладку конверта чтобы проверить.")
+                        if _was_init:
+                        lines.insert(2, f"🔧 <i>Авто-инициализировано: {', '.join(_init_result['written'])}</i>")
                     html = "\n".join(lines)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"

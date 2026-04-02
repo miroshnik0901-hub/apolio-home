@@ -290,3 +290,47 @@ Update after any of these events:
 - Architectural change → sections 5, 7
 - Backlog feature completed → remove from section 8, add to relevant section
 - IDs or env vars changed → section 3
+---
+
+## 10. REGRESSION ANALYSIS STUDIO
+
+**File:** `regression_studio.html` — standalone tool, no dependencies outside of cdnjs (Chart.js).
+Open directly in any browser.
+
+### What it is
+A full OLS regression analysis tool built for Apolio Home budget data exploration.
+No backend required — all math runs client-side in JavaScript.
+
+### Models supported
+- Simple linear regression
+- Polynomial regression (degree 2–8)
+- Multiple linear regression (n features)
+
+### Statistics computed
+- R², Adjusted R², RMSE
+- F-statistic with p-value
+- Per-coefficient: estimate, SE, t-statistic, p-value, 95% CI
+- Significance stars: `***` `**` `*` `·`
+
+### Diagnostic plots
+- Scatter + regression curve
+- Residuals vs Fitted
+- Normal Q-Q
+- Residual histogram
+- Scale-Location (√|res| vs fitted)
+
+### Using with Apolio Home data
+Export from Google Sheets → paste CSV into the tool:
+- For **spending trends**: columns `month, category, amount_eur` — regression of amount vs month
+- For **pace analysis**: columns `day_of_month, cumulative_spend` — linear forecast to month-end
+- For **per-person split**: columns `month, mikhail_share, marina_share` — regression of contributions
+- Sample format: `date,amount_eur,category` (one row per transaction)
+
+The tool auto-detects CSV headers and shows column selectors.
+
+### When Claude runs regression
+1. Export data using `get_summary` agent tool (or direct Sheets read)
+2. Convert to CSV
+3. Reference this tool as the analysis method
+4. Record anomalies / trend breaks found in `save_learning`
+

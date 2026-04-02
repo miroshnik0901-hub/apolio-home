@@ -186,6 +186,11 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "cmd", "command": "config_view", "params": {}, "order": 3,
         "roles": ["admin"],
     },
+    "set_init_config": {
+        "label": "🔧 Инит Config конверта", "parent": "admin_panel",
+        "type": "cmd", "command": "init_config", "params": {}, "order": 4,
+        "roles": ["admin"],
+    },
     "set_users": {
         "label": "👥 Пользователи", "parent": "admin_panel",
         "type": "cmd", "command": "users_view", "params": {}, "order": 4,
