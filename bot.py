@@ -1642,30 +1642,36 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         file_obj = await msg.photo[-1].get_file()
         media_data = bytes(await file_obj.download_as_bytearray())
         media_file_id = msg.photo[-1].file_id  # save Telegram file_id for memory
-        # Language-aware default prompt for photos — always extract ALL transactions
-        _photo_prompts = {
+        # Default prompt used ONLY when there is no caption.
+        # With a caption: the caption IS the instruction (e.g. "запиши взнос" → record immediately).
+        # Without a caption: analyze, show findings, ask for confirmation before recording.
+        _photo_auto_analyze = {
             "ru": (
-                "Извлеки ВСЕ транзакции из этого скриншота/чека. "
-                "Используй точные даты из изображения (не сегодняшнюю дату). "
-                "Если несколько транзакций — запиши каждую отдельно."
+                "Проанализируй это изображение полностью. "
+                "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
+                "Не записывай ничего сам. "
+                "Покажи мне список всего, что ты увидел, и спроси что с этим сделать."
             ),
             "uk": (
-                "Витягни ВСІ транзакції з цього скріншота/чека. "
-                "Використовуй точні дати з зображення. "
-                "Якщо кілька транзакцій — запиши кожну окремо."
+                "Проаналізуй це зображення повністю. "
+                "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
+                "Нічого не записуй сам. "
+                "Покажи мені список усього, що ти побачив, і спитай що з цим робити."
             ),
             "en": (
-                "Extract ALL transactions from this screenshot/receipt. "
-                "Use exact dates shown in the image (not today's date). "
-                "If multiple transactions — record each one separately."
+                "Analyze this image fully. "
+                "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
+                "Do NOT record anything yet. "
+                "Show me everything you found and ask what to do with it."
             ),
             "it": (
-                "Estrai TUTTE le transazioni da questo screenshot/ricevuta. "
-                "Usa le date esatte mostrate nell'immagine. "
-                "Se ci sono più transazioni — registra ognuna separatamente."
+                "Analizza questa immagine completamente. "
+                "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
+                "Non registrare nulla da solo. "
+                "Mostrami tutto ciò che hai trovato e chiedi cosa fare."
             ),
         }
-        text = msg.caption or _photo_prompts.get(lang, _photo_prompts["en"])
+        text = msg.caption or _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
         media_type = "photo"
 
     elif msg.document and msg.document.mime_type in ("text/csv", "application/csv"):

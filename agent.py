@@ -486,7 +486,7 @@ class ApolioAgent:
 
         intelligence_text = ""
         goals_text = ""
-        conversation_text = ""
+        contribution_text = ""
 
         envelope_id = session.current_envelope_id or "MM_BUDGET"
 
@@ -514,21 +514,12 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"User context failed: {e}")
 
-        # 3. Conversation history — PostgreSQL (primary)
-        try:
-            if appdb.is_ready():
-                rows = await appdb.get_recent_context(session.user_id, n=10)
-                conversation_text = appdb.format_context_for_prompt(rows)
-            else:
-                # Fallback: old ConversationLogger (Google Sheets)
-                conv = _get_conv_logger()
-                if conv:
-                    conversation_text = conv.format_context_for_prompt(session.user_id)
-        except Exception as e:
-            logger.warning(f"Conversation context failed: {e}")
+        # NOTE: Conversation history is NOT injected here as text.
+        # It is passed directly as a structured messages[] array in agent.run()
+        # via get_recent_messages_for_api(). Injecting it twice (here + messages[])
+        # wastes tokens and creates confusion. Keep it in messages[] only.
 
-        # 4. Contribution & split status
-        contribution_text = ""
+        # 3. Contribution & split status
         try:
             from intelligence import compute_contribution_status, format_contribution_for_prompt
             contrib_snap = compute_contribution_status(self.sheets, envelope_id)
@@ -539,7 +530,7 @@ class ApolioAgent:
         return {
             "intelligence_context": intelligence_text,
             "goals_context": goals_text,
-            "conversation_context": conversation_text,
+            "conversation_context": "",   # intentionally blank — history is in messages[]
             "contribution_context": contribution_text,
         }
 
@@ -611,7 +602,7 @@ class ApolioAgent:
         for iteration in range(max_iterations):
             response = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=2048,
+                max_tokens=4096,
                 system=system,
                 tools=TOOLS,
                 messages=messages,
@@ -639,6 +630,7 @@ class ApolioAgent:
 
                 messages.append({"role": "assistant", "content": response.content})
                 tool_results = []
+                _tools_called = []   # accumulate for DB logging
 
                 for block in response.content:
                     if block.type != "tool_use":
@@ -649,6 +641,36 @@ class ApolioAgent:
                         "tool_use_id": block.id,
                         "content": json.dumps(result),
                     })
+                    # Collect for DB: skip read-only / noisy tools
+                    _SKIP_LOG_TOOLS = {
+                        "get_budget_status", "get_summary", "get_intelligence",
+                        "find_transactions", "list_envelopes", "search_history",
+                        "get_contribution_status", "get_reference_data",
+                    }
+                    if block.name not in _SKIP_LOG_TOOLS:
+                        status = result.get("status", "") if isinstance(result, dict) else ""
+                        msg = result.get("message", "") if isinstance(result, dict) else ""
+                        err = result.get("error", "") if isinstance(result, dict) else ""
+                        summary = (msg or err or status)[:200]
+                        _tools_called.append((block.name, summary))
+
+                # Persist tool calls to DB so next session history has them
+                import db as _db_log
+                if _db_log.is_ready() and _tools_called:
+                    try:
+                        for tool_name, tool_summary in _tools_called:
+                            await _db_log.log_message(
+                                user_id=session.user_id,
+                                direction="bot",
+                                message_type="tool",
+                                raw_text=f"[tool:{tool_name}] {tool_summary}",
+                                tool_called=tool_name,
+                                result_short=tool_summary,
+                                session_id=session.session_id,
+                                envelope_id=session.current_envelope_id or "",
+                            )
+                    except Exception:
+                        pass
 
                 messages.append({"role": "user", "content": tool_results})
 

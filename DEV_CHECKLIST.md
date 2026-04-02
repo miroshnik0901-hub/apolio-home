@@ -62,18 +62,22 @@ Read this file BEFORE making any change. Check everything AFTER the change, befo
 - [ ] New commands registered with `app.add_handler`
 
 ### Photo / media
-- [ ] Photo without caption gets a language-aware default receipt prompt (not empty string)
-- [ ] `_photo_prompts` dict covers ru/uk/en/it and falls back to ru
+- [ ] Photo without caption gets a language-aware default prompt that says "extract ALL transactions, use exact dates from image"
+- [ ] `_photo_prompts` dict covers ru/uk/en/it and falls back to en
+- [ ] `media_file_id = msg.photo[-1].file_id` extracted and passed to `appdb.log_message()`
+- [ ] Photo without caption: Claude performs auto-analysis, returns findings + asks for confirmation before writing
+- [ ] Photo WITH explicit action caption (e.g. "запиши взнос"): Claude executes directly
+- [ ] `telegram_bot=ctx.bot` passed to `agent.run()` for all message types
 
 ### Conversation logging (PostgreSQL via db.py)
 - [ ] `appdb.init_db()` called in `post_init` — creates tables if needed
 - [ ] Graceful degradation: if no `DATABASE_URL`, logs warning and disables (no crash)
 - [ ] `session.session_id` assigned on first message in `handle_message`
 - [ ] User message logged BEFORE agent call via `appdb.log_message(direction="user")`
-- [ ] Bot response logged AFTER agent call via `appdb.log_message(direction="bot")`
+- [ ] For photo messages: `media_file_id` (Telegram file_id) saved to `conversation_log`
+- [ ] Bot final response logged AFTER agent call via `appdb.log_message(direction="bot")`
+- [ ] Tool calls (write-only: add/edit/delete/set_fx etc.) logged as `direction="bot", message_type="tool"` inside agentic loop — skip read-only tools (get_summary, find_transactions, etc.)
 - [ ] Logging exceptions are silently swallowed — must never crash the bot
-- [ ] `agent._build_context()` is async — reads history from PostgreSQL via `appdb.get_recent_context()`
-- [ ] Context injection: last 5 turns formatted via `appdb.format_context_for_prompt()`
 - [ ] User goals: `appdb.ctx_get_all()` with fallback to Google Sheets `UserContextManager`
 - [ ] `save_goal` tool: writes to PostgreSQL via `appdb.ctx_set()` (fallback to Sheets)
 
@@ -185,10 +189,21 @@ Columns A–G are user-editable. H–P are auto-filled by the bot or by Sheet fo
 - `sheets.py` handles all Google Sheets operations (sync via gspread)
 - Intelligence engine reads from Sheets (transaction data), user context from PostgreSQL
 
-### Intelligence layer (agent.py, intelligence.py, user_context.py)
-- [ ] `_build_context()` computes intelligence_context, goals_context, conversation_context
-- [ ] System prompt template has `{intelligence_context}`, `{goals_context}`, `{conversation_context}` placeholders
-- [ ] `_load_system_prompt()` auto-appends intelligence placeholders if missing in template
+### Intelligence layer / Context architecture
+Two-layer context model (do NOT mix them):
+- **Layer 1 — System prompt:** static derived data — intelligence snapshot, goals, contribution status
+  `{intelligence_context}`, `{goals_context}`, `{contribution_context}` placeholders
+- **Layer 2 — messages[] array:** actual conversation history from PostgreSQL, passed as proper
+  role/content turns by `get_recent_messages_for_api()`. Photo messages with `media_file_id`
+  are re-downloaded from Telegram and included as base64 images.
+- `{conversation_context}` placeholder is intentionally empty — history is in messages[], not here
+
+Checks:
+- [ ] `_build_context()` returns `conversation_context=""` — intentional, NOT a bug
+- [ ] System prompt template has `{intelligence_context}`, `{goals_context}`, `{contribution_context}`
+- [ ] `get_recent_messages_for_api(telegram_bot=bot)` called with bot instance for image memory
+- [ ] History starts with a user turn (drops leading assistant turns)
+- [ ] History size: n_turns=6 turns (≈12 rows), max_tokens=4096
 - [ ] Lazy singletons: `_get_intelligence_engine()`, `_get_user_context_mgr()`, `_get_conv_logger()`
 - [ ] `save_goal` tool in TOOLS schema + dispatch dict
 - [ ] `get_intelligence` tool in TOOLS schema + dispatch dict + excluded from audit
