@@ -69,8 +69,10 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
         📝 Записи   |  ➕ Добавить
         📁 Конверты |  ⚙️ Настройки
 
-    is_persistent=True so the keyboard toggle button stays in the input bar
-    and the keyboard is never hidden between sessions.
+    is_persistent=False so the keyboard is collapsible and the toggle button
+    stays visible in the input bar. The keyboard itself is re-sent whenever
+    the bot needs to ensure it's active (e.g. /start, language change).
+    Never send ReplyKeyboardRemove() — that kills the toggle button permanently.
     """
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -79,7 +81,7 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
             [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
         ],
         resize_keyboard=True,
-        is_persistent=True,   # keeps the keyboard toggle visible at all times
+        is_persistent=False,  # collapsible; toggle button visible on right side of input
     )
 
 
@@ -1693,6 +1695,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
              InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],
             [InlineKeyboardButton("📊 Статус",   callback_data="cb_status")],
+            lang=lang,
         )
         await _safe_reply(update.message, response, reply_markup=kb)
     else:
