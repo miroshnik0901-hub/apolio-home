@@ -301,10 +301,17 @@ async def _build_status_html(session) -> str:
 
         label = _month_label_ru(month)
         env_id = session.current_envelope_id or "?"
+        # Try to get the envelope display name
+        try:
+            env_list = sheets.get_envelopes()
+            env_match = next((e for e in env_list if e.get("ID") == env_id), None)
+            env_label = env_match.get("Name", env_id) if env_match else env_id
+        except Exception:
+            env_label = env_id
         warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
 
         lines = [
-            f"📊 <b>Бюджет {label}</b>  ·  {env_id}",
+            f"📊 <b>Бюджет {label}</b>  ·  📁 {env_label}",
             "",
             f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  ({pct:.0f}%){warn}",
             f"Осталось: <b>{remaining:,.0f} EUR</b>",
@@ -495,24 +502,35 @@ def _require_user(update: Update):
         return None, None
     session = get_session(user.id, user.first_name, tg_user["role"])
 
-    # Check saved language preference (cached in session after first load)
-    if getattr(session, "_lang_loaded", False):
-        return tg_user, session  # language already resolved
+    # Load saved user preferences once per session (language + active envelope)
+    if getattr(session, "_prefs_loaded", False):
+        return tg_user, session
     try:
         from user_context import UserContextManager
         ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+
+        # Language preference
         saved_lang = ctx_mgr.get(user.id, "language")
         if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
             session.lang = saved_lang
-            session._lang_loaded = True
-            return tg_user, session
+
+        # Active envelope preference
+        saved_env = ctx_mgr.get(user.id, "active_envelope")
+        if saved_env:
+            # Validate the saved envelope still exists
+            try:
+                known_ids = [e.get("ID") for e in sheets.get_envelopes()]
+                if saved_env in known_ids:
+                    session.current_envelope_id = saved_env
+            except Exception:
+                pass  # leave default
+
+        session._prefs_loaded = True
+        return tg_user, session
     except Exception as e:
-        logger.debug(f"Could not load saved language: {e}")
+        logger.debug(f"Could not load user prefs: {e}")
 
     # Fallback: Language detection from Telegram
-    # Only switch for explicit non-English languages (uk, it).
-    # English Telegram UI is not a signal — this product is Russian-first.
-    # Switching logic: uk → uk, it → it, anything else (en, ru, etc.) → keep "ru"
     tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
     if tg_lang in ("uk", "it"):
         session.lang = tg_lang
@@ -763,6 +781,10 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     session.current_envelope_id = env_id
+    try:
+        ctx_mgr.set(update.effective_user.id, "active_envelope", env_id)
+    except Exception:
+        pass
     await update.message.reply_text(
         f"✅ Активный конверт: <b>{match['Name']}</b> (<code>{env_id}</code>)",
         parse_mode=ParseMode.HTML,
@@ -1373,7 +1395,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except BadRequest:
             pass
 
-    # ── cb_env_<ID> ────────────────────────────────────────────────────────
+    # ── cb_env_<ID> — select active envelope ──────────────────────────────
     elif data.startswith("cb_env_"):
         env_id = data[7:]
         envelopes = sheets.get_envelopes()
@@ -1383,12 +1405,32 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"❌ Конверт <code>{env_id}</code> не найден.", parse_mode=ParseMode.HTML
             )
             return
+
+        # Set in session
         session.current_envelope_id = env_id
+        # Invalidate prefs so next _require_user reloads (not strictly needed
+        # but safe when saving from this path)
+        session._prefs_loaded = True
+
+        # Persist to UserContext so it survives bot restarts
+        try:
+            from user_context import UserContextManager
+            ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+            ctx_mgr.set(query.from_user.id, "active_envelope", env_id)
+        except Exception as e:
+            logger.debug(f"Could not save active_envelope: {e}")
+
+        # Build confirmation with envelope info
+        cap = match.get("Monthly_Cap") or match.get("monthly_cap", 0)
+        cap_str = f"{float(cap):,.0f} {match.get('Currency', 'EUR')}" if cap else "без лимита"
         try:
             await query.edit_message_text(
-                f"✅ Активный конверт: <b>{match['Name']}</b> (<code>{env_id}</code>)\n\n"
-                "Теперь пишите расходы прямо в чат!",
+                f"✅ <b>Активный конверт изменён</b>\n\n"
+                f"📁 <b>{match['Name']}</b>  (<code>{env_id}</code>)\n"
+                f"Лимит: {cap_str}\n\n"
+                f"Все новые расходы будут записаны в этот конверт.",
                 parse_mode=ParseMode.HTML,
+                reply_markup=_with_menu_btn(lang=lang),
             )
         except BadRequest:
             pass
