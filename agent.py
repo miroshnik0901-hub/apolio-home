@@ -43,13 +43,32 @@ TOOLS = [
                 "envelope_id":  {"type": "string", "description": "Envelope ID, default current"},
                 "category":     {"type": "string"},
                 "subcategory":  {"type": "string"},
-                "who":          {"type": "string", "enum": ["Mikhail", "Marina", "Joint"],
-                                 "default": "Mikhail"},
-                "account":      {"type": "string"},
+                "who":          {"type": "string",
+                                 "description": "Who made the expense. Use values from get_reference_data."},
+                "account":      {"type": "string",
+                                 "description": "Payment account/card. Use values from get_reference_data."},
                 "type":         {"type": "string",
                                  "enum": ["expense", "income", "transfer"],
                                  "default": "expense"},
                 "note":         {"type": "string"},
+                "force_new":    {"type": "boolean",
+                                 "description": "Set true to bypass validation and allow new category/who/account values not yet in the reference lists."},
+            },
+        },
+    },
+    {
+        "name": "get_reference_data",
+        "description": (
+            "Fetch the reference lists for the current envelope: "
+            "known categories, subcategories, accounts, users (who), and currencies. "
+            "Call this when: (1) user asks 'what categories do we have?', "
+            "(2) add_transaction returns unknown_values status, "
+            "(3) you're unsure whether a category/who value is valid."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string", "description": "Envelope ID, default current"},
             },
         },
     },
@@ -689,6 +708,8 @@ class ApolioAgent:
             "search_history":         self._tool_search_history,
             # Dashboard writer
             "refresh_dashboard":      self._tool_refresh_dashboard,
+            # Reference data
+            "get_reference_data":     self._tool_get_reference_data,
         }
 
         handler = dispatch.get(name)
@@ -839,4 +860,29 @@ class ApolioAgent:
                 f"расходы {snap.get('spent', 0):,.2f} {snap.get('currency', 'EUR')} "
                 f"из {snap.get('cap', 0):,.2f} ({snap.get('pct_used', 0):.1f}%)"
             ),
+        }
+
+    async def _tool_get_reference_data(self, params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager):
+        """Return reference lists (categories, who, accounts, currencies) for the current envelope."""
+        from tools.transactions import _resolve_envelope
+        try:
+            envelope = _resolve_envelope(params, session, sheets)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        try:
+            ref = sheets.get_reference_data(envelope["file_id"])
+        except Exception as e:
+            return {"error": f"Не удалось загрузить справочник: {e}"}
+
+        return {
+            "status": "ok",
+            "envelope_id": envelope["ID"],
+            "categories": ref.get("categories", []),
+            "subcategories": ref.get("subcategories", []),
+            "accounts": ref.get("accounts", []),
+            "who": ref.get("who", []),
+            "currencies": ref.get("currencies", []),
+            "base_currency": ref.get("base_currency", "EUR"),
         }

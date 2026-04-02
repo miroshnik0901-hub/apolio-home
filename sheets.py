@@ -117,6 +117,19 @@ class AdminSheets:
             datetime.utcnow().isoformat()
         ])
 
+    def get_user_names(self) -> list[str]:
+        """Return list of user display names from the Users tab."""
+        try:
+            users = self.get_users()
+            names = []
+            for u in users:
+                name = u.get("name") or u.get("Name") or u.get("username") or ""
+                if name:
+                    names.append(name.strip())
+            return names
+        except Exception:
+            return []
+
     def remove_user(self, telegram_id: int):
         ws = self._ws("Users")
         records = ws.get_all_records()
@@ -183,6 +196,79 @@ class EnvelopeSheets:
             "FALSE",                                                   # P
         ])
         return tx_id
+
+    # ── Reference data ────────────────────────────────────────────────────
+
+    def get_categories(self) -> list[dict]:
+        """Read categories from the Categories tab.
+        Each row: Category, Subcategory (optional), Description (optional).
+        Returns list of dicts with 'category' and 'subcategory' keys.
+        If the tab doesn't exist, falls back to unique values from Transactions."""
+        try:
+            ws = self._ws("Categories")
+            records = ws.get_all_records()
+            if records:
+                return records
+        except Exception:
+            pass
+        # Fallback: derive unique categories from existing transactions
+        try:
+            ws = self._ws("Transactions")
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            headers = all_values[0]
+            cat_idx = headers.index("Category") if "Category" in headers else -1
+            sub_idx = headers.index("Subcategory") if "Subcategory" in headers else -1
+            seen = {}
+            for row in all_values[1:]:
+                padded = row + [""] * max(0, len(headers) - len(row))
+                if padded[cat_idx].strip() if cat_idx >= 0 else "":
+                    cat = padded[cat_idx].strip()
+                    sub = padded[sub_idx].strip() if sub_idx >= 0 else ""
+                    if cat not in seen:
+                        seen[cat] = set()
+                    if sub:
+                        seen[cat].add(sub)
+            result = []
+            for cat, subs in seen.items():
+                if subs:
+                    for sub in sorted(subs):
+                        result.append({"Category": cat, "Subcategory": sub})
+                else:
+                    result.append({"Category": cat, "Subcategory": ""})
+            return result
+        except Exception:
+            return []
+
+    def get_accounts(self) -> list[str]:
+        """Read accounts from the Accounts tab, or derive from transactions."""
+        try:
+            ws = self._ws("Accounts")
+            records = ws.get_all_records()
+            if records:
+                return [r.get("Account", r.get("Name", "")) for r in records if r.get("Account") or r.get("Name")]
+        except Exception:
+            pass
+        # Fallback: derive from transactions
+        try:
+            ws = self._ws("Transactions")
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            headers = all_values[0]
+            acc_idx = headers.index("Account") if "Account" in headers else -1
+            if acc_idx < 0:
+                return []
+            accounts = set()
+            for row in all_values[1:]:
+                padded = row + [""] * max(0, len(headers) - len(row))
+                acc = padded[acc_idx].strip()
+                if acc:
+                    accounts.add(acc)
+            return sorted(accounts)
+        except Exception:
+            return []
 
     def get_transactions(self, filters: dict = None) -> list[dict]:
         ws = self._ws("Transactions")
@@ -711,6 +797,65 @@ class SheetsClient:
         """Sort Transactions sheet by date and invalidate cache."""
         self._cache.invalidate(f"txns_{sheet_id}")
         return self._env_sheets(sheet_id).sort_by_date(order)
+
+    def get_reference_data(self, sheet_id: str) -> dict:
+        """Return all reference lists for the given envelope:
+        categories, subcategories, accounts, known users (from Admin), currencies.
+        Used for input validation before recording transactions."""
+        cache_key = f"ref_{sheet_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        env = self._env_sheets(sheet_id)
+
+        # Categories + subcategories
+        cat_records = env.get_categories()
+        categories = sorted({r.get("Category", "") for r in cat_records if r.get("Category", "")})
+        subcategories = sorted({r.get("Subcategory", "") for r in cat_records if r.get("Subcategory", "")})
+
+        # Accounts
+        accounts = env.get_accounts()
+
+        # Users from Admin file
+        try:
+            who_values = self._admin.get_user_names()
+        except Exception:
+            who_values = []
+
+        # Envelope base currency from Admin (look up by file_id)
+        base_currency = "EUR"
+        try:
+            all_envs = self._admin.get_envelopes()
+            env_meta = next((e for e in all_envs if e.get("file_id") == sheet_id), None)
+            if env_meta:
+                base_currency = env_meta.get("Currency", "EUR") or "EUR"
+        except Exception:
+            pass
+
+        # Known currencies from FX_Rates
+        currencies = [base_currency]
+        try:
+            fx_ws = env._ws("FX_Rates")
+            fx_headers = fx_ws.row_values(1)
+            for h in fx_headers:
+                if h.startswith("EUR_"):
+                    c = h[4:]  # e.g. "EUR_PLN" → "PLN"
+                    if c and c not in currencies:
+                        currencies.append(c)
+        except Exception:
+            pass
+
+        result = {
+            "categories": categories,
+            "subcategories": subcategories,
+            "accounts": accounts,
+            "who": who_values,
+            "currencies": currencies,
+            "base_currency": base_currency,
+        }
+        self._cache.set(cache_key, result)
+        return result
 
     def update_dashboard_sheet(self, sheet_id: str, snap: dict,
                                 contrib_snap: dict = None,

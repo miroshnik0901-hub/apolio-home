@@ -30,6 +30,55 @@ def _resolve_envelope(params: dict, session: SessionContext,
     raise ValueError(f"Конверт {env_id} не найден. Проверьте список конвертов командой /envelope.")
 
 
+def _fuzzy_suggest(value: str, known: list[str], max_results: int = 3) -> list[str]:
+    """Return known values that are similar to value (case-insensitive substring match)."""
+    value_l = value.lower()
+    exact = [k for k in known if k.lower() == value_l]
+    if exact:
+        return []  # it's actually a match
+    contains = [k for k in known if value_l in k.lower() or k.lower() in value_l]
+    return contains[:max_results] if contains else known[:max_results]
+
+
+def _validate_transaction_params(params: dict, ref: dict) -> dict:
+    """Check category, who, account against reference data.
+    Returns dict of unknown fields and suggestions, or empty dict if all OK.
+    Skip validation if force_new=True or if reference list is empty (not set up yet)."""
+    if params.get("force_new"):
+        return {}
+
+    unknown = {}
+    suggestions = {}
+
+    # Validate category
+    category = params.get("category", "")
+    known_cats = ref.get("categories", [])
+    if category and known_cats:
+        if not any(k.lower() == category.lower() for k in known_cats):
+            unknown["category"] = category
+            suggestions["category"] = _fuzzy_suggest(category, known_cats)
+
+    # Validate subcategory (only if parent category is known)
+    subcategory = params.get("subcategory", "")
+    known_subs = ref.get("subcategories", [])
+    if subcategory and known_subs and "category" not in unknown:
+        if not any(k.lower() == subcategory.lower() for k in known_subs):
+            unknown["subcategory"] = subcategory
+            suggestions["subcategory"] = _fuzzy_suggest(subcategory, known_subs)
+
+    # Validate who
+    who = params.get("who", "")
+    known_who = ref.get("who", [])
+    if who and known_who:
+        if not any(k.lower() == who.lower() for k in known_who):
+            unknown["who"] = who
+            suggestions["who"] = _fuzzy_suggest(who, known_who)
+
+    if unknown:
+        return {"unknown": unknown, "suggestions": suggestions, "known": ref}
+    return {}
+
+
 async def tool_add_transaction(params: dict, session: SessionContext,
                                 sheets: SheetsClient, auth: AuthManager) -> Any:
     if not auth.can_write(session.user_id):
@@ -39,12 +88,42 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     if not auth.can_access_envelope(session.user_id, envelope["ID"]):
         return {"error": "You don't have access to this envelope."}
 
+    # ── Validation against reference data ────────────────────────────────
+    try:
+        ref = sheets.get_reference_data(envelope["file_id"])
+        issues = _validate_transaction_params(params, ref)
+        if issues:
+            unknown = issues["unknown"]
+            sug = issues["suggestions"]
+            known = issues["known"]
+
+            lines = []
+            for field, val in unknown.items():
+                s = sug.get(field, [])
+                hint = f"Похожие: {', '.join(s)}" if s else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}"
+                lines.append(f"• {field} = «{val}» — не найдено. {hint}")
+
+            return {
+                "status": "confirm_required",
+                "type": "unknown_values",
+                "message": (
+                    "Обнаружены неизвестные значения:\n" + "\n".join(lines) +
+                    "\n\nУточни у пользователя: использовать одно из предложенных "
+                    "или добавить новое значение в справочник? "
+                    "При подтверждении вызови снова с force_new=true."
+                ),
+                "unknown_fields": unknown,
+                "suggestions": sug,
+            }
+    except Exception:
+        pass  # validation is best-effort; don't block the write
+
     tx_id = _gen_id()
     now = datetime.utcnow().isoformat()
     date = params.get("date") or _today()
     amount = params["amount"]
     currency = params.get("currency", "EUR")
-    category = params.get("category", "Other")
+    category = params.get("category", "")
     subcategory = params.get("subcategory", "")
     who = params.get("who", session.user_name)
     account = params.get("account", "")
