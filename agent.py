@@ -545,9 +545,13 @@ class ApolioAgent:
 
     async def run(self, message: str, session: SessionContext,
                   media_type: str = "text",
-                  media_data: bytes | None = None) -> str:
+                  media_data: bytes | None = None,
+                  telegram_bot=None) -> str:
         """
         Run the agent with a user message.
+        telegram_bot: optional Telegram Bot instance — when provided, photo messages
+                      in conversation history are re-downloaded and included as images
+                      so Claude has visual memory of previously sent screenshots.
         Returns the bot's text response. Never returns empty string.
         """
         today = datetime.now().strftime("%Y-%m-%d")
@@ -588,7 +592,7 @@ class ApolioAgent:
         import db as _db
         try:
             history_messages = await _db.get_recent_messages_for_api(
-                session.user_id, n_turns=6
+                session.user_id, n_turns=6, telegram_bot=telegram_bot
             ) if _db.is_ready() else []
         except Exception:
             history_messages = []

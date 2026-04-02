@@ -1510,6 +1510,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = ""
     media_type = "text"
     media_data = None
+    media_file_id = ""  # Telegram file_id for photos — stored in DB for image memory
 
     role = tg_user.get("role", "viewer")
     lang = getattr(session, "lang", "en")
@@ -1640,12 +1641,29 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif msg.photo:
         file_obj = await msg.photo[-1].get_file()
         media_data = bytes(await file_obj.download_as_bytearray())
-        # Language-aware default prompt for photos
+        media_file_id = msg.photo[-1].file_id  # save Telegram file_id for memory
+        # Language-aware default prompt for photos — always extract ALL transactions
         _photo_prompts = {
-            "ru": "Извлеки данные о транзакции из этого чека.",
-            "uk": "Витягни дані про транзакцію з цього чека.",
-            "en": "Extract transaction data from this receipt.",
-            "it": "Estrai i dati della transazione da questa ricevuta.",
+            "ru": (
+                "Извлеки ВСЕ транзакции из этого скриншота/чека. "
+                "Используй точные даты из изображения (не сегодняшнюю дату). "
+                "Если несколько транзакций — запиши каждую отдельно."
+            ),
+            "uk": (
+                "Витягни ВСІ транзакції з цього скріншота/чека. "
+                "Використовуй точні дати з зображення. "
+                "Якщо кілька транзакцій — запиши кожну окремо."
+            ),
+            "en": (
+                "Extract ALL transactions from this screenshot/receipt. "
+                "Use exact dates shown in the image (not today's date). "
+                "If multiple transactions — record each one separately."
+            ),
+            "it": (
+                "Estrai TUTTE le transazioni da questo screenshot/ricevuta. "
+                "Usa le date esatte mostrate nell'immagine. "
+                "Se ci sono più transazioni — registra ognuna separatamente."
+            ),
         }
         text = msg.caption or _photo_prompts.get(lang, _photo_prompts["en"])
         media_type = "photo"
@@ -1690,6 +1708,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     raw_text=text,
                     session_id=session.session_id,
                     envelope_id=session.current_envelope_id or "",
+                    media_file_id=media_file_id if media_type == "photo" else "",
                 )
         except Exception:
             pass  # Conversation logging is not critical
@@ -1698,6 +1717,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text, session,
             media_type=media_type,
             media_data=media_data if media_type == "photo" else None,
+            telegram_bot=ctx.bot,
         )
 
         # Log bot response after agent call

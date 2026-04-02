@@ -41,8 +41,12 @@ CREATE TABLE IF NOT EXISTS conversation_log (
     tool_called     VARCHAR(100) DEFAULT '',
     result_short    TEXT DEFAULT '',
     session_id      VARCHAR(32) DEFAULT '',
-    envelope_id     VARCHAR(64) DEFAULT ''
+    envelope_id     VARCHAR(64) DEFAULT '',
+    media_file_id   TEXT DEFAULT ''
 );
+
+-- Migration: add media_file_id to existing deployments
+ALTER TABLE conversation_log ADD COLUMN IF NOT EXISTS media_file_id TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_convlog_user_ts
     ON conversation_log (user_id, ts DESC);
@@ -140,6 +144,7 @@ async def log_message(
     result_short: str = "",
     session_id: str = "",
     envelope_id: str = "",
+    media_file_id: str = "",
 ):
     """Write a single conversation log entry."""
     if not is_ready():
@@ -151,14 +156,16 @@ async def log_message(
                 """
                 INSERT INTO conversation_log
                     (user_id, direction, message_type, raw_text, intent,
-                     entities_json, tool_called, result_short, session_id, envelope_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     entities_json, tool_called, result_short, session_id, envelope_id,
+                     media_file_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 """,
                 user_id, direction, message_type,
                 raw_text[:2000], intent,
                 _json.dumps(entities or {}, ensure_ascii=False),
                 tool_called, result_short[:500],
                 session_id, envelope_id,
+                media_file_id or "",
             )
     except Exception as e:
         logger.error(f"[DB] log_message failed: {e}")
@@ -176,7 +183,7 @@ async def get_recent_context(user_id: int, n: int = 5) -> list[dict]:
             rows = await conn.fetch(
                 """
                 SELECT ts, direction, message_type, raw_text,
-                       tool_called, result_short
+                       tool_called, result_short, media_file_id
                 FROM conversation_log
                 WHERE user_id = $1
                 ORDER BY ts DESC
@@ -193,6 +200,7 @@ async def get_recent_context(user_id: int, n: int = 5) -> list[dict]:
                     "raw_text": row["raw_text"],
                     "tool_called": row["tool_called"],
                     "result_short": row["result_short"],
+                    "media_file_id": row["media_file_id"] or "",
                 })
             return result
     except Exception as e:
@@ -219,45 +227,91 @@ def format_context_for_prompt(rows: list[dict]) -> str:
 
 
 async def get_recent_messages_for_api(user_id: int,
-                                       n_turns: int = 6) -> list[dict]:
+                                       n_turns: int = 6,
+                                       telegram_bot=None) -> list[dict]:
     """
-    Load the last n_turns conversation turns (each turn = user msg + bot response)
-    and return them as a properly alternating messages list ready for the Claude API.
+    Load the last n_turns conversation turns and return a properly alternating
+    messages list ready for the Claude API.
+
+    If telegram_bot is provided, photo messages are re-downloaded from Telegram
+    and included as base64 images in the history — giving Claude visual memory
+    of previously sent screenshots without the user having to resend them.
 
     Rules:
       - Alternates user / assistant roles strictly
-      - Consecutive same-role rows are merged with newlines
-      - Always ends with an assistant turn (the most recent bot response)
-        so the caller can append the new user message
+      - Consecutive same-role rows are merged
+      - Starts with a user turn (drops leading assistant turns)
       - Returns [] if DB is unavailable or history is empty
     """
     rows = await get_recent_context(user_id, n=n_turns)
     if not rows:
         return []
 
+    # Build a list of (role, content) where content can be str or list (multimodal)
+    pending_role: str | None = None
+    pending_parts: list = []   # list of text strings or image dicts
     messages: list[dict] = []
-    last_role: str | None = None
-    last_text: list[str] = []
 
     def _flush():
-        if last_role and last_text:
-            combined = "\n".join(last_text).strip()
-            if combined:
-                messages.append({"role": last_role, "content": combined})
+        if pending_role is None or not pending_parts:
+            return
+        # If all parts are strings, collapse to a single string
+        if all(isinstance(p, str) for p in pending_parts):
+            combined = "\n".join(p for p in pending_parts if p.strip())
+            if combined.strip():
+                messages.append({"role": pending_role, "content": combined})
+        else:
+            # Mixed content (text + images): use list form
+            content_blocks = []
+            for p in pending_parts:
+                if isinstance(p, str):
+                    if p.strip():
+                        content_blocks.append({"type": "text", "text": p})
+                else:
+                    content_blocks.append(p)
+            if content_blocks:
+                messages.append({"role": pending_role, "content": content_blocks})
 
     for row in rows:
         direction = row.get("direction", "")
         role = "user" if direction == "user" else "assistant"
         text = (row.get("raw_text") or row.get("result_short") or "").strip()
-        if not text:
+        file_id = row.get("media_file_id", "")
+        msg_type = row.get("message_type", "text")
+
+        # Build the content for this row
+        row_parts: list = []
+
+        # For photo messages with a stored file_id, try to re-download the image
+        if msg_type == "photo" and file_id and telegram_bot is not None:
+            try:
+                import base64 as _b64
+                tg_file = await telegram_bot.get_file(file_id)
+                img_bytes = await tg_file.download_as_bytearray()
+                row_parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": _b64.b64encode(bytes(img_bytes)).decode(),
+                    },
+                })
+            except Exception:
+                pass  # if download fails, fall through to text-only
+            if text:
+                row_parts.append(text)
+        elif text:
+            row_parts.append(text)
+
+        if not row_parts:
             continue
 
-        if role == last_role:
-            last_text.append(text)
+        if role == pending_role:
+            pending_parts.extend(row_parts)
         else:
             _flush()
-            last_role = role
-            last_text = [text]
+            pending_role = role
+            pending_parts = list(row_parts)
 
     _flush()
 
@@ -265,11 +319,20 @@ async def get_recent_messages_for_api(user_id: int,
     while messages and messages[0]["role"] == "assistant":
         messages.pop(0)
 
-    # Ensure clean alternation (defensive merge after pop)
+    # Defensive merge of consecutive same-role entries (after pop)
     merged: list[dict] = []
     for msg in messages:
         if merged and merged[-1]["role"] == msg["role"]:
-            merged[-1]["content"] += "\n" + msg["content"]
+            prev = merged[-1]["content"]
+            cur = msg["content"]
+            # Both are strings
+            if isinstance(prev, str) and isinstance(cur, str):
+                merged[-1]["content"] = prev + "\n" + cur
+            # One or both are lists — convert both to lists and concatenate
+            else:
+                prev_list = prev if isinstance(prev, list) else [{"type": "text", "text": prev}]
+                cur_list = cur if isinstance(cur, list) else [{"type": "text", "text": cur}]
+                merged[-1]["content"] = prev_list + cur_list
         else:
             merged.append(msg)
 
