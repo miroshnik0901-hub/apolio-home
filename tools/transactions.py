@@ -17,17 +17,84 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _fuzzy_suggest(value: str, known: list[str]) -> list[str]:
+    """
+    Case-insensitive substring match.
+    Returns up to 3 known values that contain or are contained in `value`.
+    """
+    if not value or not known:
+        return []
+    val_lower = value.lower()
+    matches = [
+        k for k in known
+        if val_lower in k.lower() or k.lower() in val_lower
+    ]
+    return matches[:3]
+
+
+def _validate_transaction_params(params: dict, ref: dict) -> dict:
+    """
+    Validate category, who, and account against reference data.
+    Returns {} if all values are valid or empty.
+    Returns {unknown: [...], suggestions: {...}} if unknown values found.
+    `force_new=True` in params bypasses this check entirely.
+    """
+    if params.get("force_new"):
+        return {}
+
+    categories = ref.get("categories", [])
+    users      = ref.get("users", [])
+    accounts   = ref.get("accounts", [])
+
+    unknown = []
+    suggestions = {}
+
+    category = params.get("category", "")
+    if category and categories and category not in categories:
+        sugg = _fuzzy_suggest(category, categories)
+        unknown.append(f"category: {category!r}")
+        if sugg:
+            suggestions["category"] = sugg
+
+    who = params.get("who", "")
+    if who and users and who not in users:
+        sugg = _fuzzy_suggest(who, users)
+        unknown.append(f"who: {who!r}")
+        if sugg:
+            suggestions["who"] = sugg
+
+    account = params.get("account", "")
+    if account and accounts and account not in accounts:
+        sugg = _fuzzy_suggest(account, accounts)
+        unknown.append(f"account: {account!r}")
+        if sugg:
+            suggestions["account"] = sugg
+
+    if not unknown:
+        return {}
+
+    return {
+        "unknown": unknown,
+        "suggestions": suggestions,
+        "known": {
+            "categories": categories[:15],
+            "users": users,
+            "accounts": accounts[:10],
+        },
+    }
+
+
 def _resolve_envelope(params: dict, session: SessionContext,
                        sheets: SheetsClient) -> dict:
     """Find the envelope file_id for the given envelope_id."""
     env_id = params.get("envelope_id") or session.current_envelope_id
     if not env_id:
-        raise ValueError("No envelope selected. Use /envelope <id> to select one.")
+        raise ValueError("Конверт не выбран. Используйте /envelope для выбора конверта.")
     envelopes = sheets.get_envelopes()
     for e in envelopes:
         if e.get("ID") == env_id:
             return e
-    raise ValueError(f"Envelope {env_id} not found.")
+    raise ValueError(f"Конверт {env_id} не найден. Проверьте список конвертов командой /envelope.")
 
 
 async def tool_add_transaction(params: dict, session: SessionContext,
@@ -39,12 +106,30 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     if not auth.can_access_envelope(session.user_id, envelope["ID"]):
         return {"error": "You don't have access to this envelope."}
 
+    # Validate against reference data (unless force_new=True)
+    if not params.get("force_new"):
+        try:
+            ref = sheets.get_reference_data(envelope["ID"])
+            validation = _validate_transaction_params(params, ref)
+            if validation:
+                return {
+                    "status": "confirm_required",
+                    "type": "unknown_values",
+                    "message": (
+                        "Некоторые значения не найдены в справочнике. "
+                        "Уточни или добавь force_new=true для записи без проверки."
+                    ),
+                    **validation,
+                }
+        except Exception:
+            pass  # Validation failure must never block transaction recording
+
     tx_id = _gen_id()
     now = datetime.utcnow().isoformat()
     date = params.get("date") or _today()
     amount = params["amount"]
     currency = params.get("currency", "EUR")
-    category = params.get("category", "Other")
+    category = params.get("category", "")
     subcategory = params.get("subcategory", "")
     who = params.get("who", session.user_name)
     account = params.get("account", "")
@@ -102,11 +187,29 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                    "date": date, "category": category}
     )
 
+    # Pattern detection (async, fire-and-forget — never blocks response)
+    try:
+        import asyncio
+        import db as appdb
+        asyncio.create_task(
+            appdb.check_and_save_pattern(
+                user_id=session.user_id,
+                envelope_id=envelope["ID"],
+                category=category,
+                who=who,
+                amount=float(amount),
+                sheets_client=sheets,
+            )
+        )
+    except Exception:
+        pass  # Pattern detection is non-critical
+
     symbol = "✓" if tx_type == "expense" else "+"
+    cat_display = category or "—"
     return {
         "status": "ok",
         "message": (
-            f"{symbol} {category} · {amount} {currency} · {who} · {date}"
+            f"{symbol} {cat_display} · {amount} {currency} · {who} · {date}"
             + (f" · {note}" if note else "")
         ),
         "tx_id": tx_id,
@@ -163,6 +266,96 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
             return {"status": "ok", "message": f"✓ Deleted ({tx_id})"}
 
     return {"error": "Envelope not found."}
+
+
+async def tool_delete_transaction_rows(params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager) -> Any:
+    """Physically delete a range of rows from the Transactions sheet by row number.
+    Two-step: first call (confirmed=False) returns a preview; second (confirmed=True) executes."""
+    if not auth.can_write(session.user_id):
+        return {"error": "Permission denied."}
+
+    start_row = params.get("start_row")
+    end_row = params.get("end_row")
+
+    if start_row is None or end_row is None:
+        return {"error": "start_row и end_row обязательны."}
+    start_row = int(start_row)
+    end_row = int(end_row)
+
+    if start_row < 2:
+        return {"error": "Строка 1 — заголовок, удалять нельзя. Строки данных начинаются с 2."}
+    if end_row < start_row:
+        return {"error": "end_row должен быть >= start_row."}
+    if end_row - start_row > 99:
+        return {"error": "Нельзя удалять больше 100 строк за раз."}
+
+    envelope = _resolve_envelope(params, session, sheets)
+    if not auth.can_access_envelope(session.user_id, envelope["ID"]):
+        return {"error": "You don't have access to this envelope."}
+
+    count = end_row - start_row + 1
+
+    # ── Step 1: preview (no confirmed flag) ──────────────────────────────────
+    if not params.get("confirmed"):
+        try:
+            raw_rows = sheets.get_transaction_rows_preview(
+                envelope["file_id"], start_row, end_row
+            )
+        except Exception as e:
+            raw_rows = []
+
+        lines = []
+        for i, row in enumerate(raw_rows):
+            sheet_row = start_row + i
+            try:
+                date     = row[0] if len(row) > 0 else "?"
+                amount   = row[1] if len(row) > 1 else "?"
+                currency = row[2] if len(row) > 2 else ""
+                category = row[3] if len(row) > 3 else ""
+                tx_type  = row[8] if len(row) > 8 else ""
+                note     = row[5] if len(row) > 5 else ""
+                desc = f"{date} · {amount} {currency} · {category}"
+                if note:
+                    desc += f" · {note}"
+                lines.append(f"  {sheet_row}: {desc}")
+            except Exception:
+                lines.append(f"  {sheet_row}: [данные]")
+
+        preview = "\n".join(lines) if lines else "  (нет данных)"
+
+        return {
+            "status": "confirm_required",
+            "message": (
+                f"⚠️ ВНИМАНИЕ — безвозвратное удаление {count} {_row_word(count)} "
+                f"({start_row}–{end_row}):\n\n"
+                f"{preview}\n\n"
+                "Это действие нельзя отменить. "
+                "Подтвердите: напишите «да, удалить» или «отмена»."
+            ),
+        }
+
+    # ── Step 2: execute (confirmed=True) ─────────────────────────────────────
+    try:
+        deleted = sheets.delete_transaction_rows(envelope["file_id"], start_row, end_row)
+    except Exception as e:
+        return {"error": f"Ошибка удаления: {e}"}
+
+    return {
+        "status": "ok",
+        "message": f"✓ Удалено {deleted} {_row_word(deleted)} ({start_row}–{end_row})",
+    }
+
+
+def _row_word(n: int) -> str:
+    if n % 100 in (11, 12, 13, 14):
+        return "строк"
+    r = n % 10
+    if r == 1:
+        return "строка"
+    if r in (2, 3, 4):
+        return "строки"
+    return "строк"
 
 
 async def tool_find_transactions(params: dict, session: SessionContext,

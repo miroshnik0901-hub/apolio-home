@@ -125,6 +125,14 @@ class AdminSheets:
                 ws.delete_rows(i + 2)
                 return
 
+    def get_user_names(self) -> list[str]:
+        """Return list of user display names from Users tab."""
+        try:
+            users = self.get_users()
+            return [u["name"] for u in users if u.get("name")]
+        except Exception:
+            return []
+
     # ── Audit log ─────────────────────────────────────────────────────────
 
     def log_action(self, user_id: int, user_name: str, action: str, details: str = ""):
@@ -221,6 +229,27 @@ class EnvelopeSheets:
     def delete_transaction(self, tx_id: str) -> bool:
         return self.edit_transaction(tx_id, "Deleted", "TRUE")
 
+    def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:
+        """Return raw cell values for rows start_row..end_row (1-based) from Transactions."""
+        ws = self._ws("Transactions")
+        all_rows = ws.get_all_values()
+        result = []
+        for r in range(start_row, end_row + 1):
+            if r <= len(all_rows):
+                result.append(all_rows[r - 1])
+            else:
+                result.append([])
+        return result
+
+    def delete_rows_hard(self, start_row: int, end_row: int) -> int:
+        """Physically delete rows start_row..end_row (1-based, inclusive) from Transactions sheet.
+        Row 1 is the header — caller must ensure start_row >= 2.
+        Returns number of rows deleted."""
+        ws = self._ws("Transactions")
+        # gspread delete_rows(start_index, end_index) is 1-based, inclusive
+        ws.delete_rows(start_row, end_row)
+        return end_row - start_row + 1
+
     def sum_expenses(self, month: str) -> float:
         txs = self.get_transactions({"date_from": f"{month}-01", "date_to": f"{month}-31"})
         return sum(
@@ -228,6 +257,51 @@ class EnvelopeSheets:
             for t in txs
             if t.get("Type", "expense") == "expense"
         )
+
+    # ── Reference data ────────────────────────────────────────────────────
+
+    def get_categories(self) -> list[str]:
+        """Return list of category names from Categories tab, or derive from Transactions."""
+        try:
+            ws = self._workbook().worksheet("Categories")
+            values = ws.col_values(1)
+            cats = [v.strip() for v in values if v.strip() and v.strip().lower() != "category"]
+            if cats:
+                return cats
+        except Exception:
+            pass
+        # Derive from Transactions
+        try:
+            txs = self.get_transactions()
+            seen = []
+            for t in txs:
+                c = t.get("Category", "").strip()
+                if c and c not in seen:
+                    seen.append(c)
+            return seen
+        except Exception:
+            return []
+
+    def get_accounts(self) -> list[str]:
+        """Return list of account names from Accounts tab, or derive from Transactions."""
+        try:
+            ws = self._workbook().worksheet("Accounts")
+            values = ws.col_values(1)
+            accs = [v.strip() for v in values if v.strip() and v.strip().lower() != "account"]
+            if accs:
+                return accs
+        except Exception:
+            pass
+        try:
+            txs = self.get_transactions()
+            seen = []
+            for t in txs:
+                a = t.get("Account", "").strip()
+                if a and a not in seen:
+                    seen.append(a)
+            return seen
+        except Exception:
+            return []
 
     # ── Config ────────────────────────────────────────────────────────────
 
@@ -352,6 +426,68 @@ class SheetsClient:
     def _env_sheets(self, sheet_id: str) -> EnvelopeSheets:
         return EnvelopeSheets(self._gc, sheet_id)
 
+    def _envelope(self, sheet_id: str) -> EnvelopeSheets:
+        """Alias for _env_sheets — used by db.py pattern detection."""
+        return self._env_sheets(sheet_id)
+
+    def get_reference_data(self, envelope_id: str) -> dict:
+        """
+        Load reference data for an envelope: categories, accounts, users, currencies.
+        Uses TTL cache (60s) to avoid repeated Sheets reads.
+        envelope_id is the logical ID (e.g. 'MM_BUDGET'), not the file_id.
+        """
+        cache_key = f"ref_{envelope_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Find file_id for this envelope
+        file_id = None
+        envelopes = self.get_envelopes()
+        for e in envelopes:
+            if e.get("ID") == envelope_id:
+                file_id = e.get("file_id")
+                break
+
+        categories: list[str] = []
+        accounts: list[str] = []
+
+        if file_id:
+            try:
+                env = self._env_sheets(file_id)
+                categories = env.get_categories()
+                accounts = env.get_accounts()
+            except Exception as ex:
+                pass  # Return empty lists on error — never crash
+
+        users = []
+        try:
+            users = self._admin.get_user_names()
+        except Exception:
+            pass
+
+        # Currencies from FX_Rates headers
+        currencies = ["EUR"]
+        try:
+            ws = self._admin._workbook().worksheet("FX_Rates")
+            headers = ws.row_values(1)
+            # Headers: Month, EUR, PLN, UAH, ... — skip "Month"
+            for h in headers:
+                h = h.strip().upper()
+                if h and h != "MONTH" and h not in currencies:
+                    currencies.append(h)
+        except Exception:
+            pass
+
+        result = {
+            "categories": categories,
+            "accounts": accounts,
+            "users": users,
+            "currencies": currencies,
+        }
+        self._cache.set(cache_key, result)
+        return result
+
     def add_transaction(self, sheet_id: str, row) -> str:
         """Accept either a pre-formatted list (from tools) or a dict."""
         # Invalidate cache so next read reflects the new row
@@ -379,6 +515,17 @@ class SheetsClient:
 
     def soft_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
         return self._env_sheets(sheet_id).delete_transaction(tx_id)
+
+    def delete_transaction_rows(self, sheet_id: str, start_row: int, end_row: int) -> int:
+        """Physically delete rows start_row..end_row from Transactions sheet.
+        Invalidates cache after deletion."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).delete_rows_hard(start_row, end_row)
+
+    def get_transaction_rows_preview(self, sheet_id: str,
+                                      start_row: int, end_row: int) -> list[list]:
+        """Return raw cell values for preview before deletion."""
+        return self._env_sheets(sheet_id).get_rows_raw(start_row, end_row)
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.

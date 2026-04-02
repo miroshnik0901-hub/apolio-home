@@ -1,8 +1,10 @@
-"""Apolio Home — Telegram Bot Entry Point"""
+"""Apolio Home — Telegram Bot Entry Point — v2.1.0"""
 import asyncio
 import logging
 import os
+import re
 import datetime as dt
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,45 +26,109 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import menu_config as mc
+import i18n
+
 from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
+    MenuButtonCommands,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
+from tools.conversation_log import ConversationLogger, make_session_id
+from tools.receipt_store import ReceiptStore
+import db as appdb
 
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
 
+# Conversation logger — writes to ConversationLog tab in MM_BUDGET spreadsheet
+_MM_BUDGET_FILE_ID = os.environ.get(
+    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+)
+conv_log: Optional[ConversationLogger] = None
+receipt_store: Optional[ReceiptStore] = None
+
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton("📊 Статус"), KeyboardButton("📋 Отчёт")],
-        [KeyboardButton("💰 Добавить расход"), KeyboardButton("📁 Конверты")],
-        [KeyboardButton("❓ Помощь")],
-    ],
-    resize_keyboard=True,
-    is_persistent=True,
-)
+def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
+    """Build reply keyboard in the user's language.
 
-KEYBOARD_SHORTCUTS = {
-    "📊 Статус":          "status",
-    "📋 Отчёт":           "report",
-    "📁 Конверты":        "envelopes",
-    "💰 Добавить расход": "add_prompt",
-    "❓ Помощь":          "help",
-}
+    Layout (3 rows × 2 columns):
+        📊 Статус   |  📋 Отчёт
+        📝 Записи   |  ➕ Добавить
+        📁 Конверты |  ⚙️ Настройки
+
+    NOT persistent — hidden by default, user opens via keyboard toggle icon.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(i18n.t_kb("status", lang)),    KeyboardButton(i18n.t_kb("report", lang))],
+            [KeyboardButton(i18n.t_kb("records", lang)),   KeyboardButton(i18n.t_kb("add", lang))],
+            [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=False,
+    )
+
+
+def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
+    """Build inline keyboard: extra rows + [☰ Меню] at the bottom."""
+    rows = [list(r) for r in extra_rows]
+    rows.append([InlineKeyboardButton("☰ Меню", callback_data="nav:__menu__")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_inline_menu(parent_id: str = "", tree: dict = None,
+                        role: str = "admin", lang: str = "en") -> InlineKeyboardMarkup:
+    """Build an inline keyboard grid from the menu config, filtered by role.
+
+    parent_id="" → root level.
+    parent_id="report" → children of report submenu.
+    role → only show nodes visible to this role.
+    lang → label language (ru/uk/en/it).
+    """
+    if tree is None:
+        tree = mc.get_menu()
+
+    if parent_id:
+        children = mc.sorted_children_for_role(tree, parent_id, role)
+        parent_node = tree.get(parent_id, {})
+        grandparent = parent_node.get("parent", "")
+        back_cb = f"nav:{grandparent}" if grandparent else "nav:__root__"
+    else:
+        children = mc.root_nodes_for_role(tree, role)
+        back_cb = None
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for nid, node in children:
+        # Prefer i18n translation; fall back to sheet label
+        label = i18n.t_menu(nid, lang) or node["label"]
+        if node["type"] == "submenu":
+            label = label + " ›"
+        rows.append([InlineKeyboardButton(label, callback_data=f"nav:{nid}")])
+    if back_cb:
+        rows.append([InlineKeyboardButton(i18n.t_menu("back", lang), callback_data=back_cb)])
+    return InlineKeyboardMarkup(rows)
+
+
+# Alias kept for backward compatibility
+def _build_submenu_keyboard(parent_id: str, tree: dict,
+                             role: str = "admin", lang: str = "en") -> InlineKeyboardMarkup:
+    return _build_inline_menu(parent_id, tree, role, lang)
+
 
 GREETINGS = {
     "привет", "hi", "hello", "ciao", "hey", "добрий день",
@@ -71,78 +137,528 @@ GREETINGS = {
 }
 
 # ── Bot command definitions ────────────────────────────────────────────────────
+# Only /menu shown in the ≡ commands list — all other nav via reply keyboard
+BOT_COMMANDS_ALL = [
+    BotCommand("menu", "☰ Открыть меню"),
+]
 
-BOT_COMMANDS = [
-    BotCommand("start",     "Начать / приветствие"),
-    BotCommand("menu",      "Меню функций"),
-    BotCommand("envelopes", "Список конвертов со ссылками"),
-    BotCommand("envelope",  "Выбрать активный конверт"),
-    BotCommand("status",    "Статус бюджета за текущий месяц"),
-    BotCommand("report",    "Отчёт по категориям за месяц"),
-    BotCommand("week",      "Расходы за эту неделю"),
-    BotCommand("month",     "Расходы за этот месяц"),
-    BotCommand("undo",      "Отменить последнее действие"),
-    BotCommand("help",      "Справка и примеры"),
+BOT_COMMANDS_ADMIN = [
+    BotCommand("menu", "☰ Открыть меню"),
 ]
 
 
+# ── Formatting helpers ─────────────────────────────────────────────────────────
+
+MONTH_NAMES_RU = {
+    "01": "январе", "02": "феврале", "03": "марте",
+    "04": "апреле", "05": "мае", "06": "июне",
+    "07": "июле", "08": "августе", "09": "сентябре",
+    "10": "октябре", "11": "ноябре", "12": "декабре",
+}
+MONTH_LABELS_RU = {
+    "01": "Январь", "02": "Февраль", "03": "Март",
+    "04": "Апрель", "05": "Май", "06": "Июнь",
+    "07": "Июль", "08": "Август", "09": "Сентябрь",
+    "10": "Октябрь", "11": "Ноябрь", "12": "Декабрь",
+}
+CAT_ICONS = {
+    "Groceries": "🛒", "Продукты": "🛒", "Food": "🍎", "Еда": "🍎",
+    "Transport": "🚗", "Транспорт": "🚗", "Taxi": "🚕", "Такси": "🚕",
+    "Restaurant": "🍽", "Ресторан": "🍽", "Кафе": "☕", "Coffee": "☕",
+    "Health": "💊", "Здоровье": "💊", "Медицина": "💊",
+    "Entertainment": "🎬", "Развлечения": "🎬",
+    "Clothing": "👕", "Одежда": "👕",
+    "Utilities": "💡", "Коммунальные": "💡",
+    "Education": "📚", "Образование": "📚",
+    "Travel": "✈️", "Путешествия": "✈️",
+    "Savings": "💰", "Сбережения": "💰",
+    "Other": "📌", "Другое": "📌",
+    "Transfer": "↔️", "Перевод": "↔️",
+    "Shopping": "🛍", "Покупки": "🛍",
+    "Sport": "🏋️", "Спорт": "🏋️",
+    "Kids": "🧒", "Дети": "🧒",
+    "Beauty": "💅", "Красота": "💅",
+    "Home": "🏠", "Дом": "🏠",
+    "Bills": "📄", "Счета": "📄",
+}
+
+
+def _cat_icon(category: str) -> str:
+    return CAT_ICONS.get(category, "•")
+
+
+def _month_name_ru(period: str) -> str:
+    """Convert YYYY-MM to 'апреле 2026'."""
+    try:
+        y, m = period.split("-")
+        return f"{MONTH_NAMES_RU.get(m, m)} {y}"
+    except Exception:
+        return period
+
+
+def _month_label_ru(period: str) -> str:
+    """Convert YYYY-MM to 'Апрель 2026'."""
+    try:
+        y, m = period.split("-")
+        return f"{MONTH_LABELS_RU.get(m, m)} {y}"
+    except Exception:
+        return period
+
+
+def _progress_bar(current: float, total: float, width: int = 10) -> str:
+    """Emoji block progress bar."""
+    if not total or total <= 0:
+        return "░" * width
+    pct = min(current / total, 1.0)
+    filled = round(pct * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _ru_plural(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural form: 1 запись, 2-4 записи, 5+ записей."""
+    if 11 <= (n % 100) <= 19:
+        return many
+    r = n % 10
+    if r == 1:
+        return one
+    if 2 <= r <= 4:
+        return few
+    return many
+
+
+def _strip_markdown(text: str) -> str:
+    """Strip basic Telegram markdown markers to produce plain text."""
+    text = re.sub(r'\*\*?(.*?)\*\*?', r'\1', text)
+    text = re.sub(r'_(.*?)_', r'\1', text)
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    return text
+
+
+async def _safe_reply(message, text: str, reply_markup=None, **kwargs):
+    """Send agent text: try MARKDOWN, fall back to plain if parse error."""
+    try:
+        return await message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    except BadRequest as e:
+        logger.warning(f"Markdown parse failed ({e}), retrying as plain text")
+        return await message.reply_text(
+            _strip_markdown(text),
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+
+
+async def _safe_edit(query, text: str, reply_markup=None, **kwargs):
+    """Edit message: try MARKDOWN, fall back to plain if parse error."""
+    try:
+        return await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    except BadRequest as e:
+        logger.warning(f"Markdown edit failed ({e}), retrying as plain text")
+        return await query.edit_message_text(
+            _strip_markdown(text),
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+
+
+# ── Direct budget renderers ────────────────────────────────────────────────────
+
+async def _build_status_html(session) -> str:
+    """Render budget status as HTML without going through the agent."""
+    try:
+        from tools.summary import tool_get_budget_status, tool_get_summary
+        status = await tool_get_budget_status({}, session, sheets, auth)
+        if status.get("error"):
+            return f"❌ {status['error']}"
+
+        summary = await tool_get_summary(
+            {"breakdown_by": "category"}, session, sheets, auth
+        )
+
+        cap = float(status.get("cap") or 0)
+        spent = float(status.get("spent") or 0)
+        remaining = float(status.get("remaining") or 0)
+        pct = float(status.get("pct_used") or 0)
+        month = status.get("month", "")
+        alert = status.get("alert", False)
+
+        label = _month_label_ru(month)
+        env_id = session.current_envelope_id or "?"
+        bar = _progress_bar(spent, cap)
+        warn = " ⚠️" if alert else ("  ✅" if 0 < pct < 80 else ("  🔴" if pct >= 100 else ""))
+
+        lines = [
+            f"📊 <b>Бюджет {label}</b>  ·  {env_id}",
+            "",
+            f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  ({pct:.0f}%){warn}",
+            f"<code>{bar}</code>",
+            f"Осталось: <b>{remaining:,.0f} EUR</b>",
+        ]
+
+        if summary.get("status") == "ok":
+            cats = summary.get("categories", {})
+            by_who = summary.get("by_who", {})
+
+            if cats:
+                lines.append("")
+                lines.append("<b>По категориям:</b>")
+                for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:10]:
+                    icon = _cat_icon(cat)
+                    lines.append(f"  {icon} {cat}: {amt:,.0f} EUR")
+
+            if len(by_who) > 1:
+                lines.append("")
+                lines.append("<b>По кому:</b>")
+                for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
+                    lines.append(f"  👤 {who}: {amt:,.0f} EUR")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_status_html failed: {e}", exc_info=True)
+        return f"❌ Не удалось загрузить статус: {e}"
+
+
+async def _build_report_html(session, period: str = "current") -> str:
+    """Render monthly report as HTML without going through the agent."""
+    try:
+        from tools.summary import tool_get_summary
+        summary = await tool_get_summary(
+            {"breakdown_by": "category", "period": period},
+            session, sheets, auth
+        )
+        if summary.get("error"):
+            return f"❌ {summary['error']}"
+
+        total = float(summary.get("total_spent") or 0)
+        period_str = summary.get("period", period)
+        label = _month_label_ru(period_str)
+        cats = summary.get("categories", {})
+        by_who = summary.get("by_who", {})
+
+        lines = [
+            f"📋 <b>Отчёт за {label}</b>",
+            "",
+            f"Итого расходов: <b>{total:,.0f} EUR</b>",
+        ]
+
+        if cats:
+            lines.append("")
+            lines.append("<b>Расходы по категориям:</b>")
+            for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
+                pct = round(amt / total * 100) if total else 0
+                icon = _cat_icon(cat)
+                bar = _progress_bar(amt, total, width=6)
+                lines.append(
+                    f"  {icon} <b>{cat}</b>: {amt:,.0f} EUR  ({pct}%)\n"
+                    f"     <code>{bar}</code>"
+                )
+
+        if len(by_who) > 1:
+            lines.append("")
+            lines.append("<b>По кому:</b>")
+            for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
+                pct = round(amt / total * 100) if total else 0
+                lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct}%)")
+
+        if not cats and not by_who:
+            lines.append("\nЗаписей за этот период нет.")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_report_html failed: {e}", exc_info=True)
+        return f"❌ Не удалось загрузить отчёт: {e}"
+
+
+async def _build_week_html(session) -> str:
+    """Render this-week expenses as HTML."""
+    try:
+        from tools.transactions import tool_find_transactions
+        today = dt.date.today()
+        # Monday of current week
+        monday = today - dt.timedelta(days=today.weekday())
+        result = await tool_find_transactions(
+            {"date_from": monday.isoformat(), "date_to": today.isoformat(), "limit": 50},
+            session, sheets, auth
+        )
+        if result.get("error"):
+            return f"❌ {result['error']}"
+
+        txs = [r for r in result.get("transactions", []) if r.get("Type") == "expense"]
+        if not txs:
+            return "За эту неделю расходов ещё нет."
+
+        total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
+        cats: dict = {}
+        for r in txs:
+            cat = r.get("Category", "Other")
+            cats[cat] = cats.get(cat, 0) + float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+
+        week_label = f"{monday.strftime('%d.%m')} — {today.strftime('%d.%m')}"
+        lines = [
+            f"📅 <b>Эта неделя</b>  ({week_label})",
+            "",
+            f"Итого: <b>{total:,.0f} EUR</b>  ({len(txs)} {_ru_plural(len(txs), 'запись', 'записи', 'записей')})",
+        ]
+        if cats:
+            lines.append("")
+            lines.append("<b>По категориям:</b>")
+            for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
+                icon = _cat_icon(cat)
+                lines.append(f"  {icon} {cat}: {amt:,.0f} EUR")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_week_html failed: {e}", exc_info=True)
+        return f"❌ Ошибка: {e}"
+
+
+# ── Post init ──────────────────────────────────────────────────────────────────
+
 async def post_init(app: Application):
-    """Register bot commands and schedule weekly summary."""
-    await app.bot.set_my_commands(BOT_COMMANDS)
+    """Register bot commands, ensure BotMenu sheet exists, schedule weekly summary."""
+    # Set the native Telegram menu button to show commands (the [≡] left of input)
+    try:
+        if hasattr(app.bot, "set_my_menu_button"):
+            await app.bot.set_my_menu_button(menu_button=MenuButtonCommands())
+    except Exception as e:
+        logger.warning(f"Could not set menu button: {e}")
+
+    # Register commands for all users (default scope)
+    await app.bot.set_my_commands(BOT_COMMANDS_ALL)
+
+    # Register extended commands for admin users
+    try:
+        admin_tg_id = int(os.environ.get("MIKHAIL_TELEGRAM_ID", 0))
+        if admin_tg_id:
+            from telegram import BotCommandScopeChat
+            await app.bot.set_my_commands(
+                BOT_COMMANDS_ADMIN,
+                scope=BotCommandScopeChat(chat_id=admin_tg_id),
+            )
+    except Exception as e:
+        logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
 
-    # Schedule weekly summary every Monday at 09:00 Rome time
+    # Reset BotMenu tab to current defaults on every deploy (keeps sheet in sync with code)
+    try:
+        admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+        mc.reset_to_defaults(sheets._gc, admin_id)
+        mc.get_menu(sheets._gc, admin_id)
+        logger.info("BotMenu sheet reset to defaults and loaded")
+    except Exception as e:
+        logger.warning(f"Could not reset BotMenu sheet: {e}")
+
     try:
         import pytz
         rome_tz = pytz.timezone("Europe/Rome")
         app.job_queue.run_daily(
             weekly_summary_job,
             time=dt.time(9, 0, tzinfo=rome_tz),
-            days=(0,),  # Monday = 0
+            days=(0,),
             name="weekly_summary",
         )
         logger.info("Weekly summary job scheduled: Monday 09:00 Rome")
     except Exception as e:
         logger.warning(f"Could not schedule weekly summary: {e}")
 
+    # Initialize receipt store
+    global receipt_store
+    try:
+        receipt_store = ReceiptStore(sheets._gc, _MM_BUDGET_FILE_ID)
+        logger.info("ReceiptStore initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize ReceiptStore: {e}")
+
+    # Initialize conversation logger (Google Sheets fallback)
+    global conv_log
+    try:
+        conv_log = ConversationLogger(sheets._gc, _MM_BUDGET_FILE_ID)
+        logger.info("Conversation logger initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize conversation logger: {e}")
+
+    # Initialize PostgreSQL
+    try:
+        ok = await appdb.init_db()
+        if ok:
+            logger.info("PostgreSQL initialized")
+        else:
+            logger.warning("PostgreSQL not available — conversation history limited to Google Sheets")
+    except Exception as e:
+        logger.warning(f"PostgreSQL init error: {e}")
+
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
 
 def _require_user(update: Update):
-    """Return (tg_user, session) or (None, None) if access denied."""
     user = update.effective_user
     tg_user = auth.get_user(user.id)
     if not tg_user:
         return None, None
     session = get_session(user.id, user.first_name, tg_user["role"])
+
+    # Check saved language preference (cached in session after first load)
+    if getattr(session, "_lang_loaded", False):
+        return tg_user, session  # language already resolved
+    try:
+        from user_context import UserContextManager
+        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+        saved_lang = ctx_mgr.get(user.id, "language")
+        if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
+            session.lang = saved_lang
+            session._lang_loaded = True
+            return tg_user, session
+    except Exception as e:
+        logger.debug(f"Could not load saved language: {e}")
+
+    # Fallback: Language detection from Telegram
+    # Only switch for explicit non-English languages (uk, it).
+    # English Telegram UI is not a signal — this product is Russian-first.
+    # Switching logic: uk → uk, it → it, anything else (en, ru, etc.) → keep "ru"
+    tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
+    if tg_lang in ("uk", "it"):
+        session.lang = tg_lang
+    elif not getattr(session, "lang", "") or session.lang == "en":
+        session.lang = "ru"
     return tg_user, session
+
+
+# ── Menu navigation helper ─────────────────────────────────────────────────────
+
+async def _handle_menu_node(node_id: str, update: Update, ctx,
+                             role: str = "admin") -> bool:
+    """Handle a menu node tap. Returns True if the message was fully handled."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        return False
+
+    lang = getattr(session, "lang", "en")
+
+    if node_id in ("__menu__", "__root__"):
+        tree = mc.get_menu()
+        kb = _build_inline_menu("", tree, role, lang)
+        await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
+        return True
+
+    tree = mc.get_menu()
+    node = tree.get(node_id)
+    if not node:
+        return False
+
+    # Role check
+    if not mc.node_visible_for_role(node, role):
+        await update.message.reply_text(i18n.ts("no_rights", "ru"))
+        return True
+
+    ntype = node.get("type", "cmd")
+
+    if ntype == "submenu":
+        kb = _build_inline_menu(node_id, tree, role, lang)
+        node_label = i18n.t_menu(node_id, lang) or node["label"]
+        await update.message.reply_text(
+            node_label + ":",
+            reply_markup=kb,
+        )
+        return True
+
+    if ntype == "free_text":
+        await update.message.reply_text(
+            i18n.t("", lang, i18n.ADD_PROMPT),
+            reply_markup=_with_menu_btn(),
+        )
+        return True
+
+    if ntype == "cmd":
+        command = node.get("command", "")
+        params  = node.get("params", {})
+        if command == "status":
+            await cmd_status(update, ctx)
+        elif command == "report":
+            period = params.get("period", "current")
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+            html = await _build_report_html(session, period)
+            kb = _with_menu_btn(
+                [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                 InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+            )
+            await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+        elif command == "transactions":
+            await cmd_transactions(update, ctx)
+        elif command == "week":
+            await cmd_week(update, ctx)
+        elif command == "help":
+            await cmd_help(update, ctx)
+        elif command == "envelopes":
+            await cmd_envelopes(update, ctx)
+        elif command == "refresh":
+            await cmd_refresh(update, ctx)
+        elif command == "undo":
+            await cmd_undo(update, ctx)
+        elif command == "settings":
+            await cmd_settings(update, ctx)
+        else:
+            return False
+        return True
+
+    return False
 
 
 # ── /start ─────────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    logger.info("cmd_start invoked — bot v2.1.0 inline menu")
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
-    keyboard = [
-        [InlineKeyboardButton("📁 Конверты", callback_data="cb_envelopes"),
-         InlineKeyboardButton("📊 Статус бюджета", callback_data="cb_status")],
-        [InlineKeyboardButton("📋 Отчёт за месяц", callback_data="cb_report"),
-         InlineKeyboardButton("❓ Справка", callback_data="cb_help")],
-    ]
+    lang = getattr(session, "lang", "en")
     name = session.user_name or "Mikhail"
+    msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
+
+    # Welcome keyboard: 1-per-row for full-width labels
+    welcome_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status")],
+        [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
+        [InlineKeyboardButton("☰ " + i18n.t_menu("menu_title", lang).rstrip(":"),
+                             callback_data="nav:__menu__")],
+    ])
+
+    # Send welcome with non-persistent reply keyboard (available via toggle icon)
     await update.message.reply_text(
-        f"👋 Привет, {name}!\n\n"
-        "Я *Apolio Home* — ваш ИИ-помощник для семейного бюджета.\n\n"
-        "Просто напишите мне:\n"
-        "• «кофе 3.50» — запишу расход\n"
-        "• «продукты 85 EUR Esselunga» — с заметкой\n"
-        "• «покажи отчёт за март» — статистика\n\n"
-        "Или нажмите кнопку ниже 👇",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=MAIN_KEYBOARD,
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_main_keyboard(lang),
+    )
+    # Then: show inline navigation buttons
+    await update.message.reply_text(
+        "👇",
+        reply_markup=welcome_kb,
+    )
+
+
+async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reload menu config from Admin sheet."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+    mc.invalidate()
+    admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+    mc.get_menu(sheets._gc, admin_id)  # pre-warm cache from sheet
+    await update.message.reply_text(
+        i18n.ts("menu_refreshed", getattr(session, "lang", "ru")),
+        reply_markup=_with_menu_btn(),
     )
 
 
@@ -151,23 +667,31 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
-    active_env = session.current_envelope_id or "не выбран"
-    keyboard = [
-        [InlineKeyboardButton("📁 Конверты", callback_data="cb_envelopes"),
-         InlineKeyboardButton("📊 Статус", callback_data="cb_status")],
-        [InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
-         InlineKeyboardButton("❓ Справка", callback_data="cb_help")],
-    ]
-    await update.message.reply_text(
-        f"🏠 *Apolio Home — Меню*\n\n"
-        f"Активный конверт: `{active_env}`\n\n"
-        "Выберите действие:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    lang = getattr(session, "lang", "en")
+    role = tg_user.get("role", "viewer")
+    tree = mc.get_menu()
+    kb = _build_inline_menu("", tree, role, lang)
+    await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
+
+
+# ── /settings ──────────────────────────────────────────────────────────────────
+
+async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show settings/service submenu (accessible to all users)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+
+    lang = getattr(session, "lang", "en")
+    role = tg_user.get("role", "viewer")
+    tree = mc.get_menu()
+    kb = _build_inline_menu("settings", tree, role=role, lang=lang)
+    await update.message.reply_text(i18n.ts("settings_title", lang), parse_mode=ParseMode.HTML,
+                                    reply_markup=kb)
 
 
 # ── /envelopes ─────────────────────────────────────────────────────────────────
@@ -175,7 +699,7 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     try:
@@ -186,20 +710,20 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not envelopes:
         await update.message.reply_text(
-            "Конверты ещё не созданы.\n\nНапишите: «создай конверт Название, лимит N EUR»"
+            i18n.ts("no_envelopes", getattr(session, "lang", "ru"))
         )
         return
 
-    lines = ["📁 *Список конвертов:*\n"]
+    lines = ["📁 <b>Список конвертов:</b>\n"]
     for e in envelopes:
-        cap = f"{e['monthly_cap']} {e['currency']}" if e['monthly_cap'] else "без лимита"
+        cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else "без лимита"
         rule = e.get("split_rule", "solo")
         url = e.get("url", "")
-        link = f"[открыть таблицу]({url})" if url else "нет ссылки"
+        link = f'  <a href="{url}">открыть таблицу</a>' if url else ""
+        active_mark = " ✅" if e["id"] == session.current_envelope_id else ""
         lines.append(
-            f"▸ *{e['name']}* (`{e['id']}`)\n"
-            f"  Лимит: {cap} · Правило: {rule}\n"
-            f"  {link}"
+            f"▸ <b>{e['name']}</b> (<code>{e['id']}</code>){active_mark}\n"
+            f"  Лимит: {cap} · Правило: {rule}{link}"
         )
 
     keyboard = []
@@ -212,7 +736,7 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "\n\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
         disable_web_page_preview=True,
     )
@@ -223,7 +747,7 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     if not ctx.args:
@@ -239,15 +763,15 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for i, e in enumerate(active):
             eid = e.get("ID", "")
             ename = e.get("Name", eid)
-            lines.append(f"• `{eid}` — {ename}")
+            lines.append(f"• <code>{eid}</code> — {ename}")
             row.append(InlineKeyboardButton(ename, callback_data=f"cb_env_{eid}"))
             if len(row) == 2 or i == len(active) - 1:
                 keyboard.append(row)
                 row = []
 
         await update.message.reply_text(
-            "Использование: `/envelope <ID>`\n\n" + "\n".join(lines),
-            parse_mode=ParseMode.MARKDOWN,
+            "Использование: <code>/envelope ID</code>\n\n" + "\n".join(lines),
+            parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
@@ -256,14 +780,15 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     envelopes = sheets.get_envelopes()
     match = next((e for e in envelopes if e.get("ID") == env_id), None)
     if not match:
-        await update.message.reply_text(f"❌ Конверт `{env_id}` не найден.",
-                                         parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"❌ Конверт <code>{env_id}</code> не найден.", parse_mode=ParseMode.HTML
+        )
         return
 
     session.current_envelope_id = env_id
     await update.message.reply_text(
-        f"✅ Активный конверт: *{match['Name']}* (`{env_id}`)",
-        parse_mode=ParseMode.MARKDOWN,
+        f"✅ Активный конверт: <b>{match['Name']}</b> (<code>{env_id}</code>)",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -272,14 +797,16 @@ async def cmd_envelope(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    response = await agent.run(
-        f"покажи статус бюджета для конверта {session.current_envelope_id}", session
+    html = await _build_status_html(session)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
+         InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
     )
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ── /report ────────────────────────────────────────────────────────────────────
@@ -287,15 +814,28 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    response = await agent.run(
-        f"покажи отчёт по категориям за текущий месяц для конверта {session.current_envelope_id}",
-        session,
+
+    # Early in month with no data → auto-show previous month
+    period = "current"
+    if dt.date.today().day <= 10:
+        try:
+            from tools.summary import tool_get_summary
+            check = await tool_get_summary({"period": "current"}, session, sheets, auth)
+            if float(check.get("total_spent") or 0) == 0:
+                period = "last"
+        except Exception:
+            pass
+
+    html = await _build_report_html(session, period)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
     )
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ── /week ──────────────────────────────────────────────────────────────────────
@@ -303,14 +843,12 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    response = await agent.run(
-        f"покажи расходы за эту неделю для конверта {session.current_envelope_id}", session
-    )
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    html = await _build_week_html(session)
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=_with_menu_btn())
 
 
 # ── /month ─────────────────────────────────────────────────────────────────────
@@ -318,15 +856,106 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    response = await agent.run(
-        f"покажи полный отчёт по категориям за текущий месяц для конверта {session.current_envelope_id}",
-        session,
+
+    # If early in month (≤10 days) and no data yet, auto-show previous month
+    period = "current"
+    if dt.date.today().day <= 10:
+        try:
+            from tools.summary import tool_get_summary
+            check = await tool_get_summary({"period": "current"}, session, sheets, auth)
+            if float(check.get("total_spent") or 0) == 0:
+                period = "last"
+        except Exception:
+            pass
+
+    html = await _build_report_html(session, period)
+    kb = _with_menu_btn(
+        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
     )
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+
+# ── /transactions ──────────────────────────────────────────────────────────────
+
+async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    try:
+        from tools.transactions import tool_find_transactions
+        result = await tool_find_transactions({"limit": 10}, session, sheets, auth)
+
+        if result.get("error"):
+            await update.message.reply_text(f"❌ {result['error']}")
+            return
+
+        txs = result.get("transactions", [])
+        if not txs:
+            await update.message.reply_text(
+                i18n.ts("no_transactions", getattr(session, "lang", "ru"))
+            )
+            return
+
+        lines = ["📝 <b>Последние записи:</b>\n"]
+        # Show newest first
+        for tx in reversed(txs):
+            date = tx.get("Date", "")
+            cat = tx.get("Category", "?")
+            amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+            curr = tx.get("Currency_Orig", "EUR")
+            amt_eur = tx.get("Amount_EUR", "")
+            who = tx.get("Who", "")
+            note = tx.get("Note", "")
+            tx_id = tx.get("ID", "")
+            icon = _cat_icon(cat)
+
+            # Amount display: show original + EUR if different currency
+            if curr != "EUR" and amt_eur:
+                amt_str = f"{amt} {curr} ({amt_eur} EUR)"
+            else:
+                amt_str = f"{amt} EUR"
+
+            who_str = f" · {who}" if who and who not in ("Mikhail", "") else ""
+            note_str = f"\n     📎 {note}" if note else ""
+            lines.append(
+                f"{icon} <b>{cat}</b>  {amt_str}{who_str}  <i>{date}</i>"
+                f"{note_str}"
+            )
+            lines.append("")
+
+        # Inline delete buttons for last 5 transactions
+        recent = list(reversed(txs))[:5]
+        del_rows = []
+        row = []
+        for i, tx in enumerate(recent):
+            tx_id = tx.get("ID", "")
+            cat = tx.get("Category", "?")[:7]
+            amt = tx.get("Amount_Orig", "?")
+            row.append(InlineKeyboardButton(
+                f"🗑 {cat} {amt}", callback_data=f"cb_del_{tx_id}"
+            ))
+            if len(row) == 2 or i == len(recent) - 1:
+                del_rows.append(row)
+                row = []
+
+        markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
+    except Exception as e:
+        logger.error(f"cmd_transactions failed: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 
 # ── /undo ──────────────────────────────────────────────────────────────────────
@@ -334,7 +963,7 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     la = session.last_action
@@ -344,10 +973,15 @@ async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     try:
         if la.action == "add":
-            sheets.soft_delete_transaction(
-                next(e["file_id"] for e in sheets.get_envelopes() if e.get("ID") == la.envelope_id),
-                la.tx_id,
+            envelopes = sheets.get_envelopes()
+            file_id = next(
+                (e["file_id"] for e in envelopes if e.get("ID") == la.envelope_id),
+                None
             )
+            if not file_id:
+                await update.message.reply_text("❌ Конверт не найден.")
+                return
+            sheets.soft_delete_transaction(file_id, la.tx_id)
             snap = la.snapshot
             await update.message.reply_text(
                 f"↩ Отменено: {snap.get('category', '')} · "
@@ -356,9 +990,9 @@ async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         elif la.action == "edit":
             await update.message.reply_text(
-                f"↩ Отмена изменения поля `{la.snapshot.get('field')}` не реализована. "
+                f"↩ Отмена изменения поля <code>{la.snapshot.get('field')}</code> не реализована.\n"
                 f"Напишите, что нужно исправить.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         session.last_action = None
     except Exception as e:
@@ -370,35 +1004,38 @@ async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, _ = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
     await update.message.reply_text(
-        "📖 *Apolio Home — Справка*\n\n"
-        "*Записать расход:*\n"
+        "📖 <b>Apolio Home — Справка</b>\n\n"
+        "<b>Записать расход:</b>\n"
         "› кофе 3.50\n"
         "› продукты 85 EUR Esselunga\n"
         "› Marina купила одежду 120\n"
         "› oggi ho speso 45 euro\n\n"
-        "*Доходы и переводы:*\n"
+        "<b>Доходы и переводы:</b>\n"
         "› получил зарплату 3000 EUR\n"
         "› перевёл 500 на сбережения\n\n"
-        "*Отчёты:*\n"
+        "<b>Отчёты:</b>\n"
         "› покажи отчёт за март\n"
         "› сколько потратили на еду\n"
         "› статус бюджета / сколько осталось?\n"
         "› покажи последние 5 записей\n\n"
-        "*Конверты:*\n"
+        "<b>Конверты:</b>\n"
         "› /envelopes — список с ссылками\n"
-        "› /envelope MM\\_BUDGET — выбрать\n"
+        "› /envelope MM_BUDGET — выбрать\n"
         "› создай конверт «Отпуск» лимит 2000 EUR\n\n"
-        "*Исправления:*\n"
+        "<b>Исправления:</b>\n"
         "› не 45 а 54 / actually 90\n"
         "› это было вчера\n"
         "› /undo — отменить последнее\n\n"
-        "*Голос и фото чеков тоже работают* 🎤📸",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=MAIN_KEYBOARD,
+        "<b>Команды:</b>\n"
+        "/status · /report · /transactions\n"
+        "/week · /month · /envelopes · /undo\n\n"
+        "<i>Голос и фото чеков тоже работают 🎤📸</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_with_menu_btn(),
     )
 
 
@@ -410,23 +1047,165 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     tg_user = auth.get_user(query.from_user.id)
     if not tg_user:
-        await query.edit_message_text("⛔ Access denied.")
+        await query.edit_message_text(i18n.ts("access_denied", "ru"))
         return
 
-    session = get_session(query.from_user.id, query.from_user.first_name, tg_user["role"])
+    role = tg_user.get("role", "viewer")
+    session = get_session(query.from_user.id, query.from_user.first_name, role)
+
+    # Language: use cached value or load from UserContext
+    if not getattr(session, "_lang_loaded", False):
+        try:
+            from user_context import UserContextManager
+            ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+            saved_lang = ctx_mgr.get(query.from_user.id, "language")
+            if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
+                session.lang = saved_lang
+                session._lang_loaded = True
+        except Exception:
+            pass
+        if not getattr(session, "_lang_loaded", False):
+            tg_lang_cb = i18n.get_lang(getattr(query.from_user, "language_code", None) or "")
+            if tg_lang_cb in ("uk", "it"):
+                session.lang = tg_lang_cb
+            elif not getattr(session, "lang", "") or session.lang == "en":
+                session.lang = "ru"
+            session._lang_loaded = True
+
+    lang = session.lang
     data = query.data
 
+    # ── nav: dynamic menu navigation ───────────────────────────────────────
+    if data.startswith("nav:"):
+        node_id = data[4:]
+        tree = mc.get_menu()
+
+        # __menu__ / __root__ = show main menu (keyboard-only edit, keep message text)
+        if node_id in ("__menu__", "__root__"):
+            kb = _build_inline_menu("", tree, role, lang)
+            try:
+                await query.edit_message_reply_markup(reply_markup=kb)
+            except BadRequest:
+                pass
+            return
+
+        node = tree.get(node_id)
+        if not node:
+            await query.answer(i18n.ts("menu_not_found", lang), show_alert=True)
+            return
+
+        # Role check
+        if not mc.node_visible_for_role(node, role):
+            await query.answer(i18n.ts("no_rights", lang), show_alert=True)
+            return
+
+        ntype = node.get("type", "cmd")
+
+        if ntype == "submenu":
+            kb = _build_inline_menu(node_id, tree, role, lang)
+            try:
+                await query.edit_message_reply_markup(reply_markup=kb)
+            except BadRequest:
+                pass
+            return
+
+        if ntype == "cmd":
+            command = node.get("command", "")
+            params  = node.get("params", {})
+            if command == "set_language":
+                # Handle language switching
+                target_lang = params.get("lang", "").lower()
+                if target_lang in i18n.SUPPORTED_LANGS:
+                    session.lang = target_lang
+                    session._lang_loaded = True  # mark as resolved
+                    # Save to UserContext
+                    try:
+                        from user_context import UserContextManager
+                        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+                        ctx_mgr.set(query.from_user.id, "language", target_lang)
+                    except Exception as e:
+                        logger.debug(f"Could not save language to UserContext: {e}")
+                    # Show confirmation and rebuild settings menu in new language
+                    await query.answer(i18n.ts("lang_changed", target_lang), show_alert=False)
+                    tree = mc.get_menu()
+                    kb = _build_inline_menu("settings", tree, role, session.lang)
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=kb)
+                    except BadRequest:
+                        pass
+                    return
+                else:
+                    await query.answer(f"Unsupported language: {target_lang}", show_alert=True)
+                    return
+            elif command == "status":
+                html = await _build_status_html(session)
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="nav:report"),
+                     InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="nav:transactions")],
+                )
+            elif command == "report":
+                period = params.get("period", "current")
+                html = await _build_report_html(session, period)
+                kb = _with_menu_btn(
+                    [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
+                     InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
+                )
+            elif command == "week":
+                html = await _build_week_html(session)
+                kb = _with_menu_btn()
+            elif command == "envelopes":
+                # Trigger envelopes via fake update
+                await cmd_envelopes(query._effective_message, ctx)
+                return
+            elif command == "refresh":
+                admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+                mc.reset_to_defaults(sheets._gc, admin_id)
+                tree = mc.get_menu(sheets._gc, admin_id)
+                await query.answer(i18n.ts("menu_refreshed", lang), show_alert=False)
+                kb = _build_inline_menu("settings", tree, role, lang)
+                try:
+                    await query.edit_message_reply_markup(reply_markup=kb)
+                except BadRequest:
+                    pass
+                return
+            elif command == "undo":
+                await cmd_undo(query._effective_message, ctx)
+                return
+            else:
+                await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
+                return
+            # Send as NEW message (not edit) — keeps chat history
+            await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+            return
+
+        if ntype == "free_text":
+            prompt_text = node.get("params", {}).get("prompt", i18n.ts("input_prompt", lang))
+            pending_key = node.get("params", {}).get("pending_key", "")
+            if pending_key:
+                session.pending_prompt = pending_key
+            await query.message.reply_text(
+                f"✏️ {prompt_text}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+    # ── cb_envelopes ───────────────────────────────────────────────────────
     if data == "cb_envelopes":
-        envelopes = sheets.list_envelopes_with_links()
+        try:
+            envelopes = sheets.list_envelopes_with_links()
+        except Exception as e:
+            await query.edit_message_text(f"❌ {e}")
+            return
         if not envelopes:
             await query.edit_message_text("Конвертов нет.")
             return
-        lines = ["📁 *Список конвертов:*\n"]
+        lines = ["📁 <b>Список конвертов:</b>\n"]
         for e in envelopes:
-            cap = f"{e['monthly_cap']} {e['currency']}" if e['monthly_cap'] else "без лимита"
+            cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else "без лимита"
             url = e.get("url", "")
-            link = f"[открыть]({url})" if url else ""
-            lines.append(f"▸ *{e['name']}* (`{e['id']}`) · {cap}  {link}")
+            link = f'  <a href="{url}">открыть</a>' if url else ""
+            active_mark = " ✅" if e["id"] == session.current_envelope_id else ""
+            lines.append(f"▸ <b>{e['name']}</b> (<code>{e['id']}</code>){active_mark} · {cap}{link}")
         keyboard = []
         row = []
         for i, e in enumerate(envelopes):
@@ -434,52 +1213,121 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if len(row) == 2 or i == len(envelopes) - 1:
                 keyboard.append(row)
                 row = []
-        await query.edit_message_text(
-            "\n\n".join(lines),
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            disable_web_page_preview=True,
-        )
+        try:
+            await query.edit_message_text(
+                "\n\n".join(lines),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                disable_web_page_preview=True,
+            )
+        except BadRequest:
+            pass  # message unchanged
 
+    # ── cb_status ──────────────────────────────────────────────────────────
     elif data == "cb_status":
-        response = await agent.run(
-            f"покажи статус бюджета для конверта {session.current_envelope_id}", session
+        html = await _build_status_html(session)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("📋 Отчёт",  callback_data="cb_report"),
+             InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
         )
-        await query.edit_message_text(response, parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+    # ── cb_report ──────────────────────────────────────────────────────────
     elif data == "cb_report":
-        response = await agent.run(
-            f"покажи отчёт по категориям за текущий месяц для конверта {session.current_envelope_id}",
-            session,
+        html = await _build_report_html(session, "current")
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
         )
-        await query.edit_message_text(response, parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+    elif data == "cb_report_last":
+        html = await _build_report_html(session, "last")
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
+             InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+        )
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+    # ── cb_transactions ────────────────────────────────────────────────────
+    elif data == "cb_transactions":
+        try:
+            from tools.transactions import tool_find_transactions
+            result = await tool_find_transactions({"limit": 8}, session, sheets, auth)
+            txs = result.get("transactions", [])
+            if not txs:
+                await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn())
+                return
+            lines = ["📝 <b>Последние записи:</b>\n"]
+            for tx in reversed(txs):
+                date = tx.get("Date", "")
+                cat = tx.get("Category", "?")
+                amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+                curr = tx.get("Currency_Orig", "EUR")
+                note = tx.get("Note", "")
+                icon = _cat_icon(cat)
+                note_str = f" · {note}" if note else ""
+                lines.append(
+                    f"{icon} <b>{cat}</b>  {amt} {curr}  <i>{date}</i>{note_str}"
+                )
+                lines.append("")
+            del_rows = []
+            row = []
+            recent = list(reversed(txs))[:4]
+            for i, tx in enumerate(recent):
+                tx_id = tx.get("ID", "")
+                cat = tx.get("Category", "?")[:7]
+                row.append(InlineKeyboardButton(
+                    f"🗑 {cat}", callback_data=f"cb_del_{tx_id}"
+                ))
+                if len(row) == 2 or i == len(recent) - 1:
+                    del_rows.append(row)
+                    row = []
+            markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
+            await query.message.reply_text(
+                "\n".join(lines),
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except Exception as e:
+            await query.message.reply_text(f"❌ {e}", reply_markup=_with_menu_btn())
+
+    # ── cb_help ────────────────────────────────────────────────────────────
     elif data == "cb_help":
-        await query.edit_message_text(
-            "📖 *Справка*\n\n"
-            "Просто пишите естественным языком:\n"
-            "› «кофе 3.50» или «продукты 85 EUR»\n"
-            "› «покажи отчёт за март»\n"
-            "› «создай конверт Отпуск лимит 2000 EUR»\n\n"
-            "Команды: /menu /envelopes /status /report /week /undo /help",
-            parse_mode=ParseMode.MARKDOWN,
-        )
+        try:
+            await query.edit_message_text(
+                "📖 <b>Справка</b>\n\n"
+                "Просто пишите естественным языком:\n"
+                "› «кофе 3.50» или «продукты 85 EUR»\n"
+                "› «покажи отчёт за март»\n"
+                "› «создай конверт Отпуск лимит 2000 EUR»\n\n"
+                "<b>Команды:</b> /menu /envelopes /status /report /transactions /week /undo /help",
+                parse_mode=ParseMode.HTML,
+            )
+        except BadRequest:
+            pass
 
+    # ── cb_env_<ID> ────────────────────────────────────────────────────────
     elif data.startswith("cb_env_"):
         env_id = data[7:]
         envelopes = sheets.get_envelopes()
         match = next((e for e in envelopes if e.get("ID") == env_id), None)
         if not match:
-            await query.edit_message_text(f"❌ Конверт `{env_id}` не найден.",
-                                           parse_mode=ParseMode.MARKDOWN)
+            await query.edit_message_text(
+                f"❌ Конверт <code>{env_id}</code> не найден.", parse_mode=ParseMode.HTML
+            )
             return
         session.current_envelope_id = env_id
-        await query.edit_message_text(
-            f"✅ Активный конверт: *{match['Name']}* (`{env_id}`)\n\n"
-            "Теперь пишите расходы прямо в чат!",
-            parse_mode=ParseMode.MARKDOWN,
-        )
+        try:
+            await query.edit_message_text(
+                f"✅ Активный конверт: <b>{match['Name']}</b> (<code>{env_id}</code>)\n\n"
+                "Теперь пишите расходы прямо в чат!",
+                parse_mode=ParseMode.HTML,
+            )
+        except BadRequest:
+            pass
 
+    # ── cb_del_confirm_<tx_id> ─────────────────────────────────────────────
     elif data.startswith("cb_del_confirm_"):
         tx_id = data[15:]
         try:
@@ -488,32 +1336,44 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 if e.get("ID") == session.current_envelope_id:
                     sheets.soft_delete_transaction(e["file_id"], tx_id)
                     break
-            await query.edit_message_text(f"🗑 Удалено ({tx_id})")
+            await query.edit_message_text(f"🗑 Удалено (<code>{tx_id}</code>)", parse_mode=ParseMode.HTML)
             session.last_action = None
         except Exception as ex:
             await query.edit_message_text(f"❌ Ошибка: {ex}")
 
+    # ── cb_del_<tx_id> ─────────────────────────────────────────────────────
     elif data.startswith("cb_del_"):
         tx_id = data[7:]
-        await query.edit_message_reply_markup(
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Да, удалить", callback_data=f"cb_del_confirm_{tx_id}"),
-                InlineKeyboardButton("❌ Отмена", callback_data="cb_cancel"),
-            ]])
-        )
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Да, удалить", callback_data=f"cb_del_confirm_{tx_id}"),
+                    InlineKeyboardButton("❌ Отмена", callback_data="cb_cancel"),
+                ]])
+            )
+        except BadRequest:
+            pass
 
+    # ── cb_edit_<tx_id> ────────────────────────────────────────────────────
     elif data.startswith("cb_edit_"):
         tx_id = data[8:]
         session.pending_edit_tx = tx_id
-        await query.edit_message_text(
-            f"Что изменить в записи `{tx_id}`?\n\n"
-            "Напишите например:\n"
-            "«сумма 90» или «категория транспорт» или «дата вчера»",
-            parse_mode=ParseMode.MARKDOWN,
-        )
+        try:
+            await query.edit_message_text(
+                f"Что изменить в записи <code>{tx_id}</code>?\n\n"
+                "Напишите например:\n"
+                "«сумма 90» или «категория транспорт» или «дата вчера»",
+                parse_mode=ParseMode.HTML,
+            )
+        except BadRequest:
+            pass
 
+    # ── cb_cancel ──────────────────────────────────────────────────────────
     elif data == "cb_cancel":
-        await query.edit_message_reply_markup(reply_markup=None)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
 
 
 # ── Main message handler ───────────────────────────────────────────────────────
@@ -521,46 +1381,130 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tg_user, session = _require_user(update)
     if not tg_user:
-        await update.message.reply_text("⛔ Access denied.")
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    # Ensure session has a session_id for conversation logging
+    if not getattr(session, "session_id", None):
+        session.session_id = make_session_id()
+
     msg = update.message
+    text = ""
+    media_type = "text"
+    media_data = None
+    media_file_id = ""
+
+    role = tg_user.get("role", "viewer")
+    lang = getattr(session, "lang", "en")
 
     if msg.text:
         text = msg.text.strip()
-        media_type = "text"
-        media_data = None
 
-        # ── Keyboard shortcut intercept ────────────────────────────────────
-        shortcut = KEYBOARD_SHORTCUTS.get(text)
-        if shortcut == "status":
-            await cmd_status(update, ctx)
-            return
-        elif shortcut == "report":
-            await cmd_report(update, ctx)
-            return
-        elif shortcut == "envelopes":
-            await cmd_envelopes(update, ctx)
-            return
-        elif shortcut == "help":
-            await cmd_help(update, ctx)
-            return
-        elif shortcut == "add_prompt":
-            await update.message.reply_text(
-                "Напишите расход в свободной форме:\n"
-                "Например: «кофе 3.50» или «продукты 85 EUR Esselunga»",
-                reply_markup=MAIN_KEYBOARD,
-            )
+        # ── Pending free-text prompt handler ───────────────────────────────
+        pending = getattr(session, "pending_prompt", None)
+        if pending:
+            session.pending_prompt = None  # consume immediately
+            await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+            if pending == "report:custom_period":
+                # Try YYYY-MM format directly; otherwise let agent interpret
+                period_match = re.match(r'(\d{4}-\d{2})(?::(\d{4}-\d{2}))?', text.strip())
+                if period_match:
+                    period = text.strip().split()[0]  # take first token
+                    html = await _build_report_html(session, period)
+                    kb = _with_menu_btn(
+                        [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
+                         InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                    )
+                    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+                else:
+                    # Pass to agent — it understands "февраль", "march", etc.
+                    response = await agent.run(f"покажи отчёт за {text}", session)
+                    await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                return
+
+            elif pending == "transactions:search":
+                response = await agent.run(
+                    f"найди записи по запросу: {text}", session
+                )
+                await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                return
+
+            elif pending == "transactions:category":
+                await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+                try:
+                    from tools.transactions import tool_find_transactions
+                    result = await tool_find_transactions(
+                        {"category": text.strip(), "limit": 20},
+                        session, sheets, auth,
+                    )
+                    if result.get("error"):
+                        await update.message.reply_text(f"❌ {result['error']}")
+                        return
+                    txs = result.get("transactions", [])
+                    if not txs:
+                        await update.message.reply_text(
+                            f"📝 Записей по категории «{text}» нет."
+                        )
+                        return
+                    total = sum(
+                        float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs
+                    )
+                    lines = [f"📝 <b>Категория «{text}»</b> — {len(txs)} записей · {total:,.0f} EUR\n"]
+                    for tx in txs[-20:]:
+                        date = tx.get("Date", "")
+                        amt  = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+                        curr = tx.get("Currency_Orig", "EUR")
+                        note = tx.get("Note", "")
+                        who  = tx.get("Who", "")
+                        note_part = f"  <i>{note}</i>" if note else ""
+                        who_part  = f" · {who}" if who else ""
+                        lines.append(f"• {date}  {amt} {curr}{who_part}{note_part}")
+                    await update.message.reply_text(
+                        "\n".join(lines), parse_mode=ParseMode.HTML,
+                        reply_markup=_with_menu_btn(),
+                    )
+                except Exception as e:
+                    logger.error(f"transactions:category failed: {e}", exc_info=True)
+                    await update.message.reply_text(f"❌ Ошибка: {e}")
+                return
+
+        # ── Menu button intercept (catches lingering reply keyboard taps) ──
+        _MENU_TRIGGERS = {"☰ меню", "≡ меню", "☰ menu", "меню", "/menu"}
+        if text.strip().lower() in _MENU_TRIGGERS:
+            tree = mc.get_menu()
+            kb = _build_inline_menu("", tree, role, lang)
+            await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
             return
 
-        # ── Greeting intercept (no API call needed) ────────────────────────
+        # ── Keyboard shortcut intercept (any language, via reverse map) ──
+        action = i18n.KB_TEXT_TO_ACTION.get(text)
+        if action:
+            tree = mc.get_menu()
+            role = tg_user.get("role", "viewer")
+            if action == "status":
+                await cmd_status(update, ctx)
+            elif action == "report":
+                kb = _build_inline_menu("report", tree, role, lang)
+                await update.message.reply_text(i18n.ts("report_title", lang), reply_markup=kb)
+            elif action == "records":
+                kb = _build_inline_menu("transactions", tree, role, lang)
+                await update.message.reply_text(i18n.ts("records_title", lang), reply_markup=kb)
+            elif action == "add":
+                await update.message.reply_text(i18n.t("", lang, i18n.ADD_PROMPT))
+            elif action == "envelopes":
+                await cmd_envelopes(update, ctx)
+            elif action == "settings":
+                kb = _build_inline_menu("settings", tree, role, lang)
+                await update.message.reply_text(i18n.ts("settings_title", lang), reply_markup=kb)
+            return
+
+        # ── Greeting intercept ─────────────────────────────────────────────
         if text.lower() in GREETINGS:
             await update.message.reply_text(
-                "Привет! 👋\n\n"
-                "Просто напишите что потратили:\n"
-                "«кофе 3.50» или «продукты 85 EUR»\n\n"
-                "Или нажмите кнопку ниже 👇",
-                reply_markup=MAIN_KEYBOARD,
+                i18n.t("", lang, i18n.GREETING_MSG),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_with_menu_btn(),
             )
             return
 
@@ -568,33 +1512,61 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         file_obj = await (msg.voice or msg.audio).get_file()
         audio_bytes = await file_obj.download_as_bytearray()
         text = await transcribe_audio(bytes(audio_bytes))
-        media_type = "text"
-        media_data = None
-        await update.message.reply_text(f"🎤 _{text}_",
-                                         parse_mode=ParseMode.MARKDOWN)
+        # Echo transcription back so user knows what was heard
+        try:
+            await update.message.reply_text(
+                f"🎤 <i>{text}</i>", parse_mode=ParseMode.HTML
+            )
+        except BadRequest:
+            await update.message.reply_text(f"🎤 {text}")
 
     elif msg.photo:
-        file_obj = await msg.photo[-1].get_file()
+        photo = msg.photo[-1]
+        media_file_id = photo.file_id
+        file_obj = await photo.get_file()
         media_data = bytes(await file_obj.download_as_bytearray())
-        text = msg.caption or ""
+        # Language-aware default prompt for photos without caption
+        _photo_prompts = {
+            "ru": (
+                "Проанализируй этот чек/скриншот. Найди ВСЕ транзакции. "
+                "Покажи что нашёл и спроси подтверждение перед записью."
+            ),
+            "uk": (
+                "Проаналізуй цей чек/скриншот. Знайди ВСІ транзакції. "
+                "Покажи що знайшов і запитай підтвердження перед записом."
+            ),
+            "en": (
+                "Analyse this receipt/screenshot. Find ALL transactions. "
+                "Show what you found and ask for confirmation before recording."
+            ),
+            "it": (
+                "Analizza questa ricevuta/screenshot. Trova TUTTE le transazioni. "
+                "Mostra quello che hai trovato e chiedi conferma prima di registrare."
+            ),
+        }
+        text = msg.caption or _photo_prompts.get(lang, _photo_prompts["en"])
         media_type = "photo"
 
     elif msg.document and msg.document.mime_type in ("text/csv", "application/csv"):
         file_obj = await msg.document.get_file()
         csv_bytes = await file_obj.download_as_bytearray()
         text = f"[CSV import]\n{csv_bytes.decode('utf-8', errors='replace')}"
-        media_type = "text"
-        media_data = None
 
     else:
-        await update.message.reply_text("Не поддерживаемый тип сообщения.")
+        await update.message.reply_text(i18n.ts("unsupported_media", lang))
         return
 
-    # ── Typing indicator — keep alive during long calls ───────────────────
+    # ── Inject pending edit context ────────────────────────────────────────
+    pending_tx = getattr(session, "pending_edit_tx", None)
+    if pending_tx:
+        session.pending_edit_tx = None
+        text = f"[edit tx_id={pending_tx}] {text}"
+
+    # ── Typing indicator ───────────────────────────────────────────────────
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     async def _keep_typing():
-        for _ in range(10):  # max 80 seconds
+        for _ in range(10):
             await asyncio.sleep(8)
             try:
                 await ctx.bot.send_chat_action(
@@ -605,11 +1577,47 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     typing_task = asyncio.create_task(_keep_typing())
     try:
+        # Log user message — PostgreSQL primary, Google Sheets fallback
+        try:
+            await appdb.log_message(
+                user_id=session.user_id,
+                session_id=session.session_id or "",
+                direction="user",
+                message_type=media_type,
+                content=text,
+                media_file_id=media_file_id,
+            )
+        except Exception:
+            pass
+        try:
+            if conv_log:
+                conv_log.log_user_message(session.user_id, text, session.session_id)
+        except Exception:
+            pass
+
         response = await agent.run(
             text, session,
             media_type=media_type,
             media_data=media_data if media_type == "photo" else None,
+            telegram_bot=ctx.bot,
         )
+
+        # Log bot response
+        try:
+            await appdb.log_message(
+                user_id=session.user_id,
+                session_id=session.session_id or "",
+                direction="bot",
+                message_type="text",
+                content=response,
+            )
+        except Exception:
+            pass
+        try:
+            if conv_log:
+                conv_log.log_bot_message(session.user_id, response, session.session_id)
+        except Exception:
+            pass
     finally:
         typing_task.cancel()
 
@@ -617,34 +1625,31 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     la = session.last_action
     if la and la.action == "add" and "✓" in response:
         tx_id = la.tx_id
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
-            InlineKeyboardButton("🗑 Удалить", callback_data=f"cb_del_{tx_id}"),
-            InlineKeyboardButton("📊 Статус", callback_data="cb_status"),
-        ]])
-        await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN,
-                                         reply_markup=keyboard)
+        kb = _with_menu_btn(
+            [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
+             InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],
+            [InlineKeyboardButton("📊 Статус",   callback_data="cb_status")],
+        )
+        await _safe_reply(update.message, response, reply_markup=kb)
     else:
-        await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+        await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
 
 
 # ── Weekly summary job ─────────────────────────────────────────────────────────
 
 async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
-    """Sends weekly budget summary to Mikhail every Monday 09:00 Rome time."""
     mikhail_id = int(os.environ.get("MIKHAIL_TELEGRAM_ID", 0))
     if not mikhail_id:
         return
-
     session = get_session(mikhail_id, "Mikhail", "admin")
     try:
-        text = await agent.run(
-            "покажи краткий отчёт по расходам за эту неделю", session
-        )
+        html = await _build_week_html(session)
+        report_html = await _build_report_html(session, "current")
+        full = f"📅 <b>Еженедельный отчёт</b>\n\n{html}\n\n{report_html}"
         await context.bot.send_message(
             chat_id=mikhail_id,
-            text=f"📅 *Еженедельный отчёт*\n\n{text}",
-            parse_mode=ParseMode.MARKDOWN,
+            text=full,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Weekly summary failed: {e}")
@@ -653,7 +1658,7 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
 # ── Audio transcription ────────────────────────────────────────────────────────
 
 async def transcribe_audio(audio_bytes: bytes) -> str:
-    import openai, re
+    import openai
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
     transcript = await client.audio.transcriptions.create(
         model="whisper-1",
@@ -675,16 +1680,19 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start",     cmd_start))
-    app.add_handler(CommandHandler("menu",      cmd_menu))
-    app.add_handler(CommandHandler("envelopes", cmd_envelopes))
-    app.add_handler(CommandHandler("envelope",  cmd_envelope))
-    app.add_handler(CommandHandler("status",    cmd_status))
-    app.add_handler(CommandHandler("report",    cmd_report))
-    app.add_handler(CommandHandler("week",      cmd_week))
-    app.add_handler(CommandHandler("month",     cmd_month))
-    app.add_handler(CommandHandler("undo",      cmd_undo))
-    app.add_handler(CommandHandler("help",      cmd_help))
+    app.add_handler(CommandHandler("start",        cmd_start))
+    app.add_handler(CommandHandler("menu",         cmd_menu))
+    app.add_handler(CommandHandler("settings",     cmd_settings))
+    app.add_handler(CommandHandler("envelopes",    cmd_envelopes))
+    app.add_handler(CommandHandler("envelope",     cmd_envelope))
+    app.add_handler(CommandHandler("status",       cmd_status))
+    app.add_handler(CommandHandler("report",       cmd_report))
+    app.add_handler(CommandHandler("transactions", cmd_transactions))
+    app.add_handler(CommandHandler("week",         cmd_week))
+    app.add_handler(CommandHandler("month",        cmd_month))
+    app.add_handler(CommandHandler("undo",         cmd_undo))
+    app.add_handler(CommandHandler("help",         cmd_help))
+    app.add_handler(CommandHandler("refresh",      cmd_refresh))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message

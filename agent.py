@@ -1,13 +1,17 @@
 """
-Apolio Home — AI Agent
-Claude claude-sonnet-4-20250514 with tool use.
-System prompt is loaded from ApolioHome_Prompt.md at startup.
+Apolio Home — AI Agent v2.0 (Intelligence Architecture)
+Claude claude-sonnet-4-20250514 with tool use + enriched context.
+System prompt loaded from ApolioHome_Prompt.md, augmented at runtime with:
+  - budget snapshot (intelligence.py)
+  - user goals (user_context.py)
+  - conversation history (tools/conversation_log.py)
 """
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import anthropic
 
@@ -15,6 +19,10 @@ from sheets import SheetsClient
 from auth import AuthManager, SessionContext
 
 logger = logging.getLogger(__name__)
+
+_MM_BUDGET_FILE_ID = os.environ.get(
+    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+)
 
 # ── Tools schema ───────────────────────────────────────────────────────────────
 
@@ -35,13 +43,16 @@ TOOLS = [
                 "envelope_id":  {"type": "string", "description": "Envelope ID, default current"},
                 "category":     {"type": "string"},
                 "subcategory":  {"type": "string"},
-                "who":          {"type": "string", "enum": ["Mikhail", "Marina", "Joint"],
-                                 "default": "Mikhail"},
-                "account":      {"type": "string"},
+                "who":          {"type": "string",
+                                 "description": "Person who made the expense. Get valid names from get_reference_data."},
+                "account":      {"type": "string",
+                                 "description": "Payment account. Get valid accounts from get_reference_data."},
                 "type":         {"type": "string",
                                  "enum": ["expense", "income", "transfer"],
                                  "default": "expense"},
                 "note":         {"type": "string"},
+                "force_new":    {"type": "boolean", "default": False,
+                                 "description": "Set true to bypass validation and add even with unknown category/who/account."},
             },
         },
     },
@@ -60,13 +71,46 @@ TOOLS = [
     },
     {
         "name": "delete_transaction",
-        "description": "Soft-delete a transaction. confirmed must be true to execute.",
+        "description": (
+            "Soft-delete a single transaction by tx_id (marks Deleted=TRUE, row stays in sheet). "
+            "ALWAYS ask the user for confirmation before calling with confirmed=True. "
+            "Show the transaction details and warn that this cannot be undone easily. "
+            "Only pass confirmed=True after explicit user approval."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["tx_id"],
             "properties": {
                 "tx_id":     {"type": "string"},
                 "confirmed": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "delete_transaction_rows",
+        "description": (
+            "Physically and permanently delete a range of rows from the Transactions sheet "
+            "by Google Sheet row number (row 1 = header, data rows start at 2). "
+            "Use when user says 'удали строки N-M', 'delete rows N to M', 'remove row N'. "
+            "TWO-STEP MANDATORY FLOW: "
+            "(1) Always call first WITHOUT confirmed to get a preview of what will be deleted. "
+            "(2) Show the preview to the user with a clear warning that this is IRREVERSIBLE. "
+            "(3) Only call again with confirmed=True AFTER the user explicitly confirms "
+            "(says 'да', 'yes', 'подтвердить', 'confirm', etc.). "
+            "If user says 'нет', 'отмена', 'cancel' — do NOT call with confirmed=True. "
+            "NEVER skip the preview step. NEVER call with confirmed=True on the first call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["start_row", "end_row"],
+            "properties": {
+                "start_row":   {"type": "integer",
+                                "description": "First row to delete (1-based, must be >= 2)"},
+                "end_row":     {"type": "integer",
+                                "description": "Last row to delete (inclusive)"},
+                "confirmed":   {"type": "boolean",
+                                "description": "false (default) = preview only; true = execute deletion"},
+                "envelope_id": {"type": "string"},
             },
         },
     },
@@ -208,6 +252,112 @@ TOOLS = [
             },
         },
     },
+    # ── Intelligence tools (v2.0) ─────────────────────────────────────────
+    {
+        "name": "save_goal",
+        "description": (
+            "Save a financial goal for the user. Examples: monthly savings target, "
+            "emergency fund target, custom goal. Use when user expresses a financial "
+            "goal or target. key must be one of: savings_target_monthly, "
+            "emergency_fund_target, emergency_fund_current, custom_goal."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["key", "value"],
+            "properties": {
+                "key":   {"type": "string",
+                          "enum": ["savings_target_monthly", "emergency_fund_target",
+                                   "emergency_fund_current", "custom_goal"]},
+                "value": {"type": "string", "description": "The goal value, e.g. '500' for 500 EUR/month"},
+            },
+        },
+    },
+    {
+        "name": "get_intelligence",
+        "description": (
+            "Get an intelligence analysis: category trends vs last month, "
+            "anomalies (categories significantly above average), budget pace forecast, "
+            "and large recent transactions. Use when user asks for analysis, trends, "
+            "recommendations, or 'what should I do?'"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "get_reference_data",
+        "description": (
+            "Load reference data for an envelope: valid categories, subcategories, "
+            "accounts, user names, and currencies. Call this before add_transaction "
+            "when you need to validate or suggest values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "save_receipt",
+        "description": (
+            "Save itemized receipt data after a photo transaction is confirmed and recorded. "
+            "Call this after add_transaction succeeds for a photo/receipt message. "
+            "Stores merchant, items, and AI summary to the Receipts tab."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["transaction_id", "total_amount"],
+            "properties": {
+                "transaction_id": {"type": "string"},
+                "merchant":       {"type": "string", "default": ""},
+                "date":           {"type": "string", "description": "YYYY-MM-DD"},
+                "total_amount":   {"type": "number"},
+                "currency":       {"type": "string", "default": "EUR"},
+                "items":          {
+                    "type": "array",
+                    "description": "List of {name, amount, category}",
+                    "items": {"type": "object"},
+                },
+                "ai_summary":     {"type": "string",
+                                   "description": "One-line human-readable summary, e.g. 'Esselunga weekly shop, 12 items'"},
+                "raw_text":       {"type": "string", "default": ""},
+                "tg_file_id":     {"type": "string", "default": ""},
+            },
+        },
+    },
+    {
+        "name": "save_learning",
+        "description": (
+            "Record a learning event: vocabulary mapping, user correction, "
+            "confirmation of a guess, new category, or detected pattern. "
+            "Call after user corrects a transaction, confirms a guess, "
+            "introduces new vocabulary, or after a pattern is detected."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["event_type", "trigger_text", "learned_json"],
+            "properties": {
+                "event_type": {
+                    "type": "string",
+                    "enum": ["vocabulary", "correction", "confirmation",
+                             "pattern", "new_category", "new_user"],
+                },
+                "trigger_text": {
+                    "type": "string",
+                    "description": "The raw text/word that triggered the learning",
+                },
+                "learned_json": {
+                    "type": "object",
+                    "description": "What was learned, e.g. {mapping: 'Food/Coffee'} or {category: 'Gym'}",
+                },
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -216,6 +366,11 @@ FALLBACK_PROMPT = """You are Apolio Home, a family budget assistant for Mikhail 
 Always respond. Never stay silent. Handle RU/UK/EN/IT mixed input naturally.
 Current date: {today}. User: {user_name} (role: {role}). Active envelope: {envelope_id}.
 Add transactions proactively from natural language. Respond in the user's language.
+
+{intelligence_context}
+{goals_context}
+{conversation_context}
+{learning_context}
 """
 
 
@@ -235,7 +390,13 @@ def _load_system_prompt() -> str:
                 if dashes == 2:  # second --- ends the header block
                     start = i + 1
                     break
-        return "\n".join(lines[start:]).strip()
+        template = "\n".join(lines[start:]).strip()
+        # Append context placeholders if not present
+        if "{intelligence_context}" not in template:
+            template += "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n{conversation_context}"
+        if "{learning_context}" not in template:
+            template += "\n\n{learning_context}"
+        return template
     except Exception as e:
         logger.warning(f"Could not load ApolioHome_Prompt.md: {e}. Using fallback prompt.")
         return FALLBACK_PROMPT
@@ -245,30 +406,131 @@ def _load_system_prompt() -> str:
 _SYSTEM_PROMPT_TEMPLATE = _load_system_prompt()
 
 
+# ── Intelligence helpers (lazy-loaded singletons) ─────────────────────────────
+
+_intelligence_engine = None
+_user_context_mgr = None
+_conv_logger = None
+
+
+def _get_intelligence_engine(sheets: SheetsClient):
+    global _intelligence_engine
+    if _intelligence_engine is None:
+        from intelligence import IntelligenceEngine
+        _intelligence_engine = IntelligenceEngine(sheets)
+    return _intelligence_engine
+
+
+def _get_user_context_mgr(sheets: SheetsClient):
+    global _user_context_mgr
+    if _user_context_mgr is None:
+        from user_context import UserContextManager
+        _user_context_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+    return _user_context_mgr
+
+
+def _get_conv_logger():
+    """Try to get the conversation logger from bot.py (shared instance)."""
+    global _conv_logger
+    if _conv_logger is not None:
+        return _conv_logger
+    try:
+        import bot as _bot_module
+        _conv_logger = getattr(_bot_module, "conv_log", None)
+    except Exception:
+        pass
+    return _conv_logger
+
+
 # ── Agent ──────────────────────────────────────────────────────────────────────
 
 class ApolioAgent:
     def __init__(self, sheets: SheetsClient, auth: AuthManager):
         self.sheets = sheets
         self.auth = auth
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.AsyncAnthropic()
+
+    def _build_context(self, session: SessionContext) -> dict:
+        """
+        Pre-compute intelligence snapshot, goals, and learning context.
+        Returns dict of context blocks for system prompt injection.
+        conversation_context is intentionally "" — history comes via messages[].
+        All errors are swallowed — context enrichment must never crash the agent.
+        """
+        intelligence_text = ""
+        goals_text = ""
+        learning_text = ""
+
+        envelope_id = session.current_envelope_id or "MM_BUDGET"
+
+        # 1. Intelligence snapshot (budget status, trends, anomalies)
+        try:
+            engine = _get_intelligence_engine(self.sheets)
+            from intelligence import format_snapshot_for_prompt
+            snap = engine.compute_snapshot(envelope_id)
+            if not snap.get("error"):
+                intelligence_text = format_snapshot_for_prompt(snap)
+        except Exception as e:
+            logger.warning(f"Intelligence context failed: {e}")
+
+        # 2. User goals
+        try:
+            mgr = _get_user_context_mgr(self.sheets)
+            from user_context import format_goals_for_prompt
+            ctx = mgr.get_all(session.user_id)
+            goals_text = format_goals_for_prompt(ctx)
+        except Exception as e:
+            logger.warning(f"User context failed: {e}")
+
+        # 3. Learning context (vocabulary + patterns from agent_learning)
+        # This is async but _build_context is sync — handled in run() directly
+        # learning_text filled there asynchronously
+
+        return {
+            "intelligence_context": intelligence_text,
+            "goals_context": goals_text,
+            "conversation_context": "",  # intentional: history via messages[]
+            "learning_context": learning_text,
+        }
 
     async def run(self, message: str, session: SessionContext,
                   media_type: str = "text",
-                  media_data: bytes | None = None) -> str:
+                  media_data: bytes | None = None,
+                  telegram_bot=None) -> str:
         """
         Run the agent with a user message.
         Returns the bot's text response. Never returns empty string.
+        telegram_bot: passed to db.get_recent_messages_for_api for photo re-download.
         """
+        import db as appdb
+
         today = datetime.now().strftime("%Y-%m-%d")
+        envelope_id = session.current_envelope_id or "MM_BUDGET"
+
+        # Build enriched context (sync parts)
+        context = self._build_context(session)
+
+        # Learning context — async, fetched here
+        try:
+            learning_text = await appdb.get_learning_context_for_prompt(
+                session.user_id, envelope_id
+            )
+        except Exception as e:
+            logger.warning(f"Learning context failed: {e}")
+            learning_text = ""
+
         system = _SYSTEM_PROMPT_TEMPLATE.format(
             today=today,
             user_name=session.user_name,
             role=session.role,
-            envelope_id=session.current_envelope_id or "MM_BUDGET",
+            envelope_id=envelope_id,
+            intelligence_context=context.get("intelligence_context", ""),
+            goals_context=context.get("goals_context", ""),
+            conversation_context="",
+            learning_context=learning_text,
         )
 
-        # Build user content (text or with media)
+        # Build current user content (text or multimodal)
         if media_type == "photo" and media_data:
             import base64
             user_content = [
@@ -280,21 +542,31 @@ class ApolioAgent:
                         "data": base64.b64encode(media_data).decode(),
                     },
                 },
-                {"type": "text", "text": message or "Extract transaction data from this receipt."},
+                {"type": "text", "text": message or "Analyse this receipt."},
             ]
         else:
             user_content = message
 
-        messages = [{"role": "user", "content": user_content}]
+        # Load conversation history from PostgreSQL as messages[]
+        history: list = []
+        try:
+            history = await appdb.get_recent_messages_for_api(
+                session.user_id, limit=20, telegram_bot=telegram_bot
+            )
+        except Exception as e:
+            logger.warning(f"History load failed: {e}")
+
+        # Append current message (avoid duplicating last history entry)
+        messages = history + [{"role": "user", "content": user_content}]
 
         # Agentic loop
-        max_iterations = 5
+        max_iterations = 10
         last_text = ""
 
         for iteration in range(max_iterations):
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=2048,
+                max_tokens=4096,
                 system=system,
                 tools=TOOLS,
                 messages=messages,
@@ -337,7 +609,7 @@ class ApolioAgent:
 
         # Fallback: ask Claude for a short plain-text summary of what happened
         try:
-            fallback = self.client.messages.create(
+            fallback = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=256,
                 system=system,
@@ -359,7 +631,8 @@ class ApolioAgent:
         """Dispatch tool call to the appropriate handler."""
         from tools.transactions import (
             tool_add_transaction, tool_edit_transaction,
-            tool_delete_transaction, tool_find_transactions,
+            tool_delete_transaction, tool_delete_transaction_rows,
+            tool_find_transactions,
         )
         from tools.summary import tool_get_summary, tool_get_budget_status
         from tools.wise import tool_import_wise_csv
@@ -375,6 +648,7 @@ class ApolioAgent:
             "add_transaction":        tool_add_transaction,
             "edit_transaction":       tool_edit_transaction,
             "delete_transaction":     tool_delete_transaction,
+            "delete_transaction_rows": tool_delete_transaction_rows,
             "find_transactions":      tool_find_transactions,
             "get_summary":            tool_get_summary,
             "get_budget_status":      tool_get_budget_status,
@@ -384,17 +658,29 @@ class ApolioAgent:
             "add_authorized_user":    tool_add_authorized_user,
             "remove_authorized_user": tool_remove_authorized_user,
             "create_envelope":        tool_create_envelope,
+            # Intelligence tools (v2.0)
+            "save_goal":              self._tool_save_goal,
+            "get_intelligence":       self._tool_get_intelligence,
+            # Reference + learning (v3.0)
+            "get_reference_data":     self._tool_get_reference_data,
+            "save_learning":          self._tool_save_learning,
+            "save_receipt":           self._tool_save_receipt,
         }
 
         handler = dispatch.get(name)
         if not handler:
             return {"error": f"Unknown tool: {name}"}
 
+        _read_only = {
+            "find_transactions", "get_summary", "get_budget_status",
+            "list_envelopes", "get_intelligence", "get_reference_data",
+            "save_learning", "save_receipt",  # internal — no audit needed
+        }
+
         try:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
-            if name not in ("find_transactions", "get_summary", "get_budget_status",
-                            "list_envelopes"):
+            if name not in _read_only:
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -403,4 +689,93 @@ class ApolioAgent:
             return result
         except Exception as e:
             logger.error(f"Tool {name} failed: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    # ── Intelligence tool handlers ────────────────────────────────────────
+
+    async def _tool_save_goal(self, params: dict, session: SessionContext,
+                               sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Save a financial goal for the user."""
+        key = params.get("key", "")
+        value = params.get("value", "")
+        if not key or not value:
+            return {"error": "key and value are required"}
+
+        try:
+            mgr = _get_user_context_mgr(sheets)
+            mgr.set(session.user_id, key, value)
+            return {
+                "status": "ok",
+                "message": f"Goal saved: {key} = {value}",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_get_intelligence(self, params: dict, session: SessionContext,
+                                      sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Run intelligence analysis and return structured results."""
+        envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
+
+        try:
+            engine = _get_intelligence_engine(sheets)
+            snap = engine.compute_snapshot(envelope_id)
+            return snap
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_get_reference_data(self, params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Load valid categories, accounts, user names, currencies for an envelope."""
+        envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
+        try:
+            return sheets.get_reference_data(envelope_id)
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_save_receipt(self, params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Save itemized receipt data to Receipts tab."""
+        try:
+            import bot as _bot_module
+            rs = getattr(_bot_module, "receipt_store", None)
+            if rs is None:
+                return {"status": "skipped", "reason": "ReceiptStore not initialized"}
+
+            receipt_id = rs.save_receipt(
+                transaction_id=params.get("transaction_id", ""),
+                date=params.get("date", "") or "",
+                merchant=params.get("merchant", "") or "",
+                total_amount=float(params.get("total_amount", 0)),
+                currency=params.get("currency", "EUR"),
+                items=params.get("items", []),
+                ai_summary=params.get("ai_summary", "") or "",
+                raw_text=params.get("raw_text", "") or "",
+                tg_file_id=params.get("tg_file_id", "") or "",
+            )
+            return {"status": "ok", "receipt_id": receipt_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_save_learning(self, params: dict, session: SessionContext,
+                                   sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Record a learning event in agent_learning table."""
+        import db as appdb
+        event_type   = params.get("event_type", "")
+        trigger_text = params.get("trigger_text", "")
+        learned_json = params.get("learned_json", {})
+        envelope_id  = params.get("envelope_id") or session.current_envelope_id or ""
+
+        if not event_type or not trigger_text:
+            return {"error": "event_type and trigger_text are required"}
+
+        try:
+            await appdb.save_learning(
+                user_id=session.user_id,
+                envelope_id=envelope_id,
+                event_type=event_type,
+                trigger_text=trigger_text,
+                learned_json=learned_json,
+            )
+            return {"status": "ok", "message": f"Learned: {event_type} / {trigger_text}"}
+        except Exception as e:
             return {"error": str(e)}
