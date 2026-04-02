@@ -894,8 +894,8 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
             html = await _build_report_html(session, period)
             kb = _with_menu_btn(
-                [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                 InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
+                 InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
             )
             await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         elif command == "transactions":
@@ -916,16 +916,16 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
             html = await _build_contribution_html(session)
             kb = _with_menu_btn(
-                [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
-                 InlineKeyboardButton("📈 Тренды", callback_data="nav:rep_trends")],
+                [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:rep_curr"),
+                 InlineKeyboardButton(i18n.t_menu("rep_trends", lang), callback_data="nav:rep_trends")],
             )
             await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         elif command == "trends":
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
             html = await _build_trends_html(session)
             kb = _with_menu_btn(
-                [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
-                 InlineKeyboardButton("💸 Взносы", callback_data="nav:rep_contribution")],
+                [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:rep_curr"),
+                 InlineKeyboardButton(i18n.t_menu("rep_contribution", lang), callback_data="nav:rep_contribution")],
             )
             await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         else:
@@ -1115,11 +1115,12 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     html = await _build_status_html(session)
     kb = _with_menu_btn(
-        [InlineKeyboardButton("📋 Отчёт", callback_data="cb_report"),
-         InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
+        [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
+         InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
     )
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1132,6 +1133,7 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     # Early in month with no data → auto-show previous month
@@ -1147,8 +1149,8 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     html = await _build_report_html(session, period)
     kb = _with_menu_btn(
-        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+        [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="cb_report_last"),
+         InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="cb_report")],
     )
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1175,6 +1177,7 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     # If early in month (≤10 days) and no data yet, auto-show previous month
@@ -1190,8 +1193,8 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     html = await _build_report_html(session, period)
     kb = _with_menu_btn(
-        [InlineKeyboardButton("◀ Пред. месяц", callback_data="cb_report_last"),
-         InlineKeyboardButton("▶ Тек. месяц",  callback_data="cb_report")],
+        [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="cb_report_last"),
+         InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="cb_report")],
     )
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1516,25 +1519,34 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 kb = _with_menu_btn(lang=lang)
             elif command == "transactions":
                 limit_n = params.get("limit", 10)
+                period  = params.get("period", "")
                 try:
-                    from tools.summary import tool_get_summary
-                    data = await tool_get_summary(
-                        {"breakdown_by": "list", "limit": limit_n},
-                        session, sheets, auth,
-                    )
-                    txs = data.get("transactions", [])
+                    from tools.transactions import tool_find_transactions
+                    find_params: dict = {"limit": limit_n}
+                    if period == "current":
+                        today_str = datetime.now().strftime("%Y-%m")
+                        find_params["date_from"] = f"{today_str}-01"
+                    result = await tool_find_transactions(find_params, session, sheets, auth)
+                    txs = result.get("transactions", [])
                     if txs:
                         tlines = [f"📝 <b>Последние {len(txs)} записей:</b>\n"]
-                        for tx in txs:
-                            d = tx.get("date", "?")
-                            a = tx.get("amount_eur", tx.get("amount", 0))
-                            c = tx.get("category", "")
-                            n = tx.get("note", "")
-                            w = tx.get("who", "")
-                            tlines.append(f"  {d} · <b>{a} EUR</b> · {c}" + (f" ({n})" if n else "") + (f" — {w}" if w else ""))
+                        for tx in reversed(txs):  # newest first
+                            d = tx.get("Date", "?")
+                            a = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+                            curr = tx.get("Currency_Orig", "EUR")
+                            c = tx.get("Category", "")
+                            n = tx.get("Note", "")
+                            w = tx.get("Who", "")
+                            icon = _cat_icon(c)
+                            amt_str = f"{a} EUR" if curr == "EUR" else f"{a} {curr}"
+                            who_str = f" — {w}" if w else ""
+                            tlines.append(
+                                f"{icon} <b>{c}</b>  {amt_str}{who_str}  <i>{d}</i>"
+                                + (f"\n     📎 {n}" if n else "")
+                            )
                         html = "\n".join(tlines)
                     else:
-                        html = "📝 Нет записей."
+                        html = i18n.ts("no_transactions", lang)
                 except Exception as e:
                     logger.error(f"transactions handler: {e}", exc_info=True)
                     html = f"❌ Ошибка: {e}"
@@ -1604,15 +1616,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "contribution":
                 html = await _build_contribution_html(session)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
-                     InlineKeyboardButton("📈 Тренды", callback_data="nav:rep_trends")],
+                    [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr"),
+                     InlineKeyboardButton(i18n.t_menu("rep_trends", lang), callback_data="nav:rep_trends")],
                     lang=lang,
                 )
             elif command == "trends":
                 html = await _build_trends_html(session)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton("📋 Отчёт", callback_data="nav:rep_curr"),
-                     InlineKeyboardButton("💸 Взносы", callback_data="nav:rep_contribution")],
+                    [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr"),
+                     InlineKeyboardButton(i18n.t_menu("rep_contribution", lang), callback_data="nav:rep_contribution")],
                     lang=lang,
                 )
             elif command == "dashboard_refresh":
@@ -1819,8 +1831,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "cb_status":
         html = await _build_status_html(session)
         kb = _with_menu_btn(
-            [InlineKeyboardButton("📋 Отчёт",  callback_data="cb_report"),
-             InlineKeyboardButton("📝 Записи", callback_data="cb_transactions")],
+            [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
+             InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -2087,8 +2099,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     period = text.strip().split()[0]  # take first token
                     html = await _build_report_html(session, period)
                     kb = _with_menu_btn(
-                        [InlineKeyboardButton("◀ Пред. месяц", callback_data="nav:rep_last"),
-                         InlineKeyboardButton("▶ Тек. месяц",  callback_data="nav:rep_curr")],
+                        [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
+                         InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
                     )
                     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
                 else:
