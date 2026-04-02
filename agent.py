@@ -345,6 +345,25 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "refresh_dashboard",
+        "description": (
+            "Rewrite the Dashboard tab in the Google Sheet with current budget snapshot, "
+            "per-user contribution table, category breakdown, and recent transactions. "
+            "Use when user says: 'обнови дашборд', 'refresh dashboard', 'покажи дашборд в таблице', "
+            "'запиши в таблицу', 'обнови Google Sheets'. "
+            "Also call this automatically after add_transaction when the user mentions the dashboard."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string",
+                                "description": "Envelope ID, default = current"},
+                "month": {"type": "string",
+                          "description": "YYYY-MM, default = current month"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -653,6 +672,8 @@ class ApolioAgent:
             "get_intelligence":       self._tool_get_intelligence,
             # History search
             "search_history":         self._tool_search_history,
+            # Dashboard writer
+            "refresh_dashboard":      self._tool_refresh_dashboard,
         }
 
         handler = dispatch.get(name)
@@ -664,7 +685,7 @@ class ApolioAgent:
             # Write audit log for state-changing operations
             if name not in ("find_transactions", "get_summary", "get_budget_status",
                             "list_envelopes", "get_intelligence", "search_history",
-                            "get_contribution_status"):
+                            "get_contribution_status", "refresh_dashboard"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -742,3 +763,54 @@ class ApolioAgent:
         except Exception as e:
             logger.error(f"search_history failed: {e}")
             return {"error": str(e)}
+
+    async def _tool_refresh_dashboard(self, params: dict, session: SessionContext,
+                                       sheets: SheetsClient, auth: AuthManager):
+        """Compute current budget snapshot + contribution status and write to Dashboard tab."""
+        if not auth.can_write(session.user_id):
+            return {"error": "Permission denied."}
+
+        envelope_id = params.get("envelope_id") or session.current_envelope_id
+        if not envelope_id:
+            return {"error": "Конверт не выбран."}
+
+        # Find the file_id for the envelope
+        envelopes = sheets.get_envelopes()
+        file_id = None
+        for e in envelopes:
+            if e.get("ID") == envelope_id:
+                file_id = e["file_id"]
+                break
+        if not file_id:
+            return {"error": f"Конверт {envelope_id} не найден."}
+
+        month = params.get("month") or datetime.utcnow().strftime("%Y-%m")
+
+        try:
+            from intelligence import (IntelligenceEngine, format_snapshot_for_prompt,
+                                       compute_contribution_status,
+                                       compute_contribution_history)
+            engine = IntelligenceEngine(sheets)
+            snap = engine.compute_snapshot(envelope_id=envelope_id, month=month)
+            contrib_snap = compute_contribution_status(sheets, envelope_id, month)
+            contrib_history = compute_contribution_history(sheets, envelope_id, months_back=6)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: intelligence/contrib failed: {e}")
+            snap = {"month": month, "cap": 0, "spent": 0, "remaining": 0,
+                    "pct_used": 0, "currency": "EUR"}
+            contrib_snap = None
+            contrib_history = None
+
+        try:
+            sheets.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history)
+        except Exception as e:
+            return {"error": f"Не удалось обновить Dashboard: {e}"}
+
+        return {
+            "status": "ok",
+            "message": (
+                f"✓ Dashboard обновлён за {month} — "
+                f"расходы {snap.get('spent', 0):,.2f} {snap.get('currency', 'EUR')} "
+                f"из {snap.get('cap', 0):,.2f} ({snap.get('pct_used', 0):.1f}%)"
+            ),
+        }

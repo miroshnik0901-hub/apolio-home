@@ -186,7 +186,16 @@ class EnvelopeSheets:
 
     def get_transactions(self, filters: dict = None) -> list[dict]:
         ws = self._ws("Transactions")
-        records = ws.get_all_records()
+        all_values = ws.get_all_values()
+        if not all_values:
+            return []
+        headers = all_values[0]
+        records = []
+        for i, row in enumerate(all_values[1:], start=2):  # row 2 = first data row
+            padded = row + [""] * max(0, len(headers) - len(row))
+            rec = dict(zip(headers, padded))
+            rec["_row"] = i  # physical sheet row number (header=1, data starts at 2)
+            records.append(rec)
         active = [r for r in records if str(r.get("Deleted", "FALSE")).upper() != "TRUE"]
         if not filters:
             return active
@@ -286,6 +295,226 @@ class EnvelopeSheets:
         ws = self._ws("Config")
         rows = ws.get_all_values()
         return {row[0]: row[1] for row in rows if len(row) >= 2 and row[0]}
+
+    # ── Dashboard writer ─────────────────────────────────────────────────
+
+    def update_dashboard(self, snap: dict, contrib_snap: dict = None,
+                          contrib_history: list = None) -> None:
+        """
+        Overwrite the Dashboard tab with budget snapshot, current month contribution
+        table, and multi-month contribution history.
+
+        Args:
+            snap            = compute_snapshot() result from intelligence.py
+            contrib_snap    = compute_contribution_status() for current month (optional)
+            contrib_history = list of compute_contribution_status() snapshots,
+                              one per month, oldest first (from compute_contribution_history)
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        try:
+            ws = self._ws("Dashboard")
+            ws.clear()
+
+            month = snap.get("month", datetime.utcnow().strftime("%Y-%m"))
+            cap = snap.get("cap", 0)
+            spent = snap.get("spent", 0)
+            remaining = snap.get("remaining", cap - spent)
+            pct = snap.get("pct_used", 0)
+            cur = snap.get("currency", "EUR")
+            pace = snap.get("pace_status", "")
+            pace_label = {
+                "on_track": "✅ В норме",
+                "over_pace": "⚠️ Превышает темп",
+                "under_pace": "📉 Ниже темпа",
+            }.get(pace, "")
+
+            rows = []
+
+            # ── Header ───────────────────────────────────────────────────
+            rows.append(["📊 APOLIO HOME — MM Budget", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
+            rows.append([f"Дашборд за {month}", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
+
+            # ── Budget summary (current month) ───────────────────────────
+            rows.append(["Месяц:", month, "", "", ""])
+            rows.append(["Лимит бюджета:", f"{cap:,.2f} {cur}", "", "", ""])
+            rows.append(["Расходы:", f"{spent:,.2f} {cur}", "", "", ""])
+            rows.append(["Остаток:", f"{remaining:,.2f} {cur}", "", "", ""])
+            rows.append(["Использовано:", f"{pct:.1f}%", "", "", ""])
+            if pace_label:
+                rows.append(["Темп:", pace_label, "", "", ""])
+            rows.append(["", "", "", "", ""])
+
+            # ── Current month contribution table ─────────────────────────
+            if contrib_snap and contrib_snap.get("status") == "ok":
+                rows.append(["━━━ Взносы — текущий месяц ━━━", "", "", "", ""])
+                rows.append([
+                    "Порог (базовый взнос):",
+                    f"{contrib_snap['threshold']:,.2f} {cur}",
+                    "", "", "",
+                ])
+                rows.append([
+                    "Правило сплита:",
+                    contrib_snap.get("split_rule", "50_50").replace("_", "/"),
+                    "", "", "",
+                ])
+                rows.append(["", "", "", "", ""])
+                rows.append(["Пользователь", "Взнос", "Доля расходов", "Баланс", "Статус"])
+
+                for u in contrib_snap.get("split_users", []):
+                    contributed = float(contrib_snap.get("contributions", {}).get(u, 0))
+                    share = float(contrib_snap.get("user_shares", {}).get(u, 0))
+                    balance = float(contrib_snap.get("balances", {}).get(u, 0))
+                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
+                    rows.append([
+                        u,
+                        f"{contributed:,.2f} {cur}",
+                        f"{share:,.2f} {cur}",
+                        f"{balance:+,.2f} {cur}",
+                        status,
+                    ])
+
+                excess = contrib_snap.get("excess_amount", 0)
+                if excess > 0:
+                    rows.append(["", "", "", "", ""])
+                    rows.append([
+                        "Превышение порога:",
+                        f"{excess:,.2f} {cur}",
+                        f"→ по {contrib_snap.get('excess_per_user', 0):,.2f} {cur}/чел.",
+                        "", "",
+                    ])
+                rows.append(["", "", "", "", ""])
+
+            # ── Multi-month contribution history ─────────────────────────
+            if contrib_history:
+                # Collect all users across all months
+                all_users: list = []
+                for h in contrib_history:
+                    for u in h.get("split_users", []):
+                        if u not in all_users:
+                            all_users.append(u)
+
+                # Table: Month | Total expenses | [User: contributed, share, balance] per user
+                # Column layout (6 cols per user): user | contributed | share | balance | status | (spacer)
+                # Keep it readable: one row per month, separate sub-columns per user
+                rows.append(["━━━ История взносов по месяцам ━━━", "", "", "", ""])
+                rows.append(["", "", "", "", ""])
+
+                # Build a wide table — need more than 5 cols; use column G+ for extra users
+                # Row 1: header
+                h_row = ["Месяц", "Расходы EUR", "Лимит EUR", "% лимита", ""]
+                for u in all_users:
+                    h_row += [f"{u}: внёс", f"{u}: доля", f"{u}: баланс", ""]
+                rows.append(h_row)
+
+                # Data rows
+                for h in contrib_history:
+                    if h.get("status") != "ok":
+                        continue
+                    h_cur = h.get("currency", "EUR")
+                    h_threshold = h.get("threshold", 0)
+                    h_spent = h.get("total_expenses", 0)
+                    h_pct = f"{(h_spent / h_threshold * 100):.1f}%" if h_threshold else "—"
+                    data_row = [
+                        h.get("month", ""),
+                        f"{h_spent:,.2f}",
+                        f"{h_threshold:,.2f}",
+                        h_pct,
+                        "",
+                    ]
+                    for u in all_users:
+                        contributed = float(h.get("contributions", {}).get(u, 0))
+                        share = float(h.get("user_shares", {}).get(u, 0))
+                        balance = float(h.get("balances", {}).get(u, 0))
+                        data_row += [
+                            f"{contributed:,.2f}",
+                            f"{share:,.2f}",
+                            f"{balance:+,.2f}",
+                            "",
+                        ]
+                    rows.append(data_row)
+
+                rows.append(["", "", "", "", ""])
+
+                # ── Running totals (YTD) ──────────────────────────────────
+                rows.append(["━━━ Итого за период (YTD) ━━━", "", "", "", ""])
+                ytd_contrib: dict[str, float] = {u: 0.0 for u in all_users}
+                ytd_share:   dict[str, float] = {u: 0.0 for u in all_users}
+                ytd_spent = 0.0
+                for h in contrib_history:
+                    if h.get("status") != "ok":
+                        continue
+                    ytd_spent += float(h.get("total_expenses", 0))
+                    for u in all_users:
+                        ytd_contrib[u] += float(h.get("contributions", {}).get(u, 0))
+                        ytd_share[u]   += float(h.get("user_shares", {}).get(u, 0))
+
+                rows.append(["Итого расходов:", f"{ytd_spent:,.2f} {cur}", "", "", ""])
+                for u in all_users:
+                    balance = ytd_contrib[u] - ytd_share[u]
+                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
+                    rows.append([
+                        f"{u} — взнос:",
+                        f"{ytd_contrib[u]:,.2f} {cur}",
+                        f"доля: {ytd_share[u]:,.2f} {cur}",
+                        f"баланс: {balance:+,.2f} {cur}",
+                        status,
+                    ])
+                rows.append(["", "", "", "", ""])
+
+            # ── Category breakdown ───────────────────────────────────────
+            top_cats = snap.get("top_categories", {})
+            if top_cats:
+                rows.append(["━━━ По категориям (текущий месяц) ━━━", "", "", "", ""])
+                for cat, amt in top_cats.items():
+                    rows.append([f"  {cat}:", f"{amt:,.2f} {cur}", "", "", ""])
+                rows.append(["", "", "", "", ""])
+
+            # ── Recent transactions ──────────────────────────────────────
+            txs = self.get_transactions({"date_from": f"{month}-01"})
+            active_txs = [t for t in txs if t.get("Type") == "expense"][-10:]
+            if active_txs:
+                rows.append(["━━━ Последние 10 транзакций ━━━", "", "", "", ""])
+                rows.append(["Дата", "Сумма EUR", "Категория", "Заметка", "Кто"])
+                for t in reversed(active_txs):
+                    rows.append([
+                        t.get("Date", ""),
+                        f"{float(t.get('Amount_EUR') or t.get('Amount_Orig') or 0):,.2f}",
+                        t.get("Category", ""),
+                        t.get("Note", "")[:40],
+                        t.get("Who", ""),
+                    ])
+
+            rows.append(["", "", "", "", ""])
+            rows.append([
+                f"Обновлено: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
+                "", "", "", "",
+            ])
+
+            # Determine actual column width needed
+            max_cols = max(len(r) for r in rows) if rows else 5
+            # Pad all rows to same width
+            for r in rows:
+                while len(r) < max_cols:
+                    r.append("")
+
+            def _col_letter(n: int) -> str:
+                """Convert 1-based column number to letter(s): 1→A, 26→Z, 27→AA…"""
+                result = ""
+                while n > 0:
+                    n, rem = divmod(n - 1, 26)
+                    result = chr(65 + rem) + result
+                return result
+
+            end_col = _col_letter(max_cols)
+            end_row = len(rows)
+            ws.update(f"A1:{end_col}{end_row}", rows, value_input_option="USER_ENTERED")
+
+        except Exception as e:
+            import logging as _logging2
+            _logging2.getLogger(__name__).warning(f"update_dashboard failed: {e}")
 
 
 def get_credentials() -> Credentials:
@@ -446,6 +675,12 @@ class SheetsClient:
         """Sort Transactions sheet by date and invalidate cache."""
         self._cache.invalidate(f"txns_{sheet_id}")
         return self._env_sheets(sheet_id).sort_by_date(order)
+
+    def update_dashboard_sheet(self, sheet_id: str, snap: dict,
+                                contrib_snap: dict = None,
+                                contrib_history: list = None) -> None:
+        """Write computed budget + contribution data to the Dashboard tab."""
+        self._env_sheets(sheet_id).update_dashboard(snap, contrib_snap, contrib_history)
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.

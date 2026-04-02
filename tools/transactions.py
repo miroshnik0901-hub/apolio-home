@@ -63,7 +63,11 @@ async def tool_add_transaction(params: dict, session: SessionContext,
             fx_rows = fx_ws.get_all_records()
             fx_row = next((r for r in fx_rows if r.get("Month") == month), None)
             if fx_row:
-                rate = float(fx_row.get(currency.upper(), 0) or 0)
+                # FX_Rates columns are named EUR_PLN, EUR_UAH, EUR_USD etc.
+                # Each value means: 1 EUR = N <currency>
+                # To convert to EUR: amount_eur = amount_orig / rate
+                col_key = f"EUR_{currency.upper()}"
+                rate = float(fx_row.get(col_key, 0) or 0)
                 if rate:
                     amount_eur = round(float(amount) / rate, 2)
         except Exception:

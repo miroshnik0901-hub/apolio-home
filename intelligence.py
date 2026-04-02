@@ -342,6 +342,22 @@ def format_contribution_for_prompt(snap: dict) -> str:
     return "\n".join(lines)
 
 
+def compute_contribution_history(sheets: SheetsClient, envelope_id: str,
+                                  months_back: int = 6) -> list[dict]:
+    """
+    Return a list of compute_contribution_status snapshots for the last
+    months_back months (oldest first). Skips months with errors.
+    """
+    results = []
+    month = _current_month()
+    for _ in range(months_back):
+        snap = compute_contribution_status(sheets, envelope_id, month)
+        if snap.get("status") == "ok":
+            results.insert(0, snap)
+        month = _prev_month(month)
+    return results
+
+
 def format_snapshot_for_prompt(snap: dict) -> str:
     """
     Format the intelligence snapshot as a compact text block
