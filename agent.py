@@ -565,6 +565,17 @@ def _load_system_prompt() -> str:
 _SYSTEM_PROMPT_TEMPLATE = _load_system_prompt()
 
 
+def _safe_format(template: str, **kwargs) -> str:
+    """Replace known {placeholders} without crashing on literal {curly} braces in the text.
+    Python's str.format() raises KeyError when the template contains patterns like
+    {mapping: value} (from prompt examples). This helper does explicit key-by-key
+    replacement so unrecognised patterns are left untouched."""
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace(f"{{{key}}}", str(value))
+    return result
+
+
 # ── Intelligence helpers (lazy-loaded singletons) ─────────────────────────────
 
 _intelligence_engine = None
@@ -692,7 +703,8 @@ class ApolioAgent:
         # Build enriched context (async — loads PostgreSQL history + intelligence)
         context = await self._build_context(session)
 
-        system = _SYSTEM_PROMPT_TEMPLATE.format(
+        system = _safe_format(
+            _SYSTEM_PROMPT_TEMPLATE,
             today=today,
             user_name=session.user_name,
             role=session.role,
