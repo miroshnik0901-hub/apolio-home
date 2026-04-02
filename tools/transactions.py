@@ -163,8 +163,11 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
     envelopes = sheets.get_envelopes()
     for e in envelopes:
         if e.get("ID") == envelope_id:
-            sheets.soft_delete_transaction(e["file_id"], tx_id)
-            return {"status": "ok", "message": f"✓ Deleted ({tx_id})"}
+            deleted = sheets.hard_delete_transaction(e["file_id"], tx_id)
+            if deleted:
+                return {"status": "ok", "message": f"✓ Строка удалена физически ({tx_id})"}
+            else:
+                return {"error": f"Транзакция {tx_id} не найдена."}
 
     return {"error": "Envelope not found."}
 

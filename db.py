@@ -218,6 +218,64 @@ def format_context_for_prompt(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def get_recent_messages_for_api(user_id: int,
+                                       n_turns: int = 6) -> list[dict]:
+    """
+    Load the last n_turns conversation turns (each turn = user msg + bot response)
+    and return them as a properly alternating messages list ready for the Claude API.
+
+    Rules:
+      - Alternates user / assistant roles strictly
+      - Consecutive same-role rows are merged with newlines
+      - Always ends with an assistant turn (the most recent bot response)
+        so the caller can append the new user message
+      - Returns [] if DB is unavailable or history is empty
+    """
+    rows = await get_recent_context(user_id, n=n_turns)
+    if not rows:
+        return []
+
+    messages: list[dict] = []
+    last_role: str | None = None
+    last_text: list[str] = []
+
+    def _flush():
+        if last_role and last_text:
+            combined = "\n".join(last_text).strip()
+            if combined:
+                messages.append({"role": last_role, "content": combined})
+
+    for row in rows:
+        direction = row.get("direction", "")
+        role = "user" if direction == "user" else "assistant"
+        text = (row.get("raw_text") or row.get("result_short") or "").strip()
+        if not text:
+            continue
+
+        if role == last_role:
+            last_text.append(text)
+        else:
+            _flush()
+            last_role = role
+            last_text = [text]
+
+    _flush()
+
+    # Claude API requires messages to start with "user" — drop leading assistant turns
+    while messages and messages[0]["role"] == "assistant":
+        messages.pop(0)
+
+    # Ensure clean alternation (defensive merge after pop)
+    merged: list[dict] = []
+    for msg in messages:
+        if merged and merged[-1]["role"] == msg["role"]:
+            merged[-1]["content"] += "\n" + msg["content"]
+        else:
+            merged.append(msg)
+
+    return merged
+
+
 async def search_conversation_history(user_id: int,
                                        keyword: str = "",
                                        limit: int = 20,

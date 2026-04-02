@@ -564,7 +564,22 @@ class ApolioAgent:
         else:
             user_content = message
 
-        messages = [{"role": "user", "content": user_content}]
+        # Build multi-turn messages: prepend recent conversation history so Claude
+        # has genuine context of prior exchanges (not just text in system prompt).
+        import db as _db
+        try:
+            history_messages = await _db.get_recent_messages_for_api(
+                session.user_id, n_turns=6
+            ) if _db.is_ready() else []
+        except Exception:
+            history_messages = []
+
+        # Trim history: remove last turn if it is the same as current user message
+        # (avoids duplicating the message that is about to be sent).
+        if history_messages and history_messages[-1]["role"] == "user":
+            history_messages.pop()
+
+        messages = history_messages + [{"role": "user", "content": user_content}]
 
         # Agentic loop
         max_iterations = 5

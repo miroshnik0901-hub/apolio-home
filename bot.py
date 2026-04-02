@@ -69,7 +69,8 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
         📝 Записи   |  ➕ Добавить
         📁 Конверты |  ⚙️ Настройки
 
-    NOT persistent — hidden by default, user opens via keyboard toggle icon.
+    is_persistent=True so the keyboard toggle button stays in the input bar
+    and the keyboard is never hidden between sessions.
     """
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -78,14 +79,20 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
             [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
         ],
         resize_keyboard=True,
-        is_persistent=False,
+        is_persistent=True,   # keeps the keyboard toggle visible at all times
     )
 
 
-def _with_menu_btn(*extra_rows) -> InlineKeyboardMarkup:
-    """Build inline keyboard: extra rows + [☰ Меню] at the bottom."""
+def _menu_label(lang: str = "ru") -> str:
+    """Translated label for the ☰ Menu inline button."""
+    labels = {"ru": "☰ Меню", "uk": "☰ Меню", "en": "☰ Menu", "it": "☰ Menu"}
+    return labels.get(lang, "☰ Меню")
+
+
+def _with_menu_btn(*extra_rows, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Build inline keyboard: extra rows + translated [☰ Меню] at the bottom."""
     rows = [list(r) for r in extra_rows]
-    rows.append([InlineKeyboardButton("☰ Меню", callback_data="nav:__menu__")])
+    rows.append([InlineKeyboardButton(_menu_label(lang), callback_data="nav:__menu__")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -553,7 +560,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
     if ntype == "free_text":
         await update.message.reply_text(
             i18n.t("", lang, i18n.ADD_PROMPT),
-            reply_markup=_with_menu_btn(),
+            reply_markup=_with_menu_btn(lang=lang),
         )
         return True
 
@@ -605,23 +612,22 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = session.user_name or "Mikhail"
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
 
-    # Welcome keyboard: 1-per-row for full-width labels
-    welcome_kb = InlineKeyboardMarkup([
+    # Show welcome with persistent reply keyboard (stays in input bar)
+    # Inline quick-access buttons below the text
+    welcome_inline = InlineKeyboardMarkup([
         [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status")],
         [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
-        [InlineKeyboardButton("☰ " + i18n.t_menu("menu_title", lang).rstrip(":"),
-                             callback_data="nav:__menu__")],
+        [InlineKeyboardButton(_menu_label(lang), callback_data="nav:__menu__")],
     ])
 
-    # Remove any old persistent reply keyboard + show inline navigation
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=_build_main_keyboard(lang),  # attach persistent reply keyboard
     )
     await update.message.reply_text(
         "👇",
-        reply_markup=welcome_kb,
+        reply_markup=welcome_inline,
     )
 
 
@@ -631,12 +637,13 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not tg_user:
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
+    lang = getattr(session, "lang", "ru")
     mc.invalidate()
     admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
     mc.get_menu(sheets._gc, admin_id)  # pre-warm cache from sheet
     await update.message.reply_text(
-        i18n.ts("menu_refreshed", getattr(session, "lang", "ru")),
-        reply_markup=_with_menu_btn(),
+        i18n.ts("menu_refreshed", lang),
+        reply_markup=_with_menu_btn(lang=lang),
     )
 
 
@@ -814,9 +821,10 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     html = await _build_week_html(session)
-    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=_with_menu_btn())
+    await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=_with_menu_btn(lang=lang))
 
 
 # ── /month ─────────────────────────────────────────────────────────────────────
@@ -856,6 +864,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
 
+    lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
@@ -869,7 +878,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         txs = result.get("transactions", [])
         if not txs:
             await update.message.reply_text(
-                i18n.ts("no_transactions", getattr(session, "lang", "ru"))
+                i18n.ts("no_transactions", lang)
             )
             return
 
@@ -912,7 +921,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"🗑 {cat} · {amt} EUR · {date}", callback_data=f"cb_del_{tx_id}"
             )])
 
-        markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
+        markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
         await update.message.reply_text(
             "\n".join(lines),
             parse_mode=ParseMode.HTML,
@@ -967,10 +976,11 @@ async def cmd_undo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── /help ──────────────────────────────────────────────────────────────────────
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tg_user, _ = _require_user(update)
+    tg_user, session = _require_user(update)
     if not tg_user:
         await update.message.reply_text(i18n.ts("access_denied", "ru"))
         return
+    lang = getattr(session, "lang", "ru")
 
     await update.message.reply_text(
         "📖 <b>Apolio Home — Справка</b>\n\n"
@@ -1000,7 +1010,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/week · /month · /envelopes · /undo\n\n"
         "<i>Голос и фото чеков тоже работают 🎤📸</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=_with_menu_btn(),
+        reply_markup=_with_menu_btn(lang=lang),
     )
 
 
@@ -1055,7 +1065,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             n_word = "строка" if count == 1 else "строки" if count in (2, 3, 4) else "строк"
             await query.edit_message_text(
                 f"✓ Удалено {count} {n_word} ({pd['start_row']}–{pd['end_row']})",
-                reply_markup=_with_menu_btn(),
+                reply_markup=_with_menu_btn(lang=lang),
             )
         except Exception as e:
             await query.edit_message_text(f"❌ Ошибка удаления: {e}")
@@ -1065,7 +1075,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer("Отменено")
         session.pending_delete = None
         try:
-            await query.edit_message_text("Удаление отменено.", reply_markup=_with_menu_btn())
+            await query.edit_message_text("Удаление отменено.", reply_markup=_with_menu_btn(lang=lang))
         except Exception:
             pass
         return
@@ -1120,7 +1130,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         ctx_mgr.set(query.from_user.id, "language", target_lang)
                     except Exception as e:
                         logger.debug(f"Could not save language to UserContext: {e}")
-                    # Show confirmation and rebuild settings menu in new language
+                    # Rebuild inline menu in new language
                     await query.answer(i18n.ts("lang_changed", target_lang), show_alert=False)
                     tree = mc.get_menu()
                     kb = _build_inline_menu("settings", tree, role, session.lang)
@@ -1128,6 +1138,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         await query.edit_message_reply_markup(reply_markup=kb)
                     except BadRequest:
                         pass
+                    # Re-send the reply keyboard in the new language so buttons translate
+                    try:
+                        await query.message.reply_text(
+                            i18n.ts("lang_changed", target_lang),
+                            reply_markup=_build_main_keyboard(target_lang),
+                        )
+                    except Exception as e:
+                        logger.debug(f"Could not refresh reply keyboard: {e}")
                     return
                 else:
                     await query.answer(f"Unsupported language: {target_lang}", show_alert=True)
@@ -1147,7 +1165,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             elif command == "week":
                 html = await _build_week_html(session)
-                kb = _with_menu_btn()
+                kb = _with_menu_btn(lang=lang)
             elif command == "transactions":
                 limit_n = params.get("limit", 10)
                 try:
@@ -1172,7 +1190,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"transactions handler: {e}", exc_info=True)
                     html = f"❌ Ошибка: {e}"
-                kb = _with_menu_btn()
+                kb = _with_menu_btn(lang=lang)
             elif command == "envelopes":
                 try:
                     envelopes = sheets.list_envelopes_with_links()
@@ -1189,7 +1207,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         html = "📁 Нет конвертов."
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
-                kb = _with_menu_btn()
+                kb = _with_menu_btn(lang=lang)
             elif command == "refresh":
                 admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
                 mc.reset_to_defaults(sheets._gc, admin_id)
@@ -1225,7 +1243,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         html = "❌ Неизвестное действие."
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
-                kb = _with_menu_btn()
+                kb = _with_menu_btn(lang=lang)
             else:
                 await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
                 return
@@ -1305,7 +1323,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             result = await tool_find_transactions({"limit": 8}, session, sheets, auth)
             txs = result.get("transactions", [])
             if not txs:
-                await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn())
+                await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn(lang=lang))
                 return
             lines = ["📝 <b>Последние записи:</b>\n"]
             for tx in reversed(txs):
@@ -1329,14 +1347,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 del_rows.append([InlineKeyboardButton(
                     f"🗑 {cat} · {amt} EUR", callback_data=f"cb_del_{tx_id}"
                 )])
-            markup = _with_menu_btn(*del_rows) if del_rows else _with_menu_btn()
+            markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
             await query.message.reply_text(
                 "\n".join(lines),
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
             )
         except Exception as e:
-            await query.message.reply_text(f"❌ {e}", reply_markup=_with_menu_btn())
+            await query.message.reply_text(f"❌ {e}", reply_markup=_with_menu_btn(lang=lang))
 
     # ── cb_help ────────────────────────────────────────────────────────────
     elif data == "cb_help":
@@ -1378,11 +1396,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         tx_id = data[15:]
         try:
             envelopes = sheets.get_envelopes()
+            deleted = False
             for e in envelopes:
                 if e.get("ID") == session.current_envelope_id:
-                    sheets.soft_delete_transaction(e["file_id"], tx_id)
+                    deleted = sheets.hard_delete_transaction(e["file_id"], tx_id)
                     break
-            await query.edit_message_text(f"🗑 Удалено (<code>{tx_id}</code>)", parse_mode=ParseMode.HTML)
+            if deleted:
+                await query.edit_message_text(
+                    f"🗑 Запись удалена из таблицы (<code>{tx_id}</code>)",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await query.edit_message_text(
+                    f"⚠️ Запись не найдена в таблице: <code>{tx_id}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
             session.last_action = None
         except Exception as ex:
             await query.edit_message_text(f"❌ Ошибка: {ex}")
@@ -1465,14 +1493,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     # Pass to agent — it understands "февраль", "march", etc.
                     response = await agent.run(f"покажи отчёт за {text}", session)
-                    await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                    await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
                 return
 
             elif pending == "transactions:search":
                 response = await agent.run(
                     f"найди записи по запросу: {text}", session
                 )
-                await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+                await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
                 return
 
             elif pending == "transactions:category":
@@ -1507,7 +1535,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         lines.append(f"• {date}  {amt} {curr}{who_part}{note_part}")
                     await update.message.reply_text(
                         "\n".join(lines), parse_mode=ParseMode.HTML,
-                        reply_markup=_with_menu_btn(),
+                        reply_markup=_with_menu_btn(lang=lang),
                     )
                 except Exception as e:
                     logger.error(f"transactions:category failed: {e}", exc_info=True)
@@ -1549,7 +1577,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 i18n.t("", lang, i18n.GREETING_MSG),
                 parse_mode=ParseMode.HTML,
-                reply_markup=_with_menu_btn(),
+                reply_markup=_with_menu_btn(lang=lang),
             )
             return
 
@@ -1668,7 +1696,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         await _safe_reply(update.message, response, reply_markup=kb)
     else:
-        await _safe_reply(update.message, response, reply_markup=_with_menu_btn())
+        await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
 
 
 # ── Weekly summary job ─────────────────────────────────────────────────────────

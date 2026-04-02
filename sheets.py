@@ -228,7 +228,37 @@ class EnvelopeSheets:
         return False
 
     def delete_transaction(self, tx_id: str) -> bool:
+        """Soft-delete: set Deleted=TRUE (kept for backward compat, prefer hard_delete_by_tx_id)."""
         return self.edit_transaction(tx_id, "Deleted", "TRUE")
+
+    def hard_delete_by_tx_id(self, tx_id: str) -> bool:
+        """
+        Physically remove the row matching tx_id from the Transactions sheet.
+        Returns True if a row was deleted, False if tx_id not found.
+        """
+        ws = self._ws("Transactions")
+        all_values = ws.get_all_values()
+        if not all_values:
+            return False
+        headers = all_values[0]
+        try:
+            id_col = headers.index("ID")
+        except ValueError:
+            return False
+
+        # Find the physical row number (1-based; row 1 = header)
+        target_row = None
+        for i, row in enumerate(all_values[1:], start=2):
+            padded = row + [""] * max(0, len(headers) - len(row))
+            if padded[id_col] == tx_id:
+                target_row = i
+                break
+
+        if target_row is None:
+            return False
+
+        ws.delete_rows(target_row)
+        return True
 
     def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:
         """Return raw cell values for rows start_row..end_row (1-based) from Transactions."""
@@ -658,7 +688,13 @@ class SheetsClient:
         return self._env_sheets(sheet_id).edit_transaction(tx_id, field, value)
 
     def soft_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
+        """Soft-delete: sets Deleted=TRUE flag. Kept for backward compat."""
         return self._env_sheets(sheet_id).delete_transaction(tx_id)
+
+    def hard_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
+        """Physically remove the row for tx_id from the Transactions sheet."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).hard_delete_by_tx_id(tx_id)
 
     def delete_transaction_rows(self, sheet_id: str, start_row: int, end_row: int) -> int:
         """Physically delete rows start_row..end_row from Transactions sheet.
