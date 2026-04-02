@@ -214,21 +214,6 @@ Use tools proactively — don't ask permission:
 
 ---
 
-## FINANCIAL CONTEXT
-
-Household monthly budget structure:
-- €2,500/month base allocation to shared household expenses:
-  - Rent: €1,000
-  - Utilities: €300
-  - Sola school: €600
-  - Food / fuel: €600
-- Any amount ABOVE €2,500 in shared expenses: split 50/50 with Marina
-- Mini Cooper lease: €650/month (separate, Mikhail only — not part of shared pool)
-
-Use this when answering questions about budget distribution, who owes what, or when analysing splits.
-
----
-
 ## SESSION CONTEXT
 
 Today: {today}
@@ -238,6 +223,8 @@ Active envelope: {envelope_id}
 ---
 
 {intelligence_context}
+
+{contribution_context}
 
 {goals_context}
 
