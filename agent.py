@@ -53,6 +53,8 @@ TOOLS = [
                 "note":         {"type": "string"},
                 "force_new":    {"type": "boolean",
                                  "description": "Set true to bypass validation and allow new category/who/account values not yet in the reference lists."},
+                "force_add":    {"type": "boolean",
+                                 "description": "Set true to bypass duplicate detection and add the transaction even if a similar one exists on the same date."},
             },
         },
     },

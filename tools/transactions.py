@@ -40,10 +40,37 @@ def _fuzzy_suggest(value: str, known: list[str], max_results: int = 3) -> list[s
     return contains[:max_results] if contains else known[:max_results]
 
 
+def _normalize_who(who: str, known_who: list[str]) -> str | None:
+    """Auto-correct 'who' if a known user first name appears in the submitted value.
+
+    Handles cases like "Marina Maslo" → "Marina" when "Marina" is a known user.
+    Returns the normalized known name, or None if no clear match.
+    This prevents phantom users from being created when full names are submitted.
+    """
+    if not who or not known_who:
+        return None
+    who_l = who.lower().strip()
+    # Already an exact match — no normalization needed
+    for k in known_who:
+        if k.lower() == who_l:
+            return k
+    # Check if any individual word in the submitted value exactly matches a known user
+    who_words = who_l.split()
+    for k in known_who:
+        if k.lower() in who_words:
+            return k
+    return None
+
+
 def _validate_transaction_params(params: dict, ref: dict) -> dict:
     """Check category, who, account against reference data.
     Returns dict of unknown fields and suggestions, or empty dict if all OK.
-    Skip validation if force_new=True or if reference list is empty (not set up yet)."""
+    Skip validation if force_new=True or if reference list is empty (not set up yet).
+
+    Side effect: normalizes params['who'] in-place if a known user name is found
+    within the submitted value (e.g. "Marina Maslo" → "Marina"). This prevents
+    phantom users from appearing in contribution reports.
+    """
     if params.get("force_new"):
         return {}
 
@@ -66,11 +93,15 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
             unknown["subcategory"] = subcategory
             suggestions["subcategory"] = _fuzzy_suggest(subcategory, known_subs)
 
-    # Validate who
+    # Validate who — with auto-normalization for full names (T-034)
     who = params.get("who", "")
     known_who = ref.get("who", [])
     if who and known_who:
-        if not any(k.lower() == who.lower() for k in known_who):
+        normalized = _normalize_who(who, known_who)
+        if normalized and normalized.lower() != who.lower():
+            # Auto-correct silently: "Marina Maslo" → "Marina"
+            params["who"] = normalized
+        elif not any(k.lower() == who.lower() for k in known_who):
             unknown["who"] = who
             suggestions["who"] = _fuzzy_suggest(who, known_who)
 
@@ -126,6 +157,42 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     category = params.get("category", "")
     subcategory = params.get("subcategory", "")
     who = params.get("who", session.user_name)
+
+    # ── Duplicate detection (T-030) ──────────────────────────────────────
+    # get_transactions already filters out deleted rows
+    if not params.get("force_add"):
+        try:
+            existing = sheets.get_transactions(
+                envelope["file_id"],
+                {"date_from": date, "date_to": date, "limit": 50},
+            )
+            try:
+                in_amount = float(amount)
+            except (ValueError, TypeError):
+                in_amount = 0.0
+            for ex in existing:
+                try:
+                    ex_amount = float(ex.get("Amount_Orig") or 0)
+                except (ValueError, TypeError):
+                    ex_amount = 0.0
+                ex_cat = str(ex.get("Category", "")).lower()
+                ex_who = str(ex.get("Who", "")).lower()
+                same_amount = abs(ex_amount - in_amount) < 0.01
+                same_cat = (ex_cat == category.lower()) if category else True
+                same_who = (ex_who == who.lower()) if who else True
+                if same_amount and same_cat and same_who:
+                    return {
+                        "status": "confirm_required",
+                        "type": "duplicate",
+                        "message": (
+                            f"Похожая запись уже есть за {date}: "
+                            f"{ex.get('Category', '')} · {ex_amount} {ex.get('Currency_Orig', currency)} · {ex.get('Who', '')}. "
+                            "Это дубликат? Если нет — вызови снова с force_add=true."
+                        ),
+                        "existing_tx_id": ex.get("ID", ""),
+                    }
+        except Exception:
+            pass  # duplicate check is best-effort; don't block the write
     account = params.get("account", "")
     tx_type = params.get("type", "expense")
     note = params.get("note", "")
