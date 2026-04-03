@@ -25,8 +25,7 @@ function onEdit(e) {
   if (col === COL.TASK && e.value) {
     const idCell = sheet.getRange(row, COL.ID);
     if (!idCell.getValue()) {
-      idCell.setValue(nextId(sheet));
-      idCell.setNumberFormat('"T-"000');
+      idCell.setValue(nextId(sheet));  // plain text "T-001" — consistent with Python bot
     }
     const dateCell = sheet.getRange(row, COL.DATE);
     if (!dateCell.getValue()) {
@@ -51,18 +50,29 @@ function onEdit(e) {
     } else if (val === 'OPEN' || val === 'IN PROCESS' || val === 'ON HOLD') {
       resolvedCell.clearContent();
     }
+    // DISCUSSION: leave Resolved At as-is (neither set nor clear)
   }
 }
 
-// ─── Get next sequential task ID (returns number, formatted as T-NNN by setNumberFormat) ─
+// ─── Get next sequential task ID as formatted string "T-NNN" ─────────────────
+// Works whether IDs were written by the Python bot ("T-001") or a previous
+// onEdit run (also "T-001").  Never stores IDs as bare numbers.
 function nextId(sheet) {
   const data = sheet.getDataRange().getValues();
   let max = 0;
   for (let i = 1; i < data.length; i++) {
-    const id = data[i][COL.ID - 1];
-    if (typeof id === 'number' && id > max) max = id;
+    const raw = data[i][COL.ID - 1];
+    let n = 0;
+    if (typeof raw === 'number') {
+      n = raw;                                    // legacy bare number
+    } else if (typeof raw === 'string') {
+      const m = raw.match(/\d+/);
+      if (m) n = parseInt(m[0], 10);             // "T-001" → 1
+    }
+    if (n > max) max = n;
   }
-  return max + 1;
+  const next = max + 1;
+  return 'T-' + String(next).padStart(3, '0');   // returns "T-002", "T-042", etc.
 }
 
 // ─── Sort task_log: active tasks first, then by Date desc ─────────────────────
@@ -81,27 +91,59 @@ function sortTaskLog() {
 }
 
 // ─── Sort by Status priority: OPEN > IN PROCESS > ON HOLD > BLOCKED > CLOSED ──
+// Uses a hidden helper column (last column + 1) to write a numeric priority,
+// sorts by that column via native Sheets sort (safe for dates/numbers),
+// then clears the helper column.
 function sortByStatus() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
   const lastRow = sheet.getLastRow();
   if (lastRow < 3) return;
 
-  // Map statuses to priority numbers for sorting
-  const statusOrder = { 'OPEN': 1, 'IN PROCESS': 2, 'ON HOLD': 3, 'BLOCKED': 4, 'CLOSED': 5 };
-  const dataRange = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn());
-  const data = dataRange.getValues();
+  const statusOrder = { 'OPEN': 1, 'IN PROCESS': 2, 'ON HOLD': 3, 'DISCUSSION': 4, 'BLOCKED': 5, 'CLOSED': 6 };
+  const helperCol = sheet.getLastColumn() + 1;
 
-  data.sort((a, b) => {
-    const sA = statusOrder[String(a[COL.STATUS - 1]).toUpperCase()] || 99;
-    const sB = statusOrder[String(b[COL.STATUS - 1]).toUpperCase()] || 99;
-    if (sA !== sB) return sA - sB;
-    // Secondary: Date descending
-    return new Date(b[COL.DATE - 1]) - new Date(a[COL.DATE - 1]);
-  });
+  // Write priority numbers into helper column
+  const statusVals = sheet.getRange(2, COL.STATUS, lastRow - 1, 1).getValues();
+  const priorities = statusVals.map(r => [statusOrder[String(r[0]).toUpperCase()] || 99]);
+  sheet.getRange(2, helperCol, lastRow - 1, 1).setValues(priorities);
 
-  dataRange.setValues(data);
-  SpreadsheetApp.getActiveSpreadsheet().toast('Sorted: OPEN → IN PROCESS → ON HOLD → BLOCKED → CLOSED');
+  // Sort by helper col asc, then by Date desc
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, helperCol);
+  dataRange.sort([
+    { column: helperCol, ascending: true },
+    { column: COL.DATE, ascending: false }
+  ]);
+
+  // Clear helper column
+  sheet.getRange(2, helperCol, lastRow - 1, 1).clearContent();
+
+  SpreadsheetApp.getActiveSpreadsheet().toast('Sorted: OPEN → IN PROCESS → ON HOLD → DISCUSSION → BLOCKED → CLOSED');
+}
+
+// ─── Archive CLOSED: push all CLOSED rows to the bottom ──────────────────────
+// Active tasks stay at top, CLOSED rows sink to bottom sorted by Date desc.
+// Uses helper column approach (safe for dates/numbers).
+function archiveClosed() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 3) return;
+
+  const helperCol = sheet.getLastColumn() + 1;
+  const statusVals = sheet.getRange(2, COL.STATUS, lastRow - 1, 1).getValues();
+  // 0 = active (stays on top), 1 = CLOSED (sinks to bottom)
+  const flags = statusVals.map(r => [String(r[0]).toUpperCase() === 'CLOSED' ? 1 : 0]);
+  sheet.getRange(2, helperCol, lastRow - 1, 1).setValues(flags);
+
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, helperCol);
+  dataRange.sort([
+    { column: helperCol, ascending: true },
+    { column: COL.DATE, ascending: false }
+  ]);
+
+  sheet.getRange(2, helperCol, lastRow - 1, 1).clearContent();
+  SpreadsheetApp.getActiveSpreadsheet().toast('CLOSED tasks moved to bottom');
 }
 
 // ─── Setup filter row (run once) ─────────────────────────────────────────────
@@ -119,9 +161,10 @@ function setupFilter() {
 // ─── Custom menu ──────────────────────────────────────────────────────────────
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('🤖 Apolio')
+    .createMenu('🏠 Apolio')
     .addItem('Sort by Date (newest first)', 'sortTaskLog')
     .addItem('Sort by Status priority', 'sortByStatus')
+    .addItem('Archive CLOSED → move to bottom', 'archiveClosed')
     .addSeparator()
     .addItem('Setup filter row', 'setupFilter')
     .addToUi();

@@ -948,6 +948,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = session.user_name or "Mikhail"
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
 
+    # Send Apolio logo as the visual greeting
+    _logo_path = os.path.join(os.path.dirname(__file__), "apolio_home_logo", "ah_mark_transparent_512.png")
+    try:
+        with open(_logo_path, "rb") as _logo_f:
+            await update.message.reply_photo(photo=_logo_f)
+    except Exception as _e:
+        logger.warning(f"cmd_start: could not send logo: {_e}")
+
     # Show welcome with persistent reply keyboard (stays in input bar)
     # Inline quick-access buttons below the text
     welcome_inline = InlineKeyboardMarkup([

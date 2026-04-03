@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100" width="800" height="200">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFC430"/>
+      <stop offset="100%" stop-color="#D2760E"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="100" fill="#FCFAF8"/>
+  <circle cx="50" cy="50" r="46" fill="none" stroke="url(#g)" stroke-width="3"/>
+  <path d="M50 19 L27 79 L35 79 L40 64 L60 64 L65 79 L73 79 Z M43.5 56 L50 32 L56.5 56 Z"
+        fill="url(#g)" fill-rule="evenodd"/>
+  <text x="118" y="53" font-family="Outfit,DM Sans,Arial Black,sans-serif"
+        font-weight="800" font-size="32" fill="#1C1917" letter-spacing="3">APOLIO <tspan fill="#D2760E">HOME</tspan></text>
+  <text x="120" y="71" font-family="Work Sans,DM Sans,Arial,sans-serif"
+        font-weight="500" font-size="8.5" fill="#A8A29E" letter-spacing="5.5">AI FAMILY ASSISTANT</text>
+</svg>

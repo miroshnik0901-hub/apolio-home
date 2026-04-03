@@ -161,7 +161,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
 
 START_MSG: dict[str, str] = {
     "ru": (
-        "👋 Привет, {name}!\n\n"
+        "Привет, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ИИ-помощник для семейного бюджета.\n\n"
         "Просто напишите что потратили:\n"
         "• <i>«кофе 3.50»</i> — запишу расход\n"
@@ -170,7 +170,7 @@ START_MSG: dict[str, str] = {
         "Используйте кнопки внизу для навигации 👇"
     ),
     "uk": (
-        "👋 Привіт, {name}!\n\n"
+        "Привіт, {name}!\n\n"
         "Я <b>Apolio Home</b> — ваш ШІ-помічник для сімейного бюджету.\n\n"
         "Просто напишіть що витратили:\n"
         "• <i>«кава 3.50»</i> — запишу витрату\n"
@@ -179,7 +179,7 @@ START_MSG: dict[str, str] = {
         "Використовуйте кнопки внизу для навігації 👇"
     ),
     "en": (
-        "👋 Hi, {name}!\n\n"
+        "Hi, {name}!\n\n"
         "I'm <b>Apolio Home</b> — your AI assistant for family budgeting.\n\n"
         "Just write what you spent:\n"
         "• <i>«coffee 3.50»</i> — I'll log the expense\n"
@@ -188,7 +188,7 @@ START_MSG: dict[str, str] = {
         "Use the buttons below to navigate 👇"
     ),
     "it": (
-        "👋 Ciao, {name}!\n\n"
+        "Ciao, {name}!\n\n"
         "Sono <b>Apolio Home</b> — il tuo assistente IA per il budget familiare.\n\n"
         "Scrivi semplicemente cosa hai speso:\n"
         "• <i>«caffè 3.50»</i> — registrerò la spesa\n"

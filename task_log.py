@@ -3,13 +3,30 @@ task_log.py — Apolio Home Task Log manager
 
 Sheet: Apolio Home — Task Log (ID: 1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4)
 Tab:   task_log
-Cols:  ID | Date | Task | Status | AI Comment | Branch | Resolved At | Topic
+Cols:  ID | Date | Task | Status | AI Comment | Branch | Resolved At | Topic | Deploy | Confirm
+
+Deploy values (col I, set by Claude):
+    N/A      — task doesn't require a deploy
+    READY    — code ready, waiting for Mikhail's GO
+    DEPLOYED — pushed to main, Railway deployed
+    FAILED   — deploy attempted but failed
+
+Confirm values (col J, set by Mikhail):
+    GO       — approved to push
+    HOLD     — wait, don't deploy yet
+    (empty)  — not yet reviewed
+
+Reopen-after-deploy rule:
+    If a task is reopened (Status → OPEN) after a deploy, Claude must:
+    1. Clear Confirm (J → empty) — previous GO is no longer valid
+    2. Reset Deploy (I → READY) after the fix is done
+    Mikhail then sets GO again to authorize the new push.
 
 Usage:
     from task_log import TaskLog
-    tl = TaskLog(sheets_client)   # pass existing SheetsClient or None to init standalone
-    tl.add_task("Fix onboarding flow", topic="Interface")
-    tl.update_task(3, status="CLOSED", comment="Fixed in commit abc123", branch="fix/onboarding")
+    tl = TaskLog()
+    tl.add_task("Fix onboarding flow", topic="Interface", deploy="N/A")
+    tl.update_task("T-007", status="CLOSED", comment="Fixed", deploy="DEPLOYED")
     open_tasks = tl.get_open_tasks()
 """
 
@@ -39,17 +56,29 @@ COL_COMMENT = 5
 COL_BRANCH = 6
 COL_RESOLVED = 7
 COL_TOPIC = 8
-TOTAL_COLS = 8
+COL_DEPLOY = 9
+COL_CONFIRM = 10
+TOTAL_COLS = 10
 
-HEADER = ["ID", "Date", "Task", "Status", "AI Comment", "Branch", "Resolved At", "Topic"]
+HEADER = ["ID", "Date", "Task", "Status", "AI Comment", "Branch", "Resolved At", "Topic", "Deploy", "Confirm"]
+
+DEPLOY_NA = "N/A"
+DEPLOY_READY = "READY"
+DEPLOY_DEPLOYED = "DEPLOYED"
+DEPLOY_FAILED = "FAILED"
+VALID_DEPLOY = {DEPLOY_NA, DEPLOY_READY, DEPLOY_DEPLOYED, DEPLOY_FAILED}
+
+CONFIRM_GO = "GO"
+CONFIRM_HOLD = "HOLD"
 
 STATUS_OPEN = "OPEN"
 STATUS_IN_PROCESS = "IN PROCESS"
 STATUS_ON_HOLD = "ON HOLD"
+STATUS_DISCUSSION = "DISCUSSION"   # needs discussion between Claude and Mikhail before action
 STATUS_BLOCKED = "BLOCKED"
 STATUS_CLOSED = "CLOSED"
 
-VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_BLOCKED, STATUS_CLOSED}
+VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_DISCUSSION, STATUS_BLOCKED, STATUS_CLOSED}
 VALID_TOPICS = {"Interface", "Features", "Data", "Infrastructure", "AI", "Docs", "Admin"}
 
 
@@ -115,12 +144,15 @@ class TaskLog:
         topic: str = "",
         comment: str = "",
         branch: str = "",
+        deploy: str = "",
     ) -> str:
         """Add a new task row. Returns the assigned task ID string (e.g. 'T-007')."""
         if status not in VALID_STATUSES:
             raise ValueError(f"Invalid status '{status}'. Must be one of {VALID_STATUSES}")
         if topic and topic not in VALID_TOPICS:
             raise ValueError(f"Invalid topic '{topic}'. Must be one of {VALID_TOPICS}")
+        if deploy and deploy not in VALID_DEPLOY:
+            raise ValueError(f"Invalid deploy '{deploy}'. Must be one of {VALID_DEPLOY}")
 
         task_id = self._next_id()
         today = datetime.now().strftime("%Y-%m-%d")
@@ -134,6 +166,8 @@ class TaskLog:
         row[COL_BRANCH - 1] = branch
         row[COL_RESOLVED - 1] = ""
         row[COL_TOPIC - 1] = topic
+        row[COL_DEPLOY - 1] = deploy
+        row[COL_CONFIRM - 1] = ""
 
         self._ws.append_row(row, value_input_option="USER_ENTERED")
         return self._fmt_id(task_id)
@@ -146,13 +180,20 @@ class TaskLog:
         branch: Optional[str] = None,
         resolved_at: Optional[str] = None,
         topic: Optional[str] = None,
+        deploy: Optional[str] = None,
+        confirm: Optional[str] = None,
     ) -> bool:
-        """Update fields on an existing task. task_id can be 'T-007' or 7."""
+        """Update fields on an existing task. task_id can be 'T-007' or 7.
+
+        Reopen-after-deploy rule: when status is set back to OPEN and the task
+        previously had a DEPLOYED state, pass deploy='READY' and confirm='' to
+        reset the deploy cycle — the old GO is no longer valid.
+        """
         if isinstance(task_id, int):
             task_id = self._fmt_id(task_id)
 
         data = self._ws.get_all_values()
-        for i, row in enumerate(data[1:], start=2):  # row index 2 = first data row
+        for i, row in enumerate(data[1:], start=2):
             row_id = str(row[COL_ID - 1]).strip()
             if row_id.upper() == task_id.upper():
                 updates = {}
@@ -162,6 +203,7 @@ class TaskLog:
                         updates[COL_RESOLVED] = resolved_at or datetime.now().strftime("%Y-%m-%d")
                     elif status in {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD}:
                         updates[COL_RESOLVED] = ""
+                    # DISCUSSION: leave Resolved At unchanged
                 if comment is not None:
                     updates[COL_COMMENT] = comment
                 if branch is not None:
@@ -170,11 +212,15 @@ class TaskLog:
                     updates[COL_RESOLVED] = resolved_at
                 if topic is not None:
                     updates[COL_TOPIC] = topic
+                if deploy is not None:
+                    updates[COL_DEPLOY] = deploy
+                if confirm is not None:
+                    updates[COL_CONFIRM] = confirm  # pass "" to clear
 
                 for col, val in updates.items():
                     self._ws.update_cell(i, col, val)
                 return True
-        return False  # task_id not found
+        return False
 
     def close_task(self, task_id: str | int, comment: str = "", branch: str = "") -> bool:
         """Convenience: set status to CLOSED and fill Resolved At."""

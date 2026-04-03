@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.5 | Updated: 2026-04-03
+# Version: 1.4 | Updated: 2026-04-03
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -42,7 +42,6 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 | Admin sheet | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
 | Test Budget file_id | `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788` |
 | Test Admin sheet | `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` |
-| Task Log sheet | `1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4` |
 | Mikhail Telegram ID | `360466156` |
 | Railway project ID | `55240cdd-2cbc-4451-b6c9-ca97ce595c18` |
 | Railway service ID (bot) | `8ec97839-6d49-4cdd-a012-1f6d54853454` |
@@ -81,10 +80,6 @@ tools/
   receipt_store.py  — ReceiptStore (initialized in bot.py, save_receipt tool in agent.py)
   fx.py             — exchange rates (DO NOT TOUCH)
   config_tools.py   — bot config (DO NOT TOUCH)
-
-task_log.py         — TaskLog class: add_task(), update_task(), close_task(), get_open_tasks(), summary()
-apps_script/
-  task_log_automation.js — Google Apps Script for onEdit auto-ID/date/status + sort menu (install manually)
 ```
 
 **Files NOT to touch without explicit instruction:**
@@ -266,6 +261,7 @@ Columns A–G are user-editable. H–P are automatic.
 ```
 A: ID          B: Date        C: Task         D: Status
 E: AI Comment  F: Branch      G: Resolved At  H: Topic
+I: Deploy      J: Confirm
 ```
 
 ### Status values
@@ -297,9 +293,41 @@ Auto-numbering is handled by `task_log.py` → `_next_id()` on every `add_task()
 
 ### Claude's behavior when checking Task Log
 - Read all rows where Status = `OPEN` or `IN PROCESS`
-- For each: write a comment in `AI Comment` (what was done / what I think / blockers)
+- Read the full Task text (C) — Mikhail may have added notes or context after reopening
+- Read existing AI Comment (E) to understand prior history
+- Add a new dated line **at the top** of E: `[YYYY-MM-DD] что сделано / статус / блокер`
 - Set Status to `IN PROCESS` while working, `CLOSED` when complete
 - Fill `Branch` if code was pushed, `Resolved At` is auto-set when status → CLOSED/BLOCKED
+
+### Reopen workflow
+Mikhail can reopen any closed task: change Status → OPEN, add notes in the Task body (C).
+Claude reads the full updated C + history in E, then appends a new dated line to E and continues.
+
+### Mandatory fields — always fill when adding or closing a task
+| Field | Rule |
+|-------|------|
+| **Topic** (H) | Always set — pick from: `Interface` `Features` `Data` `Infrastructure` `AI` `Docs` `Admin` |
+| **AI Comment** (E) | Always write a short dated comment: `[YYYY-MM-DD] what was done`. New entries at top. |
+| **Branch** (F) | Fill if code was committed/pushed |
+| **Deploy** (I) | Always set — `N/A` if no deploy needed, `READY` when code is done and waiting for GO |
+
+### Deploy workflow
+| Step | Who | Action |
+|------|-----|--------|
+| 1 | Claude | Finishes code → sets Deploy (I) = `READY` |
+| 2 | Mikhail | Reviews → sets Confirm (J) = `GO` (or `HOLD` to pause) |
+| 3 | Claude | Sees GO → pushes to main → sets Deploy = `DEPLOYED` |
+| 4 | Claude | Writes dated entry in AI Comment (E): `[date] deployed, branch=...` |
+
+**Deploy values (I):** `N/A` · `READY` · `DEPLOYED` · `FAILED`
+**Confirm values (J):** `GO` · `HOLD` · *(empty = not yet reviewed)*
+
+### Reopen-after-deploy rule
+If Mikhail reopens a task (Status → OPEN) after a deploy — bug found or fix needed:
+1. Claude reads full Task body (C) + AI Comment history (E)
+2. Claude fixes the issue
+3. Claude resets: **Deploy (I) → `READY`**, **Confirm (J) → empty** — previous GO is void
+4. Mikhail sets GO again → Claude pushes again, updates Deploy = `DEPLOYED`
 
 ### Apps Script (one-time manual setup for sheet UI)
 For users manually editing the sheet (not the bot), there is an Apps Script that:
@@ -320,7 +348,7 @@ For users manually editing the sheet (not the bot), there is an Apps Script that
 
 ---
 
-## 10. WORKING RULES
+## 9. WORKING RULES
 
 ### Before any change
 1. Read ALL files the change touches (not just the obvious ones)
@@ -354,7 +382,7 @@ All testing is done by the AI without asking the user:
 
 ---
 
-## 11. LANGUAGE LOGIC (3 tiers)
+## 10. LANGUAGE LOGIC (3 tiers)
 
 ```
 1. UserContext sheet (saved preference) → highest priority
@@ -369,7 +397,7 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 
 ---
 
-## 12. GIT WORKFLOW + STAGING ENVIRONMENT
+## 11. GIT WORKFLOW + STAGING ENVIRONMENT
 
 ### Branches
 | Branch | Environment | Bot | Purpose |
@@ -417,7 +445,7 @@ git status
 
 ---
 
-## 13. HOW TO UPDATE THIS FILE
+## 12. HOW TO UPDATE THIS FILE
 
 Update after any of these events:
 - New tool added → section 6
