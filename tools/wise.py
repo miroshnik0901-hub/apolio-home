@@ -97,13 +97,27 @@ async def tool_import_wise_csv(params: dict, session: SessionContext,
             tx_id = uuid.uuid4().hex[:8]
             now = datetime.utcnow().isoformat()
 
+            # Column order matches Transactions sheet:
+            # A:Date B:Amount_Orig C:Currency_Orig D:Category E:Subcategory
+            # F:Note G:Who H:Amount_EUR I:Type J:Account
+            # K:ID L:Envelope M:Source N:Wise_ID O:Created_At P:Deleted
             row_data = [
-                tx_id, date, envelope_id,
-                amount, currency, "",
-                category, subcategory,
-                "Joint", "", tx_type,
-                description, "wise_csv", wise_id,
-                now, "FALSE",
+                date,           # A - Date
+                amount,         # B - Amount_Orig
+                currency,       # C - Currency_Orig
+                category,       # D - Category
+                subcategory,    # E - Subcategory
+                description,    # F - Note
+                "Joint",        # G - Who
+                "",             # H - Amount_EUR (blank; formula fills it)
+                tx_type,        # I - Type
+                "",             # J - Account
+                tx_id,          # K - ID
+                envelope_id,    # L - Envelope
+                "wise_csv",     # M - Source
+                wise_id,        # N - Wise_ID
+                now,            # O - Created_At
+                "FALSE",        # P - Deleted
             ]
 
             sheets.add_transaction(env["file_id"], row_data)

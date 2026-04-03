@@ -1,453 +1,695 @@
 """
-Apolio Home — PostgreSQL data layer
-Tables: conversation_log, sessions, agent_learning
+Apolio Home — PostgreSQL connection layer.
+Uses DATABASE_URL from Railway (or any PostgreSQL provider).
+Auto-creates tables on first connect.
+
+Tables:
+  conversation_log — full message history between bot and users
+  user_context     — key-value store for user goals, preferences, patterns
 """
-import asyncio
-import base64
-import json
-import logging
+
 import os
+import logging
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-import asyncpg
-
 logger = logging.getLogger(__name__)
+
+# ── Lazy import: asyncpg ──────────────────────────────────────────────────────
+# We import asyncpg lazily so the module can be imported even if asyncpg
+# is not installed (graceful degradation to Google Sheets fallback).
+
+_pool = None
+_initialized = False
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-_pool: Optional[asyncpg.Pool] = None
-
-# ── Schema ─────────────────────────────────────────────────────────────────────
+# ── Schema ────────────────────────────────────────────────────────────────────
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    id          BIGSERIAL PRIMARY KEY,
-    user_id     BIGINT NOT NULL,
-    session_id  VARCHAR(64) UNIQUE NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    last_seen   TIMESTAMPTZ DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS conversation_log (
-    id            BIGSERIAL PRIMARY KEY,
-    ts            TIMESTAMPTZ DEFAULT NOW(),
-    user_id       BIGINT NOT NULL,
-    session_id    VARCHAR(64) DEFAULT '',
-    direction     VARCHAR(8)  NOT NULL,   -- 'user' or 'bot'
-    message_type  VARCHAR(16) NOT NULL,   -- 'text', 'photo', 'voice', 'tool'
-    content       TEXT        DEFAULT '',
-    media_file_id TEXT        DEFAULT '',
-    metadata      JSONB       DEFAULT '{}'
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    direction       VARCHAR(10) NOT NULL,          -- 'user' | 'bot'
+    message_type    VARCHAR(20) DEFAULT 'text',    -- text | voice | photo | command | response
+    raw_text        TEXT DEFAULT '',
+    intent          VARCHAR(100) DEFAULT '',
+    entities_json   JSONB DEFAULT '{}',
+    tool_called     VARCHAR(100) DEFAULT '',
+    result_short    TEXT DEFAULT '',
+    session_id      VARCHAR(32) DEFAULT '',
+    envelope_id     VARCHAR(64) DEFAULT '',
+    media_file_id   TEXT DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS idx_conv_log_user_ts
+-- Migration: add media_file_id to existing deployments
+ALTER TABLE conversation_log ADD COLUMN IF NOT EXISTS media_file_id TEXT DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_convlog_user_ts
     ON conversation_log (user_id, ts DESC);
 
-CREATE TABLE IF NOT EXISTS agent_learning (
-    id            BIGSERIAL PRIMARY KEY,
-    ts            TIMESTAMPTZ DEFAULT NOW(),
-    user_id       BIGINT      NOT NULL,
-    envelope_id   VARCHAR(64) DEFAULT '',
-    event_type    VARCHAR(50) NOT NULL,
-    trigger_text  TEXT        DEFAULT '',
-    context_json  JSONB       DEFAULT '{}',
-    learned_json  JSONB       DEFAULT '{}',
-    confidence    FLOAT       DEFAULT 0.7,
-    times_seen    INT         DEFAULT 1,
-    last_seen_ts  TIMESTAMPTZ DEFAULT NOW()
+CREATE INDEX IF NOT EXISTS idx_convlog_session
+    ON conversation_log (session_id);
+
+
+CREATE TABLE IF NOT EXISTS user_context (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL,
+    key             VARCHAR(100) NOT NULL,
+    value           TEXT DEFAULT '',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_learning_user
-    ON agent_learning (user_id);
-CREATE INDEX IF NOT EXISTS idx_learning_event
-    ON agent_learning (event_type, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_uctx_user
+    ON user_context (user_id);
+
+
+-- Self-learning table: vocabulary, corrections, confirmations, patterns
+CREATE TABLE IF NOT EXISTS agent_learning (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    envelope_id     VARCHAR(64) DEFAULT '',
+    event_type      VARCHAR(50) NOT NULL,   -- vocabulary|correction|confirmation|pattern|new_value|ambiguity_resolved
+    trigger_text    TEXT DEFAULT '',        -- the word/phrase that triggered this entry
+    context_json    JSONB DEFAULT '{}',     -- original input and surrounding context
+    learned_json    JSONB DEFAULT '{}',     -- what was learned: {field, value, category, ...}
+    confidence      FLOAT DEFAULT 0.7,      -- 0.0–1.0
+    times_seen      INT DEFAULT 1,
+    last_seen_ts    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_user_type
+    ON agent_learning (user_id, event_type);
+
+CREATE INDEX IF NOT EXISTS idx_learning_trigger
+    ON agent_learning (user_id, trigger_text);
 """
 
-# ── Pool ───────────────────────────────────────────────────────────────────────
 
-async def get_pool() -> asyncpg.Pool:
-    global _pool
-    if _pool is None:
-        if not DATABASE_URL:
-            raise RuntimeError("DATABASE_URL env var not set")
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-        async with _pool.acquire() as conn:
-            await conn.execute(SCHEMA_SQL)
-        logger.info("PostgreSQL pool initialised")
-    return _pool
-
+# ── Connection pool ───────────────────────────────────────────────────────────
 
 async def init_db() -> bool:
-    """Initialise pool and schema. Returns False if DATABASE_URL not configured."""
+    """
+    Initialize the connection pool and create tables.
+    Returns True if PostgreSQL is available, False otherwise.
+    Call once at bot startup.
+    """
+    global _pool, _initialized
+
     if not DATABASE_URL:
-        logger.warning("DATABASE_URL not set — PostgreSQL features disabled")
+        logger.warning("[DB] DATABASE_URL not set — PostgreSQL disabled, falling back to Google Sheets")
         return False
+
     try:
-        await get_pool()
+        import asyncpg
+    except ImportError:
+        logger.warning("[DB] asyncpg not installed — PostgreSQL disabled")
+        return False
+
+    try:
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=15,
+        )
+        async with _pool.acquire() as conn:
+            await conn.execute(SCHEMA_SQL)
+        _initialized = True
+        logger.info("[DB] PostgreSQL connected, tables ready")
         return True
     except Exception as e:
-        logger.error(f"PostgreSQL init failed: {e}")
+        logger.error(f"[DB] PostgreSQL init failed: {e}")
+        _pool = None
         return False
 
-# ── Conversation log ───────────────────────────────────────────────────────────
+
+async def close_db():
+    """Close the connection pool. Call on shutdown."""
+    global _pool, _initialized
+    if _pool:
+        await _pool.close()
+        _pool = None
+        _initialized = False
+
+
+def is_ready() -> bool:
+    """Check if PostgreSQL is available."""
+    return _initialized and _pool is not None
+
+
+@asynccontextmanager
+async def acquire():
+    """Acquire a connection from the pool."""
+    if not _pool:
+        raise RuntimeError("Database pool not initialized")
+    async with _pool.acquire() as conn:
+        yield conn
+
+
+# ── ConversationLog operations ────────────────────────────────────────────────
 
 async def log_message(
+    *,
     user_id: int,
-    session_id: str,
-    direction: str,          # 'user' or 'bot'
-    message_type: str,       # 'text', 'photo', 'voice', 'tool'
-    content: str = "",
+    direction: str,
+    message_type: str = "text",
+    raw_text: str = "",
+    intent: str = "",
+    entities: dict = None,
+    tool_called: str = "",
+    result_short: str = "",
+    session_id: str = "",
+    envelope_id: str = "",
     media_file_id: str = "",
-    metadata: dict = None,
-) -> None:
-    """Append a message to conversation_log. Silently swallows all errors."""
+):
+    """Write a single conversation log entry."""
+    if not is_ready():
+        return
     try:
-        pool = await get_pool()
-        await pool.execute(
-            """
-            INSERT INTO conversation_log
-                (user_id, session_id, direction, message_type, content, media_file_id, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            """,
-            user_id,
-            session_id or "",
-            direction,
-            message_type,
-            content or "",
-            media_file_id or "",
-            json.dumps(metadata or {}),
-        )
+        import json as _json
+        async with acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO conversation_log
+                    (user_id, direction, message_type, raw_text, intent,
+                     entities_json, tool_called, result_short, session_id, envelope_id,
+                     media_file_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                """,
+                user_id, direction, message_type,
+                raw_text[:2000], intent,
+                _json.dumps(entities or {}, ensure_ascii=False),
+                tool_called, result_short[:500],
+                session_id, envelope_id,
+                media_file_id or "",
+            )
     except Exception as e:
-        logger.warning(f"log_message failed: {e}")
+        logger.error(f"[DB] log_message failed: {e}")
 
 
-async def get_recent_messages_for_api(
-    user_id: int,
-    limit: int = 20,
-    telegram_bot=None,
-) -> list:
+async def get_recent_context(user_id: int, n: int = 5) -> list[dict]:
     """
-    Returns recent conversation as Claude API messages[].
-    For photo messages with media_file_id, re-downloads from Telegram
-    and includes as base64 image block.
-    Skips tool messages.
+    Load the last N conversation exchanges for a user.
+    Returns list of dicts sorted by time ascending (oldest first).
     """
+    if not is_ready():
+        return []
     try:
-        pool = await get_pool()
-        rows = await pool.fetch(
-            """
-            SELECT direction, message_type, content, media_file_id
-            FROM conversation_log
-            WHERE user_id = $1
-              AND message_type != 'tool'
-              AND content != ''
-            ORDER BY ts DESC
-            LIMIT $2
-            """,
-            user_id, limit,
-        )
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT ts, direction, message_type, raw_text,
+                       tool_called, result_short, media_file_id
+                FROM conversation_log
+                WHERE user_id = $1
+                ORDER BY ts DESC
+                LIMIT $2
+                """,
+                user_id, n * 2,  # n turns ≈ 2n rows (user + bot)
+            )
+            result = []
+            for row in reversed(rows):  # oldest first
+                result.append({
+                    "ts": row["ts"].strftime("%Y-%m-%d %H:%M"),
+                    "direction": row["direction"],
+                    "message_type": row["message_type"],
+                    "raw_text": row["raw_text"],
+                    "tool_called": row["tool_called"],
+                    "result_short": row["result_short"],
+                    "media_file_id": row["media_file_id"] or "",
+                })
+            return result
     except Exception as e:
-        logger.warning(f"get_recent_messages_for_api failed: {e}")
+        logger.error(f"[DB] get_recent_context failed: {e}")
         return []
 
-    # Chronological order
-    rows = list(reversed(rows))
-    messages = []
+
+def format_context_for_prompt(rows: list[dict]) -> str:
+    """Format recent conversation rows as a compact text block for the system prompt."""
+    if not rows:
+        return ""
+    lines = ["RECENT CONVERSATION (last turns):"]
+    for row in rows:
+        direction = row.get("direction", "?")
+        text = row.get("raw_text", "")
+        result = row.get("result_short", "")
+        ts = row.get("ts", "")
+
+        if direction == "user" and text:
+            lines.append(f"[{ts}] User: {text}")
+        elif direction == "bot" and (result or text):
+            lines.append(f"[{ts}] Bot: {result or text}")
+    return "\n".join(lines)
+
+
+async def get_recent_messages_for_api(user_id: int,
+                                       n_turns: int = 6,
+                                       telegram_bot=None) -> list[dict]:
+    """
+    Load the last n_turns conversation turns and return a properly alternating
+    messages list ready for the Claude API.
+
+    If telegram_bot is provided, photo messages are re-downloaded from Telegram
+    and included as base64 images in the history — giving Claude visual memory
+    of previously sent screenshots without the user having to resend them.
+
+    Rules:
+      - Alternates user / assistant roles strictly
+      - Consecutive same-role rows are merged
+      - Starts with a user turn (drops leading assistant turns)
+      - Returns [] if DB is unavailable or history is empty
+    """
+    rows = await get_recent_context(user_id, n=n_turns)
+    if not rows:
+        return []
+
+    # Build a list of (role, content) where content can be str or list (multimodal)
+    pending_role: str | None = None
+    pending_parts: list = []   # list of text strings or image dicts
+    messages: list[dict] = []
+
+    def _flush():
+        if pending_role is None or not pending_parts:
+            return
+        # If all parts are strings, collapse to a single string
+        if all(isinstance(p, str) for p in pending_parts):
+            combined = "\n".join(p for p in pending_parts if p.strip())
+            if combined.strip():
+                messages.append({"role": pending_role, "content": combined})
+        else:
+            # Mixed content (text + images): use list form
+            content_blocks = []
+            for p in pending_parts:
+                if isinstance(p, str):
+                    if p.strip():
+                        content_blocks.append({"type": "text", "text": p})
+                else:
+                    content_blocks.append(p)
+            if content_blocks:
+                messages.append({"role": pending_role, "content": content_blocks})
 
     for row in rows:
-        role = "user" if row["direction"] == "user" else "assistant"
-        content_text = row["content"] or ""
+        direction = row.get("direction", "")
+        role = "user" if direction == "user" else "assistant"
+        text = (row.get("raw_text") or row.get("result_short") or "").strip()
+        file_id = row.get("media_file_id", "")
+        msg_type = row.get("message_type", "text")
 
-        if (
-            row["message_type"] == "photo"
-            and row["media_file_id"]
-            and telegram_bot is not None
-        ):
+        # Build the content for this row
+        row_parts: list = []
+
+        # For photo messages with a stored file_id, try to re-download the image
+        if msg_type == "photo" and file_id and telegram_bot is not None:
             try:
-                file_obj = await telegram_bot.get_file(row["media_file_id"])
-                photo_bytes = bytes(await file_obj.download_as_bytearray())
-                content = [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": base64.b64encode(photo_bytes).decode(),
-                        },
+                import base64 as _b64
+                tg_file = await telegram_bot.get_file(file_id)
+                img_bytes = await tg_file.download_as_bytearray()
+                row_parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": _b64.b64encode(bytes(img_bytes)).decode(),
                     },
-                    {"type": "text", "text": content_text or "Photo"},
-                ]
-            except Exception as e:
-                logger.warning(f"Photo re-download failed for {row['media_file_id']}: {e}")
-                content = f"[Photo] {content_text}"
+                })
+            except Exception:
+                pass  # if download fails, fall through to text-only
+            if text:
+                row_parts.append(text)
+        elif text:
+            row_parts.append(text)
+
+        if not row_parts:
+            continue
+
+        if role == pending_role:
+            pending_parts.extend(row_parts)
         else:
-            content = content_text
+            _flush()
+            pending_role = role
+            pending_parts = list(row_parts)
 
-        if content:
-            messages.append({"role": role, "content": content})
+    _flush()
 
-    # Claude API requires alternating roles — deduplicate consecutive same-role messages
-    merged: list = []
+    # Claude API requires messages to start with "user" — drop leading assistant turns
+    while messages and messages[0]["role"] == "assistant":
+        messages.pop(0)
+
+    # Defensive merge of consecutive same-role entries (after pop)
+    merged: list[dict] = []
     for msg in messages:
         if merged and merged[-1]["role"] == msg["role"]:
-            # Merge: append text content
             prev = merged[-1]["content"]
-            curr = msg["content"]
-            if isinstance(prev, str) and isinstance(curr, str):
-                merged[-1]["content"] = prev + "\n" + curr
-            # If multimodal — skip merging (keep first, drop duplicate)
+            cur = msg["content"]
+            # Both are strings
+            if isinstance(prev, str) and isinstance(cur, str):
+                merged[-1]["content"] = prev + "\n" + cur
+            # One or both are lists — convert both to lists and concatenate
+            else:
+                prev_list = prev if isinstance(prev, list) else [{"type": "text", "text": prev}]
+                cur_list = cur if isinstance(cur, list) else [{"type": "text", "text": cur}]
+                merged[-1]["content"] = prev_list + cur_list
         else:
             merged.append(msg)
 
     return merged
 
 
-# ── Self-learning ──────────────────────────────────────────────────────────────
+async def search_conversation_history(user_id: int,
+                                       keyword: str = "",
+                                       limit: int = 20,
+                                       offset: int = 0) -> list[dict]:
+    """
+    Search conversation history for a user.
+    - keyword: full-text search in raw_text (case-insensitive); empty = all
+    - limit/offset: pagination (max 50 per call)
+    Returns rows sorted oldest-first.
+    """
+    if not is_ready():
+        return []
+    limit = min(limit, 50)
+    try:
+        async with acquire() as conn:
+            if keyword.strip():
+                rows = await conn.fetch(
+                    """
+                    SELECT ts, direction, message_type, raw_text,
+                           tool_called, result_short
+                    FROM conversation_log
+                    WHERE user_id = $1
+                      AND raw_text ILIKE $2
+                    ORDER BY ts DESC
+                    LIMIT $3 OFFSET $4
+                    """,
+                    user_id, f"%{keyword}%", limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT ts, direction, message_type, raw_text,
+                           tool_called, result_short
+                    FROM conversation_log
+                    WHERE user_id = $1
+                    ORDER BY ts DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    user_id, limit, offset,
+                )
+            result = []
+            for row in reversed(rows):  # oldest first within the page
+                result.append({
+                    "ts": row["ts"].strftime("%Y-%m-%d %H:%M"),
+                    "direction": row["direction"],
+                    "message_type": row["message_type"],
+                    "raw_text": row["raw_text"],
+                    "tool_called": row["tool_called"],
+                    "result_short": row["result_short"],
+                })
+            return result
+    except Exception as e:
+        logger.error(f"[DB] search_conversation_history failed: {e}")
+        return []
+
+
+# ── UserContext operations ────────────────────────────────────────────────────
+
+async def ctx_get(user_id: int, key: str) -> Optional[str]:
+    """Get a single context value."""
+    if not is_ready():
+        return None
+    try:
+        async with acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT value FROM user_context WHERE user_id = $1 AND key = $2",
+                user_id, key,
+            )
+            return row["value"] if row else None
+    except Exception as e:
+        logger.error(f"[DB] ctx_get failed: {e}")
+        return None
+
+
+async def ctx_get_all(user_id: int) -> dict:
+    """Get all context key-value pairs for a user."""
+    if not is_ready():
+        return {}
+    try:
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT key, value FROM user_context WHERE user_id = $1",
+                user_id,
+            )
+            return {row["key"]: row["value"] for row in rows}
+    except Exception as e:
+        logger.error(f"[DB] ctx_get_all failed: {e}")
+        return {}
+
+
+async def ctx_set(user_id: int, key: str, value: str):
+    """Upsert a context value."""
+    if not is_ready():
+        return
+    try:
+        async with acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_context (user_id, key, value, updated_at)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (user_id, key)
+                DO UPDATE SET value = $3, updated_at = NOW()
+                """,
+                user_id, key, value,
+            )
+    except Exception as e:
+        logger.error(f"[DB] ctx_set failed: {e}")
+
+
+async def ctx_delete(user_id: int, key: str):
+    """Remove a context value."""
+    if not is_ready():
+        return
+    try:
+        async with acquire() as conn:
+            await conn.execute(
+                "DELETE FROM user_context WHERE user_id = $1 AND key = $2",
+                user_id, key,
+            )
+    except Exception as e:
+        logger.error(f"[DB] ctx_delete failed: {e}")
+
+
+# ── Agent Learning operations ─────────────────────────────────────────────────
 
 async def save_learning(
+    *,
     user_id: int,
-    envelope_id: str,
     event_type: str,
-    trigger_text: str,
-    learned_json: dict,
-    context_json: dict = None,
-) -> None:
+    trigger_text: str = "",
+    context: dict = None,
+    learned: dict = None,
+    confidence_delta: float = 0.0,
+    envelope_id: str = "",
+) -> bool:
     """
-    Upsert a learning entry.
-    If trigger exists for this user + event_type: update confidence (+0.1), increment times_seen.
-    Otherwise insert with confidence 0.7.
-    Confidence is capped at 0.98.
+    Upsert a learning event.
+    - For vocabulary: upsert by (user_id, event_type='vocabulary', trigger_text)
+      → increment times_seen, adjust confidence, update learned_json
+    - For other types: insert new row.
+    Returns True on success, False on failure.
     """
+    if not is_ready():
+        return False
     try:
-        pool = await get_pool()
-        existing = await pool.fetchrow(
-            """
-            SELECT id, confidence, times_seen
-            FROM agent_learning
-            WHERE user_id = $1 AND event_type = $2 AND trigger_text = $3
-            LIMIT 1
-            """,
-            user_id, event_type, trigger_text,
-        )
+        import json as _json
+        ctx_str = _json.dumps(context or {}, ensure_ascii=False)
+        learned_str = _json.dumps(learned or {}, ensure_ascii=False)
 
-        if existing:
-            new_conf = min(0.98, existing["confidence"] + 0.1)
-            await pool.execute(
-                """
-                UPDATE agent_learning
-                SET times_seen   = $1,
-                    confidence   = $2,
-                    learned_json = $3,
-                    last_seen_ts = NOW()
-                WHERE id = $4
-                """,
-                existing["times_seen"] + 1,
-                new_conf,
-                json.dumps(learned_json),
-                existing["id"],
-            )
-        else:
-            await pool.execute(
+        async with acquire() as conn:
+            if event_type in ("vocabulary", "pattern"):
+                # Upsert: update existing entry if same trigger exists
+                existing = await conn.fetchrow(
+                    """
+                    SELECT id, confidence, times_seen
+                    FROM agent_learning
+                    WHERE user_id = $1 AND event_type = $2 AND trigger_text = $3
+                    ORDER BY ts DESC LIMIT 1
+                    """,
+                    user_id, event_type, trigger_text.lower().strip(),
+                )
+                if existing:
+                    new_confidence = max(0.0, min(0.98, existing["confidence"] + confidence_delta))
+                    new_times = existing["times_seen"] + 1
+                    await conn.execute(
+                        """
+                        UPDATE agent_learning
+                        SET confidence = $1, times_seen = $2, last_seen_ts = NOW(),
+                            learned_json = $3, context_json = $4
+                        WHERE id = $5
+                        """,
+                        new_confidence, new_times, learned_str, ctx_str, existing["id"],
+                    )
+                    return True
+            # Insert new row for all other cases (or new vocabulary entry)
+            initial_confidence = max(0.0, min(0.98, 0.7 + confidence_delta))
+            await conn.execute(
                 """
                 INSERT INTO agent_learning
                     (user_id, envelope_id, event_type, trigger_text,
-                     context_json, learned_json, confidence)
-                VALUES ($1, $2, $3, $4, $5, $6, 0.7)
+                     context_json, learned_json, confidence, times_seen, last_seen_ts)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW())
+                """,
+                user_id, envelope_id, event_type, trigger_text.lower().strip(),
+                ctx_str, learned_str, initial_confidence,
+            )
+        return True
+    except Exception as e:
+        logger.error(f"[DB] save_learning failed: {e}")
+        return False
+
+
+async def get_vocabulary(user_id: int, min_confidence: float = 0.4) -> list[dict]:
+    """
+    Load vocabulary entries for a user with confidence >= min_confidence.
+    Returns list sorted by confidence desc.
+    """
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT trigger_text, learned_json, confidence, times_seen
+                FROM agent_learning
+                WHERE user_id = $1 AND event_type = 'vocabulary'
+                  AND confidence >= $2
+                ORDER BY confidence DESC, times_seen DESC
+                """,
+                user_id, min_confidence,
+            )
+            return [
+                {
+                    "trigger": row["trigger_text"],
+                    "learned": _json.loads(row["learned_json"]),
+                    "confidence": row["confidence"],
+                    "times_seen": row["times_seen"],
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logger.error(f"[DB] get_vocabulary failed: {e}")
+        return []
+
+
+async def get_patterns(user_id: int) -> list[dict]:
+    """Load recognized recurring patterns for a user."""
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT trigger_text, learned_json, confidence, times_seen, last_seen_ts
+                FROM agent_learning
+                WHERE user_id = $1 AND event_type = 'pattern'
+                ORDER BY times_seen DESC
                 """,
                 user_id,
-                envelope_id or "",
-                event_type,
-                trigger_text,
-                json.dumps(context_json or {}),
-                json.dumps(learned_json),
             )
-    except Exception as e:
-        logger.warning(f"save_learning failed: {e}")
-
-
-async def correct_learning(
-    user_id: int,
-    event_type: str,
-    trigger_text: str,
-) -> None:
-    """
-    Mark a learning entry as corrected: decrease confidence by 0.3.
-    If confidence drops below 0.2, entry is removed.
-    """
-    try:
-        pool = await get_pool()
-        existing = await pool.fetchrow(
-            """
-            SELECT id, confidence FROM agent_learning
-            WHERE user_id = $1 AND event_type = $2 AND trigger_text = $3
-            LIMIT 1
-            """,
-            user_id, event_type, trigger_text,
-        )
-        if not existing:
-            return
-        new_conf = existing["confidence"] - 0.3
-        if new_conf < 0.2:
-            await pool.execute(
-                "DELETE FROM agent_learning WHERE id = $1", existing["id"]
-            )
-        else:
-            await pool.execute(
-                "UPDATE agent_learning SET confidence = $1 WHERE id = $2",
-                new_conf, existing["id"],
-            )
-    except Exception as e:
-        logger.warning(f"correct_learning failed: {e}")
-
-
-async def get_learning_context_for_prompt(
-    user_id: int,
-    envelope_id: str = "",
-) -> str:
-    """
-    Build a compact text block of learned vocabulary and patterns for system prompt injection.
-    Only includes entries with confidence >= 0.6.
-    Returns "" if nothing learned yet or on error.
-    """
-    try:
-        pool = await get_pool()
-        rows = await pool.fetch(
-            """
-            SELECT event_type, trigger_text, learned_json, confidence
-            FROM agent_learning
-            WHERE user_id = $1 AND confidence >= 0.6
-            ORDER BY confidence DESC, times_seen DESC
-            LIMIT 60
-            """,
-            user_id,
-        )
-    except Exception as e:
-        logger.warning(f"get_learning_context_for_prompt failed: {e}")
-        return ""
-
-    if not rows:
-        return ""
-
-    vocab_lines: list[str] = []
-    pattern_lines: list[str] = []
-    category_lines: list[str] = []
-
-    for row in rows:
-        try:
-            learned = row["learned_json"]
-            if isinstance(learned, str):
-                learned = json.loads(learned)
-        except Exception:
-            learned = {}
-
-        if row["event_type"] in ("vocabulary", "correction"):
-            mapping = learned.get("mapping") or learned.get("category") or ""
-            if mapping:
-                vocab_lines.append(f'  "{row["trigger_text"]}" → {mapping}')
-
-        elif row["event_type"] == "new_category":
-            cat = learned.get("category", row["trigger_text"])
-            if cat:
-                category_lines.append(f"  • {cat}")
-
-        elif row["event_type"] == "pattern":
-            desc = learned.get("description", "")
-            if desc:
-                pattern_lines.append(f"  • {desc}")
-
-    parts: list[str] = []
-    if vocab_lines:
-        parts.append("LEARNED VOCABULARY:\n" + "\n".join(vocab_lines[:25]))
-    if category_lines:
-        parts.append("CUSTOM CATEGORIES:\n" + "\n".join(category_lines[:15]))
-    if pattern_lines:
-        parts.append("KNOWN PATTERNS:\n" + "\n".join(pattern_lines[:10]))
-
-    if not parts:
-        return ""
-
-    return "\n---\n## Agent Memory\n" + "\n\n".join(parts) + "\n---"
-
-
-# ── Pattern detection ──────────────────────────────────────────────────────────
-
-async def check_and_save_pattern(
-    user_id: int,
-    envelope_id: str,
-    category: str,
-    who: str,
-    amount: float,
-    sheets_client=None,
-) -> None:
-    """
-    After a transaction is added, check if there are 3+ similar transactions
-    in the last 60 days. If yes, save a pattern learning entry.
-    'Similar' = same category + who.
-    Runs silently — never raises.
-    """
-    if not category:
-        return
-    try:
-        pool = await get_pool()
-        # Count recent similar entries in conversation_log metadata
-        # We check agent_learning patterns to avoid counting duplicates
-        existing = await pool.fetchrow(
-            """
-            SELECT id FROM agent_learning
-            WHERE user_id = $1
-              AND event_type = 'pattern'
-              AND learned_json->>'category' = $2
-              AND learned_json->>'who' = $3
-            LIMIT 1
-            """,
-            user_id, category, who,
-        )
-        if existing:
-            # Already recorded this pattern — update confidence
-            await save_learning(
-                user_id, envelope_id, "pattern",
-                f"{category}/{who}",
-                {"category": category, "who": who,
-                 "description": f"{who} regularly buys {category}"},
-            )
-            return
-
-        # Need to count actual transactions — use sheets_client if provided
-        if sheets_client is None:
-            return
-
-        from datetime import timedelta
-        from_date = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")
-
-        envelopes = sheets_client.get_envelopes()
-        file_id = None
-        for e in envelopes:
-            if e.get("ID") == envelope_id:
-                file_id = e.get("file_id")
-                break
-        if not file_id:
-            return
-
-        env_sheets = sheets_client._envelope(file_id)
-        txs = env_sheets.get_transactions({"date_from": from_date})
-        matches = [
-            t for t in txs
-            if t.get("Category", "") == category
-            and t.get("Who", "") == who
-        ]
-
-        if len(matches) >= 3:
-            await save_learning(
-                user_id, envelope_id, "pattern",
-                f"{category}/{who}",
+            return [
                 {
-                    "category": category,
-                    "who": who,
-                    "description": f"{who} regularly spends on {category} ({len(matches)}x in 60 days)",
-                },
-            )
-            logger.info(f"Pattern saved: {who}/{category} ({len(matches)} times)")
-
+                    "trigger": row["trigger_text"],
+                    "pattern": _json.loads(row["learned_json"]),
+                    "confidence": row["confidence"],
+                    "times_seen": row["times_seen"],
+                    "last_seen": row["last_seen_ts"].strftime("%Y-%m-%d") if row["last_seen_ts"] else "",
+                }
+                for row in rows
+            ]
     except Exception as e:
-        logger.warning(f"check_and_save_pattern failed: {e}")
+        logger.error(f"[DB] get_patterns failed: {e}")
+        return []
+
+
+async def get_learning_context_for_prompt(user_id: int) -> str:
+    """
+    Return a compact text block of vocabulary and patterns for injection
+    into the system prompt. Only includes high-confidence entries.
+    """
+    vocab = await get_vocabulary(user_id, min_confidence=0.75)
+    patterns = await get_patterns(user_id)
+
+    if not vocab and not patterns:
+        return ""
+
+    lines = []
+    if vocab:
+        lines.append("LEARNED VOCABULARY (use these mappings directly without asking):")
+        for v in vocab[:20]:
+            learned = v["learned"]
+            mapping = ", ".join(f"{k}={val}" for k, val in learned.items() if val)
+            conf_label = "✓✓" if v["confidence"] >= 0.95 else "✓"
+            lines.append(f"  {conf_label} '{v['trigger']}' → {mapping} (seen {v['times_seen']}x)")
+
+    if patterns:
+        lines.append("\nRECURRING PATTERNS (suggest these when input matches):")
+        for p in patterns[:10]:
+            pat = p["pattern"]
+            desc = pat.get("description", p["trigger"])
+            lines.append(f"  • {desc} (seen {p['times_seen']}x, last {p['last_seen']})")
+
+    return "\n".join(lines)
+
+
+async def get_all_learning(user_id: int, envelope_id: str = "",
+                            min_confidence: float = 0.5) -> list[dict]:
+    """Return all learning rows for a user above min_confidence threshold.
+    Used by refresh_learning_summary tool to write to Google Sheets."""
+    pool = await get_pool()
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            if envelope_id:
+                rows = await conn.fetch(
+                    """SELECT event_type, trigger_text, learned, confidence,
+                              updated_at, envelope_id
+                       FROM agent_learning
+                       WHERE user_id=$1 AND envelope_id=$2 AND confidence >= $3
+                       ORDER BY updated_at DESC""",
+                    user_id, envelope_id, min_confidence,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT event_type, trigger_text, learned, confidence,
+                              updated_at, envelope_id
+                       FROM agent_learning
+                       WHERE user_id=$1 AND confidence >= $2
+                       ORDER BY updated_at DESC""",
+                    user_id, min_confidence,
+                )
+            result = []
+            for r in rows:
+                try:
+                    learned = json.loads(r["learned"]) if isinstance(r["learned"], str) else r["learned"]
+                except Exception:
+                    learned = {}
+                result.append({
+                    "event_type":   r["event_type"],
+                    "trigger_text": r["trigger_text"],
+                    "learned":      learned,
+                    "confidence":   float(r["confidence"]),
+                    "updated_at":   str(r["updated_at"]),
+                    "envelope_id":  r["envelope_id"] or "",
+                })
+            return result
+    except Exception as e:
+        logger.warning(f"[DB] get_all_learning failed: {e}")
+        return []

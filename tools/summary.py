@@ -103,3 +103,20 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
         "pct_used": pct,
         "alert": pct >= threshold,
     }
+
+
+async def tool_get_contribution_status(params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager) -> Any:
+    """
+    Return the per-user contribution and expense split status for a given month.
+    Uses the split rules configured in Admin Config sheet.
+    """
+    envelope_id = params.get("envelope_id") or session.current_envelope_id
+    if not auth.can_access_envelope(session.user_id, envelope_id):
+        return {"error": "Permission denied."}
+
+    month = params.get("month") or _current_month()
+
+    from intelligence import compute_contribution_status
+    result = compute_contribution_status(sheets, envelope_id, month)
+    return result

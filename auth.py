@@ -66,16 +66,23 @@ class AuthManager:
     def _reload(self):
         try:
             users = self.sheets.get_users()
-            self._cache = {}
+            new_cache: dict[int, dict] = {}
             for u in users:
-                tid = int(u.get("telegram_id", 0))
-                if not tid:
+                try:
+                    raw_id = u.get("telegram_id", "") or ""
+                    if not str(raw_id).strip():
+                        continue  # empty telegram_id — skip silently
+                    tid = int(str(raw_id).strip())
+                    if not tid:
+                        continue
+                except (ValueError, TypeError) as exc:
+                    print(f"[AuthManager] Skipping row with bad telegram_id {u.get('telegram_id')!r}: {exc}")
                     continue
                 # Skip suspended users
                 if u.get("status", "active").lower() == "suspended":
                     continue
                 envelopes = [e.strip() for e in str(u.get("envelopes", "")).split(",") if e.strip()]
-                self._cache[tid] = {
+                new_cache[tid] = {
                     "id": tid,
                     "name": u.get("name", ""),
                     "role": u.get("role", "readonly"),
@@ -83,6 +90,8 @@ class AuthManager:
                     "language": u.get("language", "RU"),
                     "status": u.get("status", "active"),
                 }
+            self._cache = new_cache
+            print(f"[AuthManager] Loaded {len(new_cache)} users from sheet")
         except Exception as e:
             print(f"[AuthManager] Failed to reload users: {e}")
         self._loaded_at = datetime.now()
@@ -103,8 +112,21 @@ class SessionContext:
         self.user_id = user_id
         self.user_name = user_name
         self.role = role
+        self.lang: str = "ru"           # default Russian; overridden to uk/it if detected
         self.current_envelope_id: Optional[str] = None
         self.last_action: Optional[LastAction] = None
+        self.pending_edit_tx: Optional[str] = None
+        # Stores the key of the next expected free-text input from user.
+        # Format: "<domain>:<action>", e.g. "report:custom_period"
+        # Set by free_text menu callbacks; cleared after use in handle_message.
+        self.pending_prompt: Optional[str] = None
+        # Short ID grouping messages in one conversation session.
+        # Assigned on first message; used by ConversationLogger.
+        self.session_id: Optional[str] = None
+        # Inline choice buttons requested by the agent.
+        # Format: [{"label": "✅ Да", "value": "yes"}, ...]
+        # Bot.py attaches these as InlineKeyboard after the agent response, then clears.
+        self.pending_choice: Optional[list] = None
 
 
 # In-memory session store (keyed by user_id)
@@ -115,8 +137,8 @@ def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
     """Return existing session or create a new one for the given user."""
     if user_id not in _sessions:
         session = SessionContext(user_id, user_name, role)
-        # Auto-set default envelope for admin so /status works after restart
-        if role == "admin":
+        # Auto-set default envelope for admin/contributor so /status works after restart
+        if role in ("admin", "contributor"):
             session.current_envelope_id = DEFAULT_ENVELOPE
         _sessions[user_id] = session
     else:
@@ -124,6 +146,6 @@ def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
         _sessions[user_id].user_name = user_name
         _sessions[user_id].role = role
         # Restore default if envelope was lost (e.g. process restart via shared state)
-        if not _sessions[user_id].current_envelope_id and role == "admin":
+        if not _sessions[user_id].current_envelope_id and role in ("admin", "contributor"):
             _sessions[user_id].current_envelope_id = DEFAULT_ENVELOPE
     return _sessions[user_id]

@@ -44,15 +44,70 @@ TOOLS = [
                 "category":     {"type": "string"},
                 "subcategory":  {"type": "string"},
                 "who":          {"type": "string",
-                                 "description": "Person who made the expense. Get valid names from get_reference_data."},
+                                 "description": "Who made the expense. Use values from get_reference_data."},
                 "account":      {"type": "string",
-                                 "description": "Payment account. Get valid accounts from get_reference_data."},
+                                 "description": "Payment account/card. Use values from get_reference_data."},
                 "type":         {"type": "string",
                                  "enum": ["expense", "income", "transfer"],
                                  "default": "expense"},
                 "note":         {"type": "string"},
-                "force_new":    {"type": "boolean", "default": False,
-                                 "description": "Set true to bypass validation and add even with unknown category/who/account."},
+                "force_new":    {"type": "boolean",
+                                 "description": "Set true to bypass validation and allow new category/who/account values not yet in the reference lists."},
+            },
+        },
+    },
+    {
+        "name": "get_reference_data",
+        "description": (
+            "Fetch the reference lists for the current envelope: "
+            "known categories, subcategories, accounts, users (who), and currencies. "
+            "Call this when: (1) user asks 'what categories do we have?', "
+            "(2) add_transaction returns unknown_values status, "
+            "(3) you're unsure whether a category/who value is valid."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string", "description": "Envelope ID, default current"},
+            },
+        },
+    },
+    {
+        "name": "save_learning",
+        "description": (
+            "Record a learning event to improve future interpretations. "
+            "Call this when: (1) user CORRECTS something you interpreted wrong, "
+            "(2) user CONFIRMS your interpretation (3+ confirmations = use automatically), "
+            "(3) user approves a NEW category/user/account via force_new, "
+            "(4) you identify a recurring PATTERN in the user's transactions, "
+            "(5) you resolved an AMBIGUITY and know the correct interpretation. "
+            "Do NOT call for read-only queries or data lookups."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["event_type"],
+            "properties": {
+                "event_type": {
+                    "type": "string",
+                    "enum": ["vocabulary", "correction", "confirmation", "pattern",
+                             "new_value", "ambiguity_resolved"],
+                },
+                "trigger": {
+                    "type": "string",
+                    "description": "The word/phrase that triggered this (e.g. 'шаурма', 'садик')",
+                },
+                "learned": {
+                    "type": "object",
+                    "description": "What was learned: {field, value, category, subcategory, who, ...}",
+                },
+                "confidence_delta": {
+                    "type": "number",
+                    "description": "+0.1 for confirmation, -0.3 for correction. Default 0.",
+                },
+                "original_input": {
+                    "type": "string",
+                    "description": "The user's original message that produced this event",
+                },
             },
         },
     },
@@ -110,6 +165,24 @@ TOOLS = [
                                 "description": "Last row to delete (inclusive)"},
                 "confirmed":   {"type": "boolean",
                                 "description": "false (default) = preview only; true = execute deletion"},
+                "envelope_id": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "sort_transactions",
+        "description": (
+            "Sort all rows in the Transactions sheet by date. "
+            "Use when user says 'отсортируй', 'sort', 'упорядочи по дате', "
+            "'сначала старые', 'сначала новые', or after adding transactions for past dates. "
+            "asc = oldest first (default); desc = newest first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order":       {"type": "string", "enum": ["asc", "desc"],
+                                "description": "asc = oldest first; desc = newest first",
+                                "default": "asc"},
                 "envelope_id": {"type": "string"},
             },
         },
@@ -252,6 +325,29 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "search_history",
+        "description": (
+            "Search the conversation history for a user, going deeper than the last 10 messages. "
+            "Use when the user references something said earlier that is not in the current context, "
+            "or when you need to find a pattern, previous decision, past transaction mention, or "
+            "any prior exchange. "
+            "keyword is optional — omit to page through all history. "
+            "Use offset to paginate: first call offset=0, next call offset=20, etc. "
+            "Returns messages sorted oldest-first within the page."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string",
+                            "description": "Case-insensitive substring to search in message text; omit for all"},
+                "limit":   {"type": "integer", "default": 20,
+                            "description": "Max rows to return (max 50)"},
+                "offset":  {"type": "integer", "default": 0,
+                            "description": "Skip first N rows (for pagination)"},
+            },
+        },
+    },
     # ── Intelligence tools (v2.0) ─────────────────────────────────────────
     {
         "name": "save_goal",
@@ -288,16 +384,41 @@ TOOLS = [
         },
     },
     {
-        "name": "get_reference_data",
+        "name": "get_contribution_status",
         "description": (
-            "Load reference data for an envelope: valid categories, subcategories, "
-            "accounts, user names, and currencies. Call this before add_transaction "
-            "when you need to validate or suggest values."
+            "Show per-user contribution and expense split status for the current or given month. "
+            "Use when user asks: 'кто сколько внёс?', 'сколько должна Marina?', "
+            "'как распределились расходы?', 'покажи расчёт 50/50', 'contribution status', "
+            "'settlement', 'кто в плюсе / минусе?'. "
+            "Returns: total contributions per user, total expenses, threshold, "
+            "each user's share of expenses, and balance (positive = credit, negative = owes)."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "envelope_id": {"type": "string"},
+                "envelope_id": {"type": "string",
+                                "description": "Envelope ID, default = current"},
+                "month": {"type": "string",
+                          "description": "YYYY-MM, default = current month"},
+            },
+        },
+    },
+    {
+        "name": "refresh_dashboard",
+        "description": (
+            "Rewrite the Dashboard tab in the Google Sheet with current budget snapshot, "
+            "per-user contribution table, category breakdown, and recent transactions. "
+            "Use when user says: 'обнови дашборд', 'refresh dashboard', 'покажи дашборд в таблице', "
+            "'запиши в таблицу', 'обнови Google Sheets'. "
+            "Also call this automatically after add_transaction when the user mentions the dashboard."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "envelope_id": {"type": "string",
+                                "description": "Envelope ID, default = current"},
+                "month": {"type": "string",
+                          "description": "YYYY-MM, default = current month"},
             },
         },
     },
@@ -323,38 +444,75 @@ TOOLS = [
                     "items": {"type": "object"},
                 },
                 "ai_summary":     {"type": "string",
-                                   "description": "One-line human-readable summary, e.g. 'Esselunga weekly shop, 12 items'"},
+                                   "description": "One-line summary, e.g. 'Esselunga weekly shop, 12 items'"},
                 "raw_text":       {"type": "string", "default": ""},
                 "tg_file_id":     {"type": "string", "default": ""},
             },
         },
     },
     {
-        "name": "save_learning",
+        "name": "refresh_learning_summary",
         "description": (
-            "Record a learning event: vocabulary mapping, user correction, "
-            "confirmation of a guess, new category, or detected pattern. "
-            "Call after user corrects a transaction, confirms a guess, "
-            "introduces new vocabulary, or after a pattern is detected."
+            "Write a human-readable summary of all learned vocabulary, patterns and corrections "
+            "from the agent_learning PostgreSQL table to the 'Learning' tab in the Admin Google Sheet. "
+            "Call when the user asks: 'покажи что ты выучил', 'обнови Learning', "
+            "'refresh learning', 'what have you learned', 'запиши обучение в таблицу'."
         ),
         "input_schema": {
             "type": "object",
-            "required": ["event_type", "trigger_text", "learned_json"],
             "properties": {
-                "event_type": {
-                    "type": "string",
-                    "enum": ["vocabulary", "correction", "confirmation",
-                             "pattern", "new_category", "new_user"],
+                "envelope_id": {"type": "string", "description": "Filter by envelope, default = all"},
+                "min_confidence": {"type": "number", "description": "Min confidence threshold 0.0–1.0, default 0.5"},
+            },
+        },
+    },
+    {
+        "name": "update_dashboard_config",
+        "description": (
+            "Update a DashboardConfig setting in the Admin sheet. Use when user wants to change "
+            "how the dashboard behaves: e.g. 'обновляй дашборд автоматически', "
+            "'покажи историю за 6 месяцев', 'отключи историю взносов', "
+            "'установи предупреждение при 75%'. "
+            "Valid keys: auto_refresh_on_transaction (TRUE/FALSE), "
+            "show_contribution_history (TRUE/FALSE), history_months (number), "
+            "budget_warning_pct (number), show_category_breakdown (TRUE/FALSE), "
+            "master_template_id (file_id), mode (prod/test), test_file_id (file_id)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["key", "value"],
+            "properties": {
+                "key": {"type": "string", "description": "Config key to update"},
+                "value": {"type": "string", "description": "New value"},
+            },
+        },
+    },
+    {
+        "name": "present_options",
+        "description": (
+            "Attach inline choice buttons to your response. Call this tool BEFORE writing your "
+            "response text whenever you need the user to confirm or choose from options. "
+            "Common use cases: confirming a transaction ('Записать?'), "
+            "choosing between suggestions ('Какую категорию использовать?'), "
+            "yes/no confirmations before deleting, etc. "
+            "Do NOT call for routine confirmations where no choice is needed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["choices"],
+            "properties": {
+                "choices": {
+                    "type": "array",
+                    "description": "List of options to show as buttons",
+                    "items": {
+                        "type": "object",
+                        "required": ["label", "value"],
+                        "properties": {
+                            "label": {"type": "string", "description": "Button text, e.g. '✅ Да, записать'"},
+                            "value": {"type": "string", "description": "Short value passed back, e.g. 'yes', 'no', 'cat_food'"},
+                        },
+                    },
                 },
-                "trigger_text": {
-                    "type": "string",
-                    "description": "The raw text/word that triggered the learning",
-                },
-                "learned_json": {
-                    "type": "object",
-                    "description": "What was learned, e.g. {mapping: 'Food/Coffee'} or {category: 'Gym'}",
-                },
-                "envelope_id": {"type": "string"},
             },
         },
     },
@@ -369,8 +527,8 @@ Add transactions proactively from natural language. Respond in the user's langua
 
 {intelligence_context}
 {goals_context}
+{contribution_context}
 {conversation_context}
-{learning_context}
 """
 
 
@@ -391,11 +549,12 @@ def _load_system_prompt() -> str:
                     start = i + 1
                     break
         template = "\n".join(lines[start:]).strip()
-        # Append context placeholders if not present
+        # Append intelligence context placeholders if not present
         if "{intelligence_context}" not in template:
-            template += "\n\n---\n\n{intelligence_context}\n\n{goals_context}\n\n{conversation_context}"
-        if "{learning_context}" not in template:
-            template += "\n\n{learning_context}"
+            template += (
+                "\n\n---\n\n{learning_context}\n\n{intelligence_context}\n\n"
+                "{goals_context}\n\n{contribution_context}\n\n{conversation_context}"
+            )
         return template
     except Exception as e:
         logger.warning(f"Could not load ApolioHome_Prompt.md: {e}. Using fallback prompt.")
@@ -404,6 +563,17 @@ def _load_system_prompt() -> str:
 
 # Load once at module startup
 _SYSTEM_PROMPT_TEMPLATE = _load_system_prompt()
+
+
+def _safe_format(template: str, **kwargs) -> str:
+    """Replace known {placeholders} without crashing on literal {curly} braces in the text.
+    Python's str.format() raises KeyError when the template contains patterns like
+    {mapping: value} (from prompt examples). This helper does explicit key-by-key
+    replacement so unrecognised patterns are left untouched."""
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace(f"{{{key}}}", str(value))
+    return result
 
 
 # ── Intelligence helpers (lazy-loaded singletons) ─────────────────────────────
@@ -450,16 +620,17 @@ class ApolioAgent:
         self.auth = auth
         self.client = anthropic.AsyncAnthropic()
 
-    def _build_context(self, session: SessionContext) -> dict:
+    async def _build_context(self, session: SessionContext) -> dict:
         """
-        Pre-compute intelligence snapshot, goals, and learning context.
+        Pre-compute intelligence snapshot, goals, and conversation history.
         Returns dict of context blocks for system prompt injection.
-        conversation_context is intentionally "" — history comes via messages[].
         All errors are swallowed — context enrichment must never crash the agent.
         """
+        import db as appdb
+
         intelligence_text = ""
         goals_text = ""
-        learning_text = ""
+        contribution_text = ""
 
         envelope_id = session.current_envelope_id or "MM_BUDGET"
 
@@ -473,23 +644,46 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"Intelligence context failed: {e}")
 
-        # 2. User goals
+        # 2. User goals — PostgreSQL first, Google Sheets fallback
         try:
-            mgr = _get_user_context_mgr(self.sheets)
-            from user_context import format_goals_for_prompt
-            ctx = mgr.get_all(session.user_id)
-            goals_text = format_goals_for_prompt(ctx)
+            if appdb.is_ready():
+                ctx = await appdb.ctx_get_all(session.user_id)
+                from user_context import format_goals_for_prompt
+                goals_text = format_goals_for_prompt(ctx)
+            else:
+                mgr = _get_user_context_mgr(self.sheets)
+                from user_context import format_goals_for_prompt
+                ctx = mgr.get_all(session.user_id)
+                goals_text = format_goals_for_prompt(ctx)
         except Exception as e:
             logger.warning(f"User context failed: {e}")
 
-        # 3. Learning context (vocabulary + patterns from agent_learning)
-        # This is async but _build_context is sync — handled in run() directly
-        # learning_text filled there asynchronously
+        # NOTE: Conversation history is NOT injected here as text.
+        # It is passed directly as a structured messages[] array in agent.run()
+        # via get_recent_messages_for_api(). Injecting it twice (here + messages[])
+        # wastes tokens and creates confusion. Keep it in messages[] only.
+
+        # 3. Contribution & split status
+        try:
+            from intelligence import compute_contribution_status, format_contribution_for_prompt
+            contrib_snap = compute_contribution_status(self.sheets, envelope_id)
+            contribution_text = format_contribution_for_prompt(contrib_snap)
+        except Exception as e:
+            logger.warning(f"Contribution context failed: {e}")
+
+        # 4. Self-learning context (vocabulary mappings + patterns)
+        learning_text = ""
+        try:
+            if appdb.is_ready():
+                learning_text = await appdb.get_learning_context_for_prompt(session.user_id)
+        except Exception as e:
+            logger.warning(f"Learning context failed: {e}")
 
         return {
             "intelligence_context": intelligence_text,
             "goals_context": goals_text,
-            "conversation_context": "",  # intentional: history via messages[]
+            "conversation_context": "",   # intentionally blank — history is in messages[]
+            "contribution_context": contribution_text,
             "learning_context": learning_text,
         }
 
@@ -499,38 +693,30 @@ class ApolioAgent:
                   telegram_bot=None) -> str:
         """
         Run the agent with a user message.
+        telegram_bot: optional Telegram Bot instance — when provided, photo messages
+                      in conversation history are re-downloaded and included as images
+                      so Claude has visual memory of previously sent screenshots.
         Returns the bot's text response. Never returns empty string.
-        telegram_bot: passed to db.get_recent_messages_for_api for photo re-download.
         """
-        import db as appdb
-
         today = datetime.now().strftime("%Y-%m-%d")
-        envelope_id = session.current_envelope_id or "MM_BUDGET"
 
-        # Build enriched context (sync parts)
-        context = self._build_context(session)
+        # Build enriched context (async — loads PostgreSQL history + intelligence)
+        context = await self._build_context(session)
 
-        # Learning context — async, fetched here
-        try:
-            learning_text = await appdb.get_learning_context_for_prompt(
-                session.user_id, envelope_id
-            )
-        except Exception as e:
-            logger.warning(f"Learning context failed: {e}")
-            learning_text = ""
-
-        system = _SYSTEM_PROMPT_TEMPLATE.format(
+        system = _safe_format(
+            _SYSTEM_PROMPT_TEMPLATE,
             today=today,
             user_name=session.user_name,
             role=session.role,
-            envelope_id=envelope_id,
+            envelope_id=session.current_envelope_id or "MM_BUDGET",
             intelligence_context=context.get("intelligence_context", ""),
             goals_context=context.get("goals_context", ""),
-            conversation_context="",
-            learning_context=learning_text,
+            contribution_context=context.get("contribution_context", ""),
+            conversation_context=context.get("conversation_context", ""),
+            learning_context=context.get("learning_context", ""),
         )
 
-        # Build current user content (text or multimodal)
+        # Build user content (text or with media)
         if media_type == "photo" and media_data:
             import base64
             user_content = [
@@ -542,25 +728,30 @@ class ApolioAgent:
                         "data": base64.b64encode(media_data).decode(),
                     },
                 },
-                {"type": "text", "text": message or "Analyse this receipt."},
+                {"type": "text", "text": message or "Extract transaction data from this receipt."},
             ]
         else:
             user_content = message
 
-        # Load conversation history from PostgreSQL as messages[]
-        history: list = []
+        # Build multi-turn messages: prepend recent conversation history so Claude
+        # has genuine context of prior exchanges (not just text in system prompt).
+        import db as _db
         try:
-            history = await appdb.get_recent_messages_for_api(
-                session.user_id, limit=20, telegram_bot=telegram_bot
-            )
-        except Exception as e:
-            logger.warning(f"History load failed: {e}")
+            history_messages = await _db.get_recent_messages_for_api(
+                session.user_id, n_turns=6, telegram_bot=telegram_bot
+            ) if _db.is_ready() else []
+        except Exception:
+            history_messages = []
 
-        # Append current message (avoid duplicating last history entry)
-        messages = history + [{"role": "user", "content": user_content}]
+        # Trim history: remove last turn if it is the same as current user message
+        # (avoids duplicating the message that is about to be sent).
+        if history_messages and history_messages[-1]["role"] == "user":
+            history_messages.pop()
+
+        messages = history_messages + [{"role": "user", "content": user_content}]
 
         # Agentic loop
-        max_iterations = 10
+        max_iterations = 5
         last_text = ""
 
         for iteration in range(max_iterations):
@@ -594,6 +785,7 @@ class ApolioAgent:
 
                 messages.append({"role": "assistant", "content": response.content})
                 tool_results = []
+                _tools_called = []   # accumulate for DB logging
 
                 for block in response.content:
                     if block.type != "tool_use":
@@ -604,6 +796,36 @@ class ApolioAgent:
                         "tool_use_id": block.id,
                         "content": json.dumps(result),
                     })
+                    # Collect for DB: skip read-only / noisy tools
+                    _SKIP_LOG_TOOLS = {
+                        "get_budget_status", "get_summary", "get_intelligence",
+                        "find_transactions", "list_envelopes", "search_history",
+                        "get_contribution_status", "get_reference_data",
+                    }
+                    if block.name not in _SKIP_LOG_TOOLS:
+                        status = result.get("status", "") if isinstance(result, dict) else ""
+                        msg = result.get("message", "") if isinstance(result, dict) else ""
+                        err = result.get("error", "") if isinstance(result, dict) else ""
+                        summary = (msg or err or status)[:200]
+                        _tools_called.append((block.name, summary))
+
+                # Persist tool calls to DB so next session history has them
+                import db as _db_log
+                if _db_log.is_ready() and _tools_called:
+                    try:
+                        for tool_name, tool_summary in _tools_called:
+                            await _db_log.log_message(
+                                user_id=session.user_id,
+                                direction="bot",
+                                message_type="tool",
+                                raw_text=f"[tool:{tool_name}] {tool_summary}",
+                                tool_called=tool_name,
+                                result_short=tool_summary,
+                                session_id=session.session_id,
+                                envelope_id=session.current_envelope_id or "",
+                            )
+                    except Exception:
+                        pass
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -632,9 +854,9 @@ class ApolioAgent:
         from tools.transactions import (
             tool_add_transaction, tool_edit_transaction,
             tool_delete_transaction, tool_delete_transaction_rows,
-            tool_find_transactions,
+            tool_sort_transactions, tool_find_transactions,
         )
-        from tools.summary import tool_get_summary, tool_get_budget_status
+        from tools.summary import tool_get_summary, tool_get_budget_status, tool_get_contribution_status
         from tools.wise import tool_import_wise_csv
         from tools.fx import tool_set_fx_rate
         from tools.config_tools import (
@@ -649,9 +871,11 @@ class ApolioAgent:
             "edit_transaction":       tool_edit_transaction,
             "delete_transaction":     tool_delete_transaction,
             "delete_transaction_rows": tool_delete_transaction_rows,
+            "sort_transactions":      tool_sort_transactions,
             "find_transactions":      tool_find_transactions,
-            "get_summary":            tool_get_summary,
-            "get_budget_status":      tool_get_budget_status,
+            "get_summary":              tool_get_summary,
+            "get_budget_status":        tool_get_budget_status,
+            "get_contribution_status":  tool_get_contribution_status,
             "import_wise_csv":        tool_import_wise_csv,
             "set_fx_rate":            tool_set_fx_rate,
             "update_config":          tool_update_config,
@@ -661,26 +885,36 @@ class ApolioAgent:
             # Intelligence tools (v2.0)
             "save_goal":              self._tool_save_goal,
             "get_intelligence":       self._tool_get_intelligence,
-            # Reference + learning (v3.0)
+            # History search
+            "search_history":         self._tool_search_history,
+            # Dashboard writer
+            "refresh_dashboard":      self._tool_refresh_dashboard,
+            # Reference data
             "get_reference_data":     self._tool_get_reference_data,
+            # Self-learning
             "save_learning":          self._tool_save_learning,
+            # Receipt storage
             "save_receipt":           self._tool_save_receipt,
+            # Learning summary → Google Sheets
+            "refresh_learning_summary": self._tool_refresh_learning_summary,
+            # Dashboard config management
+            "update_dashboard_config":  self._tool_update_dashboard_config,
+            # Inline choice buttons for user confirmation
+            "present_options":          self._tool_present_options,
         }
 
         handler = dispatch.get(name)
         if not handler:
             return {"error": f"Unknown tool: {name}"}
 
-        _read_only = {
-            "find_transactions", "get_summary", "get_budget_status",
-            "list_envelopes", "get_intelligence", "get_reference_data",
-            "save_learning", "save_receipt",  # internal — no audit needed
-        }
-
         try:
             result = await handler(params, session, self.sheets, self.auth)
             # Write audit log for state-changing operations
-            if name not in _read_only:
+            if name not in ("find_transactions", "get_summary", "get_budget_status",
+                            "list_envelopes", "get_intelligence", "search_history",
+                            "get_contribution_status", "refresh_dashboard",
+                            "save_learning", "save_receipt", "get_reference_data",
+                            "present_options", "update_dashboard_config"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -723,24 +957,187 @@ class ApolioAgent:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _tool_get_reference_data(self, params: dict, session: SessionContext,
-                                        sheets: SheetsClient, auth: AuthManager) -> Any:
-        """Load valid categories, accounts, user names, currencies for an envelope."""
-        envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
+    async def _tool_search_history(self, params: dict, session: SessionContext,
+                                    sheets: SheetsClient, auth: AuthManager) -> Any:
+        """Search conversation history — deeper than the 10-message rolling window."""
+        import db as appdb
+
+        if not appdb.is_ready():
+            return {"error": "Conversation history unavailable (PostgreSQL not connected)"}
+
+        keyword = params.get("keyword", "")
+        limit   = min(int(params.get("limit", 20)), 50)
+        offset  = int(params.get("offset", 0))
+
         try:
-            return sheets.get_reference_data(envelope_id)
+            rows = await appdb.search_conversation_history(
+                session.user_id, keyword=keyword, limit=limit, offset=offset
+            )
+            if not rows:
+                msg = (
+                    f"No messages found" +
+                    (f" matching '{keyword}'" if keyword else "") +
+                    (f" at offset {offset}" if offset > 0 else "")
+                )
+                return {"status": "empty", "message": msg, "rows": []}
+
+            formatted = appdb.format_context_for_prompt(rows)
+            return {
+                "status": "ok",
+                "count": len(rows),
+                "offset": offset,
+                "has_more": len(rows) == limit,
+                "messages": formatted,
+            }
         except Exception as e:
+            logger.error(f"search_history failed: {e}")
             return {"error": str(e)}
 
+    async def _tool_refresh_dashboard(self, params: dict, session: SessionContext,
+                                       sheets: SheetsClient, auth: AuthManager):
+        """Compute current budget snapshot + contribution status and write to Dashboard tab."""
+        if not auth.can_write(session.user_id):
+            return {"error": "Permission denied."}
+
+        envelope_id = params.get("envelope_id") or session.current_envelope_id
+        if not envelope_id:
+            return {"error": "Конверт не выбран."}
+
+        # Find the file_id for the envelope
+        envelopes = sheets.get_envelopes()
+        file_id = None
+        for e in envelopes:
+            if e.get("ID") == envelope_id:
+                file_id = e["file_id"]
+                break
+        if not file_id:
+            return {"error": f"Конверт {envelope_id} не найден."}
+
+        month = params.get("month") or datetime.utcnow().strftime("%Y-%m")
+
+        from intelligence import (IntelligenceEngine, compute_contribution_status,
+                                   compute_contribution_history)
+
+        # Budget snapshot
+        try:
+            engine = IntelligenceEngine(sheets)
+            snap = engine.compute_snapshot(envelope_id=envelope_id)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: snapshot failed: {e}")
+            snap = {"month": month, "cap": 0, "spent": 0, "remaining": 0,
+                    "pct_used": 0, "currency": "EUR"}
+
+        # Contribution status
+        try:
+            contrib_snap = compute_contribution_status(sheets, envelope_id, month)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: contrib_snap failed: {e}")
+            contrib_snap = None
+
+        # Read dashboard config to determine history depth
+        try:
+            dash_cfg = sheets.get_dashboard_config()
+            history_months = int(dash_cfg.get("history_months", 3))
+            show_history = str(dash_cfg.get("show_contribution_history", "TRUE")).upper() == "TRUE"
+        except Exception:
+            history_months = 3
+            show_history = True
+
+        # Multi-month history (if enabled in config)
+        contrib_history = None
+        if show_history:
+            try:
+                contrib_history = compute_contribution_history(
+                    sheets, envelope_id, months_back=history_months
+                )
+            except Exception as e:
+                logger.warning(f"refresh_dashboard: contrib_history failed: {e}")
+
+        try:
+            sheets.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history)
+        except Exception as e:
+            return {"error": f"Не удалось обновить Dashboard: {e}"}
+
+        return {
+            "status": "ok",
+            "message": (
+                f"✓ Dashboard обновлён за {month} — "
+                f"расходы {snap.get('spent', 0):,.2f} {snap.get('currency', 'EUR')} "
+                f"из {snap.get('cap', 0):,.2f} ({snap.get('pct_used', 0):.1f}%)"
+            ),
+        }
+
+    async def _tool_get_reference_data(self, params: dict, session: SessionContext,
+                                        sheets: SheetsClient, auth: AuthManager):
+        """Return reference lists (categories, who, accounts, currencies) for the current envelope."""
+        from tools.transactions import _resolve_envelope
+        try:
+            envelope = _resolve_envelope(params, session, sheets)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        try:
+            ref = sheets.get_reference_data(envelope["file_id"])
+        except Exception as e:
+            return {"error": f"Не удалось загрузить справочник: {e}"}
+
+        return {
+            "status": "ok",
+            "envelope_id": envelope["ID"],
+            "categories": ref.get("categories", []),
+            "subcategories": ref.get("subcategories", []),
+            "accounts": ref.get("accounts", []),
+            "who": ref.get("who", []),
+            "currencies": ref.get("currencies", []),
+            "base_currency": ref.get("base_currency", "EUR"),
+        }
+
+    async def _tool_save_learning(self, params: dict, session: SessionContext,
+                                   sheets: SheetsClient, auth: AuthManager):
+        """Persist a learning event to the agent_learning PostgreSQL table."""
+        import db as _db
+        if not _db.is_ready():
+            return {"status": "skipped", "reason": "DB not available"}
+
+        event_type = params.get("event_type", "")
+        if event_type not in ("vocabulary", "correction", "confirmation",
+                               "pattern", "new_value", "ambiguity_resolved"):
+            return {"error": f"Unknown event_type: {event_type}"}
+
+        # For corrections: apply confidence penalty automatically
+        confidence_delta = float(params.get("confidence_delta", 0.0))
+        if event_type == "correction" and confidence_delta == 0.0:
+            confidence_delta = -0.3
+        elif event_type == "confirmation" and confidence_delta == 0.0:
+            confidence_delta = 0.1
+
+        ok = await _db.save_learning(
+            user_id=session.user_id,
+            event_type=event_type,
+            trigger_text=params.get("trigger", ""),
+            context={"original_input": params.get("original_input", "")},
+            learned=params.get("learned", {}),
+            confidence_delta=confidence_delta,
+            envelope_id=session.current_envelope_id or "",
+        )
+
+        if ok:
+            return {
+                "status": "ok",
+                "message": f"✓ Learning saved: {event_type}" + (
+                    f" — '{params.get('trigger')}'" if params.get("trigger") else ""
+                ),
+            }
+        return {"error": "Failed to save learning event"}
+
     async def _tool_save_receipt(self, params: dict, session: SessionContext,
-                                  sheets: SheetsClient, auth: AuthManager) -> Any:
+                                  sheets: SheetsClient, auth: AuthManager):
         """Save itemized receipt data to Receipts tab."""
         try:
             import bot as _bot_module
             rs = getattr(_bot_module, "receipt_store", None)
             if rs is None:
                 return {"status": "skipped", "reason": "ReceiptStore not initialized"}
-
             receipt_id = rs.save_receipt(
                 transaction_id=params.get("transaction_id", ""),
                 date=params.get("date", "") or "",
@@ -756,26 +1153,89 @@ class ApolioAgent:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _tool_save_learning(self, params: dict, session: SessionContext,
-                                   sheets: SheetsClient, auth: AuthManager) -> Any:
-        """Record a learning event in agent_learning table."""
-        import db as appdb
-        event_type   = params.get("event_type", "")
-        trigger_text = params.get("trigger_text", "")
-        learned_json = params.get("learned_json", {})
-        envelope_id  = params.get("envelope_id") or session.current_envelope_id or ""
-
-        if not event_type or not trigger_text:
-            return {"error": "event_type and trigger_text are required"}
-
+    async def _tool_refresh_learning_summary(self, params: dict, session: SessionContext,
+                                              sheets: SheetsClient, auth: AuthManager):
+        """Write agent_learning summary to Admin Google Sheet Learning tab."""
         try:
-            await appdb.save_learning(
+            import db as _db
+            if not _db.is_ready():
+                return {"status": "skipped", "reason": "DB not available"}
+
+            envelope_id   = params.get("envelope_id", "") or session.current_envelope_id or ""
+            min_confidence = float(params.get("min_confidence", 0.5))
+
+            # Load all learning rows from PostgreSQL
+            rows = await _db.get_all_learning(
                 user_id=session.user_id,
                 envelope_id=envelope_id,
-                event_type=event_type,
-                trigger_text=trigger_text,
-                learned_json=learned_json,
+                min_confidence=min_confidence,
             )
-            return {"status": "ok", "message": f"Learned: {event_type} / {trigger_text}"}
+            if not rows:
+                return {"status": "ok", "message": "No learning data above threshold."}
+
+            # Format rows for Google Sheets: [event_type, trigger, learned, confidence, updated_at]
+            header = ["event_type", "trigger", "learned", "confidence", "updated_at", "envelope_id"]
+            sheet_rows = [header]
+            for r in rows:
+                sheet_rows.append([
+                    r.get("event_type", ""),
+                    r.get("trigger_text", ""),
+                    json.dumps(r.get("learned", {}), ensure_ascii=False),
+                    str(round(r.get("confidence", 0), 3)),
+                    str(r.get("updated_at", ""))[:19],
+                    r.get("envelope_id", ""),
+                ])
+
+            # Write to Admin sheet Learning tab
+            admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+            if not admin_id:
+                return {"error": "ADMIN_SHEETS_ID not set"}
+
+            gc = sheets._gc
+            wb = gc.open_by_key(admin_id)
+            try:
+                ws = wb.worksheet("Learning")
+                ws.clear()
+            except Exception:
+                ws = wb.add_worksheet(title="Learning", rows=500, cols=10)
+
+            ws.update("A1", sheet_rows)
+            count = len(sheet_rows) - 1
+            return {"status": "ok", "message": f"✓ {count} learning records written to Learning tab."}
         except Exception as e:
             return {"error": str(e)}
+
+    async def _tool_update_dashboard_config(self, params: dict, session: SessionContext,
+                                             sheets: SheetsClient, auth: AuthManager):
+        """Update a DashboardConfig key in the Admin sheet."""
+        if not auth.can_write(session.user_id):
+            return {"error": "Permission denied."}
+        key = params.get("key", "").strip()
+        value = params.get("value", "").strip()
+        if not key:
+            return {"error": "key is required"}
+        valid_keys = {
+            "auto_refresh_on_transaction", "show_contribution_history",
+            "history_months", "budget_warning_pct", "show_category_breakdown",
+            "master_template_id", "mode", "test_file_id",
+        }
+        if key not in valid_keys:
+            return {"error": f"Unknown config key: {key}. Valid: {', '.join(sorted(valid_keys))}"}
+        try:
+            sheets.write_dashboard_config(key, value)
+            return {"status": "ok", "message": f"✓ DashboardConfig: {key} = {value}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _tool_present_options(self, params: dict, session: SessionContext,
+                                     sheets: SheetsClient, auth: AuthManager):
+        """Store inline choice buttons to be attached to the next bot message."""
+        choices = params.get("choices", [])
+        if not choices:
+            return {"error": "choices list is empty"}
+        # Validate structure
+        for c in choices:
+            if not isinstance(c, dict) or "label" not in c or "value" not in c:
+                return {"error": "Each choice must have 'label' and 'value' keys"}
+        session.pending_choice = choices
+        return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}

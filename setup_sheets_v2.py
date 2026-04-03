@@ -240,33 +240,34 @@ def rebuild_summary(gc, service):
 
     ws.clear()
 
-    CATEGORIES = ["Housing", "Food", "Transport", "Health", "Entertainment", "Personal", "Other"]
+    CATEGORIES = ["Housing", "Food", "Transport", "Health", "Entertainment", "Personal", "Household", "Groceries", "Other"]
 
     headers = ["Month", "Total_Expenses", "Total_Income", "Balance"] + CATEGORIES
     rows = [headers]
 
     for month_num in range(1, 13):
         month_str = f"2026-{month_num:02d}"
-        # SUMPRODUCT formula for each column
-        # Columns in Transactions: A=Date, H=Amount_EUR, I=Type, P=Deleted, D=Category
-        total_exp = (f'=SUMPRODUCT((TEXT(Transactions!A2:A1000,"YYYY-MM")="{month_str}")'
-                     f'*(Transactions!I2:I1000="expense")'
-                     f'*(Transactions!P2:P1000<>"TRUE")'
-                     f'*(Transactions!H2:H1000))')
-        total_inc = (f'=SUMPRODUCT((TEXT(Transactions!A2:A1000,"YYYY-MM")="{month_str}")'
-                     f'*(Transactions!I2:I1000="income")'
-                     f'*(Transactions!P2:P1000<>"TRUE")'
-                     f'*(Transactions!H2:H1000))')
+        # SUMPRODUCT with LEFT() for text-date matching
+        # Dates in Transactions are stored as text "YYYY-MM-DD", not DATE serials
+        # Columns: A=Date, H=Amount_EUR, I=Type, P=Deleted, D=Category
+        total_exp = (f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
+                     f'*(Transactions!$P$2:$P$1000="FALSE")'
+                     f'*(Transactions!$I$2:$I$1000="expense")'
+                     f'*Transactions!$H$2:$H$1000)')
+        total_inc = (f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
+                     f'*(Transactions!$P$2:$P$1000="FALSE")'
+                     f'*(Transactions!$I$2:$I$1000="income")'
+                     f'*Transactions!$H$2:$H$1000)')
         balance = f"=C{len(rows)+1}-B{len(rows)+1}"
 
         cat_cells = []
         for cat in CATEGORIES:
             cat_cells.append(
-                f'=SUMPRODUCT((TEXT(Transactions!A2:A1000,"YYYY-MM")="{month_str}")'
-                f'*(Transactions!D2:D1000="{cat}")'
-                f'*(Transactions!I2:I1000="expense")'
-                f'*(Transactions!P2:P1000<>"TRUE")'
-                f'*(Transactions!H2:H1000))'
+                f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
+                f'*(Transactions!$D$2:$D$1000="{cat}")'
+                f'*(Transactions!$P$2:$P$1000="FALSE")'
+                f'*(Transactions!$I$2:$I$1000="expense")'
+                f'*Transactions!$H$2:$H$1000)'
             )
 
         rows.append([month_str, total_exp, total_inc, balance] + cat_cells)
