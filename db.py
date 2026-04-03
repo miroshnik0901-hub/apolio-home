@@ -88,6 +88,23 @@ CREATE INDEX IF NOT EXISTS idx_learning_user_type
 
 CREATE INDEX IF NOT EXISTS idx_learning_trigger
     ON agent_learning (user_id, trigger_text);
+
+CREATE TABLE IF NOT EXISTS parsed_data (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    data_type       VARCHAR(32) NOT NULL,   -- receipt | voice | image | document
+    source_msg_id   BIGINT DEFAULT NULL,    -- Telegram message_id that triggered parsing
+    envelope_id     VARCHAR(64) DEFAULT '', -- active envelope at parse time
+    payload_json    JSONB DEFAULT '{}',     -- full parsed details: items, totals, OCR text, etc.
+    transaction_id  VARCHAR(32) DEFAULT ''  -- linked Sheets transaction ID if expense was saved
+);
+
+CREATE INDEX IF NOT EXISTS idx_parsed_data_user
+    ON parsed_data (user_id, ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_parsed_data_type
+    ON parsed_data (user_id, data_type);
 """
 
 
@@ -692,4 +709,100 @@ async def get_all_learning(user_id: int, envelope_id: str = "",
             return result
     except Exception as e:
         logger.warning(f"[DB] get_all_learning failed: {e}")
+
+
+# ── parsed_data ───────────────────────────────────────────────────────────────
+
+async def save_parsed_data(
+    user_id: int,
+    data_type: str,
+    payload: dict,
+    source_msg_id: Optional[int] = None,
+    envelope_id: str = "",
+    transaction_id: str = "",
+) -> Optional[int]:
+    """
+    Save parsed receipt / voice / image / document details to parsed_data table.
+    Returns the new row id, or None on failure.
+
+    data_type values: receipt | voice | image | document
+    payload: arbitrary dict with all parsed details (items, totals, OCR text, etc.)
+    transaction_id: linked Sheets transaction ID if an expense was saved
+    """
+    pool = await get_pool()
+    if pool is None:
+        return None
+    try:
+        import json as _json
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO parsed_data
+                       (user_id, data_type, source_msg_id, envelope_id, payload_json, transaction_id)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   RETURNING id""",
+                user_id,
+                data_type,
+                source_msg_id,
+                envelope_id,
+                _json.dumps(payload, ensure_ascii=False),
+                transaction_id,
+            )
+            return int(row["id"]) if row else None
+    except Exception as e:
+        logger.warning(f"[DB] save_parsed_data failed: {e}")
+        return None
+
+
+async def get_parsed_data(
+    user_id: int,
+    data_type: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Retrieve recent parsed data rows for a user.
+    Optionally filter by data_type (receipt / voice / image / document).
+    """
+    pool = await get_pool()
+    if pool is None:
+        return []
+    try:
+        import json as _json
+        async with pool.acquire() as conn:
+            if data_type:
+                rows = await conn.fetch(
+                    """SELECT id, ts, data_type, source_msg_id, envelope_id,
+                              payload_json, transaction_id
+                       FROM parsed_data
+                       WHERE user_id=$1 AND data_type=$2
+                       ORDER BY ts DESC LIMIT $3""",
+                    user_id, data_type, limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, ts, data_type, source_msg_id, envelope_id,
+                              payload_json, transaction_id
+                       FROM parsed_data
+                       WHERE user_id=$1
+                       ORDER BY ts DESC LIMIT $2""",
+                    user_id, limit,
+                )
+            result = []
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"]) if r["payload_json"] else {}
+                except Exception:
+                    payload = {}
+                result.append({
+                    "id":             int(r["id"]),
+                    "ts":             str(r["ts"]),
+                    "data_type":      r["data_type"],
+                    "source_msg_id":  r["source_msg_id"],
+                    "envelope_id":    r["envelope_id"] or "",
+                    "payload":        payload,
+                    "transaction_id": r["transaction_id"] or "",
+                })
+            return result
+    except Exception as e:
+        logger.warning(f"[DB] get_parsed_data failed: {e}")
+        return []
         return []

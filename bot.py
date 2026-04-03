@@ -960,14 +960,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = session.user_name or "Mikhail"
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
 
-    # Send Apolio logo as the visual greeting
-    _logo_path = os.path.join(os.path.dirname(__file__), "apolio_home_logo", "ah_mark_transparent_512.png")
-    try:
-        with open(_logo_path, "rb") as _logo_f:
-            await update.message.reply_photo(photo=_logo_f)
-    except Exception as _e:
-        logger.warning(f"cmd_start: could not send logo: {_e}")
-
     # Show welcome with persistent reply keyboard (stays in input bar)
     # Inline quick-access buttons below the text
     welcome_inline = InlineKeyboardMarkup([
@@ -985,6 +977,95 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "👇",
         reply_markup=welcome_inline,
     )
+
+
+async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/log [username|user_id] — last 20 messages for a user (admin only)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+    if not auth.is_admin(session.user_id):
+        await update.message.reply_text("❌ Только для администратора.")
+        return
+
+    args = ctx.args or []
+    user_ref = args[0] if args else ""
+    limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 20
+
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    from tools.admin import tool_get_user_log
+    result = await tool_get_user_log(
+        {"user_ref": user_ref, "limit": limit}, session, sheets, auth
+    )
+
+    if result.get("error"):
+        await update.message.reply_text(f"❌ {result['error']}")
+        return
+
+    messages = result.get("messages", [])
+    if not messages:
+        await update.message.reply_text(
+            f"Сообщений не найдено для {'<b>' + user_ref + '</b>' if user_ref else 'всех пользователей'}.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    header = f"📋 <b>Лог</b> {'пользователя <code>' + user_ref + '</code>' if user_ref else '(все)'} — последние {len(messages)} сообщений:\n"
+    lines = []
+    for m in messages:
+        role_icon = "👤" if m["role"] == "user" else "🤖"
+        media = f" [{m['media_type']}]" if m["media_type"] else ""
+        intent = f" <i>#{m['intent']}</i>" if m["intent"] else ""
+        text = m["content"][:120].replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(f"{role_icon} <code>{m['ts']}</code> uid={m['user_id']}{media}{intent}\n{text}")
+
+    full = header + "\n\n".join(lines)
+    # Split if too long
+    if len(full) > 4000:
+        full = full[:4000] + "\n…(обрезано)"
+    await update.message.reply_text(full, parse_mode=ParseMode.HTML)
+
+
+async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/stats [days] — activity stats from conversation_log (admin only)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+    if not auth.is_admin(session.user_id):
+        await update.message.reply_text("❌ Только для администратора.")
+        return
+
+    args = ctx.args or []
+    days = int(args[0]) if args and args[0].isdigit() else 7
+
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    from tools.admin import tool_get_stats
+    result = await tool_get_stats({"days": days}, session, sheets, auth)
+
+    if result.get("error"):
+        await update.message.reply_text(f"❌ {result['error']}")
+        return
+
+    lines = [f"📊 <b>Статистика за {days} дней</b>\n"]
+    lines.append(f"Уникальных пользователей: <b>{result['unique_users']}</b>")
+
+    if result["by_day"]:
+        lines.append("\n<b>Активность по дням:</b>")
+        cur_day = None
+        for r in result["by_day"]:
+            if r["day"] != cur_day:
+                cur_day = r["day"]
+                lines.append(f"  📅 {cur_day}")
+            lines.append(f"    uid={r['user_id']}: {r['messages']} сообщений")
+
+    if result["top_intents"]:
+        lines.append("\n<b>Топ интентов:</b>")
+        for r in result["top_intents"]:
+            lines.append(f"  • {r['intent']}: {r['count']}x")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2454,6 +2535,8 @@ def main():
     app.add_handler(CommandHandler("undo",         cmd_undo))
     app.add_handler(CommandHandler("help",         cmd_help))
     app.add_handler(CommandHandler("refresh",      cmd_refresh))
+    app.add_handler(CommandHandler("log",          cmd_log))
+    app.add_handler(CommandHandler("stats",        cmd_stats))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message

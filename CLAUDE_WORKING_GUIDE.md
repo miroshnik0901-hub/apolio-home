@@ -294,19 +294,29 @@ Valid values are also in the `config` sheet tab (col A = statuses, col B = topic
 from task_log import TaskLog
 tl = TaskLog()
 tasks = tl.get_all_tasks()
-# Filter: Status not in ("CLOSED",)
 open_tasks = [t for t in tasks if t.get("Status") != "CLOSED"]
 ```
-For each open task, read:
-- `Task` (C) — full text including any notes Mikhail added
-- `Apolio Comment` (E) — prior history (newest at top)
+For each open task, read ALL fields fully:
+- `Task` (C) — **read in full every time**; Mikhail adds new notes/context directly into the Task body when reopening or updating a task
+- `Apolio Comment` (E) — prior history to understand what was already done
 - `Status` (D), `Deploy` (I), `Confirm` (J)
 
+> ⚠️ **CRITICAL RULE — Reopened tasks:**
+> When Mikhail changes Status back to OPEN (reopen), he **adds new text to the Task body (C)**.
+> Claude MUST re-read the full Task (C) text — the new content appears below the original text.
+> Do NOT rely on prior Apolio Comment (E) history alone. React to the new content in C first.
+> This is the core feedback loop: Mikhail writes in C → Claude reads C → Claude acts → writes in E.
+
 **Step 2 — Determine action**
-- Status = `OPEN` and task is clear → start working, set Status = `IN PROCESS`
-- Status = `IN PROCESS` → task already started, continue or close
-- Status = `DISCUSSION` → comment with architectural notes, no code yet
+- Status = `OPEN`, no prior Apolio Comment → fresh task, start working
+- Status = `OPEN`, has prior Apolio Comment → Mikhail reopened it; read new text in Task (C) first
+- Status = `IN PROCESS` → task is in progress; if code is NOT written yet → write it now, do not leave "начинаю реализацию" without actual implementation
+- Status = `DISCUSSION` → write architectural comment in E, set next step, no code until Mikhail confirms
 - `Confirm` = `GO` and `Deploy` = `READY` → push to main, set Deploy = `DEPLOYED`
+
+> ⚠️ **"IN PROCESS" means work is actively happening, not planned.**
+> Never set Status = IN PROCESS without immediately doing the actual work in the same session.
+> If a task is IN PROCESS and code was not written — write it now before moving to the next task.
 
 **Step 3 — Write updates via task_log.py API**
 ```python
