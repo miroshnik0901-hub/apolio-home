@@ -3,7 +3,7 @@ task_log.py — Apolio Home Task Log manager
 
 Sheet: Apolio Home — Task Log (ID: 1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4)
 Tab:   task_log
-Cols:  ID | Date | Task | Status | AI Comment | Branch | Resolved At | Topic | Deploy | Confirm
+Cols:  ID | Date | Task | Status | Apolio Comment | Branch | Resolved At | Topic | Deploy | Confirm
 
 Deploy values (col I, set by Claude):
     N/A      — task doesn't require a deploy
@@ -60,7 +60,7 @@ COL_DEPLOY = 9
 COL_CONFIRM = 10
 TOTAL_COLS = 10
 
-HEADER = ["ID", "Date", "Task", "Status", "AI Comment", "Branch", "Resolved At", "Topic", "Deploy", "Confirm"]
+HEADER = ["ID", "Date", "Task", "Status", "Apolio Comment", "Branch", "Resolved At", "Topic", "Deploy", "Confirm"]
 
 DEPLOY_NA = "N/A"
 DEPLOY_READY = "READY"
