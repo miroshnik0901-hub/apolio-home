@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.4 | Updated: 2026-04-03
+# Version: 1.5 | Updated: 2026-04-03
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -81,6 +81,10 @@ tools/
   receipt_store.py  — ReceiptStore (initialized in bot.py, save_receipt tool in agent.py)
   fx.py             — exchange rates (DO NOT TOUCH)
   config_tools.py   — bot config (DO NOT TOUCH)
+
+task_log.py         — TaskLog class: add_task(), update_task(), close_task(), get_open_tasks(), summary()
+apps_script/
+  task_log_automation.js — Google Apps Script for onEdit auto-ID/date/status + sort menu (install manually)
 ```
 
 **Files NOT to touch without explicit instruction:**
@@ -256,22 +260,54 @@ Columns A–G are user-editable. H–P are automatic.
 
 **File:** `Apolio Home — Task Log` (ID: `1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4`)
 **Shared with:** `apolio-home-bot@apolio-home.iam.gserviceaccount.com` (Editor)
+**Python module:** `task_log.py` → `TaskLog` class
 
-Columns: `ID | Date | Task | Status | AI Comment | Branch | Resolved At`
+### Column layout
+```
+A: ID          B: Date        C: Task         D: Status
+E: AI Comment  F: Branch      G: Resolved At  H: Topic
+```
 
-Status values: `OPEN` → `IN_PROGRESS` → `DONE`
+### Status values
+`OPEN` → `IN PROCESS` → `ON HOLD` / `BLOCKED` → `CLOSED`
+
+### Topic values (for grouping)
+`Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Admin`
+
+Both Status and Topic have dropdown validation. Valid values are also in the `config` sheet
+(column A = task_status, column B = topic).
+
+### Python usage (bot-driven writes)
+```python
+from task_log import TaskLog
+tl = TaskLog()  # uses GOOGLE_SERVICE_ACCOUNT env var
+task_id = tl.add_task("Fix onboarding flow", topic="Interface")   # → "T-007"
+tl.update_task("T-007", status="IN PROCESS", comment="Working on it")
+tl.close_task("T-007", comment="Fixed in abc123", branch="fix/onboarding")
+open_tasks = tl.get_open_tasks()
+```
+
+Auto-numbering is handled by `task_log.py` → `_next_id()` on every `add_task()` call.
 
 ### How it works
-1. **On-demand:** Mikhail says "go check the task log" → Claude reads all OPEN rows,
-   processes each task, writes AI Comment + updates Status, sets Branch where applicable.
-2. **Daily morning check (automated):** Scheduled task runs every morning, reads all OPEN rows,
-   processes them the same way.
+1. **On-demand:** Mikhail says "check the task log" → Claude reads open rows via `tl.get_open_tasks()`,
+   processes each, writes AI Comment + updates Status, fills Branch where applicable.
+2. **Daily morning check (automated):** Scheduled task runs every morning (8:00 AM Italy time),
+   same processing flow.
 
 ### Claude's behavior when checking Task Log
-- Read all rows where Status = `OPEN`
-- For each: write a comment in `AI Comment` column (what was done / what I think / blockers)
-- Change Status to `IN_PROGRESS` while working, `DONE` when complete
-- Fill `Branch` if code was pushed, `Resolved At` when done
+- Read all rows where Status = `OPEN` or `IN PROCESS`
+- For each: write a comment in `AI Comment` (what was done / what I think / blockers)
+- Set Status to `IN PROCESS` while working, `CLOSED` when complete
+- Fill `Branch` if code was pushed, `Resolved At` is auto-set when status → CLOSED/BLOCKED
+
+### Apps Script (one-time manual setup for sheet UI)
+For users manually editing the sheet (not the bot), there is an Apps Script that:
+- Auto-assigns ID + Date + Status on new rows
+- Manages `Resolved At` automatically on status changes
+- Adds **🤖 Apolio** menu with sort options
+
+**To install:** Open Task Log → Extensions → Apps Script → paste `apps_script/task_log_automation.js` → Save → Run `onOpen()` once
 
 ---
 
