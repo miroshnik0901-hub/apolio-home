@@ -42,6 +42,7 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 | Admin sheet | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
 | Test Budget file_id | `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788` |
 | Test Admin sheet | `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` |
+| Task Log sheet | `1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4` |
 | Mikhail Telegram ID | `360466156` |
 | Railway project ID | `55240cdd-2cbc-4451-b6c9-ca97ce595c18` |
 | Railway service ID (bot) | `8ec97839-6d49-4cdd-a012-1f6d54853454` |
@@ -251,7 +252,30 @@ Columns A–G are user-editable. H–P are automatic.
 
 ---
 
-## 8. BACKLOG
+## 8. TASK LOG WORKFLOW
+
+**File:** `Apolio Home — Task Log` (ID: `1Un1IHa6ScwZZPhAvSd3w5q31LU_JmeEuATPZZvSkZb4`)
+**Shared with:** `apolio-home-bot@apolio-home.iam.gserviceaccount.com` (Editor)
+
+Columns: `ID | Date | Task | Status | AI Comment | Branch | Resolved At`
+
+Status values: `OPEN` → `IN_PROGRESS` → `DONE`
+
+### How it works
+1. **On-demand:** Mikhail says "go check the task log" → Claude reads all OPEN rows,
+   processes each task, writes AI Comment + updates Status, sets Branch where applicable.
+2. **Daily morning check (automated):** Scheduled task runs at 8:00 AM, reads all OPEN rows,
+   processes them the same way.
+
+### Claude's behavior when checking Task Log
+- Read all rows where Status = `OPEN`
+- For each: write a comment in `AI Comment` column (what was done / what I think / blockers)
+- Change Status to `IN_PROGRESS` while working, `DONE` when complete
+- Fill `Branch` if code was pushed, `Resolved At` when done
+
+---
+
+## 9. BACKLOG
 
 | Feature | Description | Status |
 |---------|-------------|--------|
