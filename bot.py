@@ -216,19 +216,31 @@ def _cat_icon(category: str) -> str:
 
 
 def _month_name_ru(period: str) -> str:
-    """Convert YYYY-MM to 'апреле 2026'."""
+    """Convert YYYY-MM to 'апреле 2026' (Russian, legacy — use _month_name where lang is available)."""
+    return _month_name(period, "ru")
+
+
+def _month_label_ru(period: str) -> str:
+    """Convert YYYY-MM to 'Апрель 2026' (Russian, legacy — use _month_label where lang is available)."""
+    return _month_label(period, "ru")
+
+
+def _month_label(period: str, lang: str = "ru") -> str:
+    """Convert YYYY-MM to localized standalone month name, e.g. 'April 2026'."""
     try:
         y, m = period.split("-")
-        return f"{MONTH_NAMES_RU.get(m, m)} {y}"
+        labels = i18n.MONTH_LABELS.get(lang, i18n.MONTH_LABELS["ru"])
+        return f"{labels.get(m, m)} {y}"
     except Exception:
         return period
 
 
-def _month_label_ru(period: str) -> str:
-    """Convert YYYY-MM to 'Апрель 2026'."""
+def _month_name(period: str, lang: str = "ru") -> str:
+    """Convert YYYY-MM to localized prepositional form, e.g. 'April 2026' / 'апреле 2026'."""
     try:
         y, m = period.split("-")
-        return f"{MONTH_LABELS_RU.get(m, m)} {y}"
+        names = i18n.MONTH_NAMES.get(lang, i18n.MONTH_NAMES["ru"])
+        return f"{names.get(m, m)} {y}"
     except Exception:
         return period
 
@@ -316,7 +328,7 @@ def _current_month_str() -> str:
     return dt.date.today().strftime("%Y-%m")
 
 
-async def _build_status_html(session) -> str:
+async def _build_status_html(session, lang: str = "ru") -> str:
     """Render budget status as HTML without going through the agent."""
     try:
         from tools.summary import tool_get_budget_status, tool_get_summary
@@ -340,7 +352,7 @@ async def _build_status_html(session) -> str:
         month = status.get("month", "")
         alert = status.get("alert", False)
 
-        label = _month_label_ru(month)
+        label = _month_label(month, lang)
         env_id = session.current_envelope_id or "?"
         try:
             env_list = sheets.get_envelopes()
@@ -426,7 +438,7 @@ async def _build_status_html(session) -> str:
         return f"❌ Не удалось загрузить статус: {e}"
 
 
-async def _build_report_html(session, period: str = "current") -> str:
+async def _build_report_html(session, period: str = "current", lang: str = "ru") -> str:
     """Render monthly report as HTML without going through the agent."""
     try:
         from tools.summary import tool_get_summary
@@ -450,7 +462,7 @@ async def _build_report_html(session, period: str = "current") -> str:
 
         total = float(summary.get("total_spent") or 0)
         total_prev = float(summary_prev.get("total_spent") or 0) if summary_prev.get("status") == "ok" else 0
-        label = _month_label_ru(period)
+        label = _month_label(period, lang)
         cats = summary.get("categories", {})
         by_who = summary.get("by_who", {})
         prev_cats = summary_prev.get("categories", {}) if summary_prev.get("status") == "ok" else {}
@@ -477,7 +489,7 @@ async def _build_report_html(session, period: str = "current") -> str:
             arrow = "↑" if delta > 0 else "↓"
             lines.append(
                 f"Итого: <b>{total:,.0f} EUR</b>  "
-                f"<i>{arrow}{abs(pct_delta)}% vs {_month_label_ru(prev_period)}</i>"
+                f"<i>{arrow}{abs(pct_delta)}% vs {_month_label(prev_period, lang)}</i>"
             )
         else:
             lines.append(f"Итого расходов: <b>{total:,.0f} EUR</b>")
@@ -581,7 +593,7 @@ async def _build_week_html(session) -> str:
         return f"❌ Ошибка: {e}"
 
 
-async def _build_contribution_html(session) -> str:
+async def _build_contribution_html(session, lang: str = "ru") -> str:
     """Render contribution/split status — who owes what."""
     try:
         from intelligence import compute_contribution_status
@@ -594,7 +606,7 @@ async def _build_contribution_html(session) -> str:
 
         cur = snap["currency"]
         month = snap["month"]
-        label = _month_label_ru(month)
+        label = _month_label(month, lang)
         total_exp = snap["total_expenses"]
         threshold = snap["threshold"]
         excess = snap["excess_amount"]
@@ -656,7 +668,7 @@ async def _build_contribution_html(session) -> str:
         return f"❌ Ошибка: {e}"
 
 
-async def _build_trends_html(session) -> str:
+async def _build_trends_html(session, lang: str = "ru") -> str:
     """Render intelligence snapshot: budget trends + anomalies."""
     try:
         from intelligence import IntelligenceEngine
@@ -668,7 +680,7 @@ async def _build_trends_html(session) -> str:
 
         cur = snap.get("currency", "EUR")
         month = snap.get("month", "")
-        label = _month_label_ru(month)
+        label = _month_label(month, lang)
         lines = [f"📈 <b>Тренды — {label}</b>", ""]
 
         trends = snap.get("trends", [])
@@ -892,7 +904,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
         elif command == "report":
             period = params.get("period", "current")
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            html = await _build_report_html(session, period)
+            html = await _build_report_html(session, period, lang)
             kb = _with_menu_btn(
                 [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
                  InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
@@ -914,7 +926,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
             await cmd_settings(update, ctx)
         elif command == "contribution":
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            html = await _build_contribution_html(session)
+            html = await _build_contribution_html(session, lang)
             kb = _with_menu_btn(
                 [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:rep_curr"),
                  InlineKeyboardButton(i18n.t_menu("rep_trends", lang), callback_data="nav:rep_trends")],
@@ -922,7 +934,7 @@ async def _handle_menu_node(node_id: str, update: Update, ctx,
             await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
         elif command == "trends":
             await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            html = await _build_trends_html(session)
+            html = await _build_trends_html(session, lang)
             kb = _with_menu_btn(
                 [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:rep_curr"),
                  InlineKeyboardButton(i18n.t_menu("rep_contribution", lang), callback_data="nav:rep_contribution")],
@@ -1125,7 +1137,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    html = await _build_status_html(session)
+    html = await _build_status_html(session, lang)
     kb = _with_menu_btn(
         [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
          InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
@@ -1155,7 +1167,7 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    html = await _build_report_html(session, period)
+    html = await _build_report_html(session, period, lang)
     kb = _with_menu_btn(
         [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="cb_report_last"),
          InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="cb_report")],
@@ -1199,7 +1211,7 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    html = await _build_report_html(session, period)
+    html = await _build_report_html(session, period, lang)
     kb = _with_menu_btn(
         [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="cb_report_last"),
          InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="cb_report")],
@@ -1502,24 +1514,24 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     await query.answer(f"Unsupported language: {target_lang}", show_alert=True)
                     return
             elif command == "status":
-                html = await _build_status_html(session)
+                html = await _build_status_html(session, lang)
                 kb = _with_menu_btn(
                     [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="nav:report"),
                      InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="nav:transactions")],
                 )
             elif command == "report":
                 period = params.get("period", "current")
-                html = await _build_report_html(session, period)
+                html = await _build_report_html(session, period, lang)
                 # Compute month labels for nav buttons
                 cur_m = _current_month_str()
                 m1 = _offset_month(cur_m, -1)
                 m2 = _offset_month(cur_m, -2)
                 m3 = _offset_month(cur_m, -3)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton(_month_label_ru(m3)[:3], callback_data=f"cb_report_m:{m3}"),
-                     InlineKeyboardButton(_month_label_ru(m2)[:3], callback_data=f"cb_report_m:{m2}"),
-                     InlineKeyboardButton(_month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
-                     InlineKeyboardButton("▶ " + _month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
+                    [InlineKeyboardButton(_month_label(m3, lang)[:3], callback_data=f"cb_report_m:{m3}"),
+                     InlineKeyboardButton(_month_label(m2, lang)[:3], callback_data=f"cb_report_m:{m2}"),
+                     InlineKeyboardButton(_month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
+                     InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
                     lang=lang,
                 )
             elif command == "week":
@@ -1622,14 +1634,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "contribution":
-                html = await _build_contribution_html(session)
+                html = await _build_contribution_html(session, lang)
                 kb = _with_menu_btn(
                     [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr"),
                      InlineKeyboardButton(i18n.t_menu("rep_trends", lang), callback_data="nav:rep_trends")],
                     lang=lang,
                 )
             elif command == "trends":
-                html = await _build_trends_html(session)
+                html = await _build_trends_html(session, lang)
                 kb = _with_menu_btn(
                     [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr"),
                      InlineKeyboardButton(i18n.t_menu("rep_contribution", lang), callback_data="nav:rep_contribution")],
@@ -1819,7 +1831,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         lines = ["📁 <b>Список конвертов:</b>\n"]
         for e in envelopes:
-            cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else "без лимита"
+            cap = f"{e['monthly_cap']:,} {e['currency']}" if e['monthly_cap'] else i18n.NO_LIMIT.get(lang, "no limit")
             url = e.get("url", "")
             link = f'  <a href="{url}">открыть</a>' if url else ""
             active_mark = " ✅" if e["id"] == session.current_envelope_id else ""
@@ -1837,7 +1849,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── cb_status ──────────────────────────────────────────────────────────
     elif data == "cb_status":
-        html = await _build_status_html(session)
+        html = await _build_status_html(session, lang)
         kb = _with_menu_btn(
             [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
              InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
@@ -1849,11 +1861,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cur_m = _current_month_str()
         m1 = _offset_month(cur_m, -1)
         m2 = _offset_month(cur_m, -2)
-        html = await _build_report_html(session, cur_m)
+        html = await _build_report_html(session, cur_m, lang)
         kb = _with_menu_btn(
-            [InlineKeyboardButton(_month_label_ru(m2)[:4], callback_data=f"cb_report_m:{m2}"),
-             InlineKeyboardButton(_month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
-             InlineKeyboardButton("▶ " + _month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton(_month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1861,11 +1873,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cur_m = _current_month_str()
         m1 = _offset_month(cur_m, -1)
         m2 = _offset_month(cur_m, -2)
-        html = await _build_report_html(session, m1)
+        html = await _build_report_html(session, m1, lang)
         kb = _with_menu_btn(
-            [InlineKeyboardButton(_month_label_ru(m2)[:4], callback_data=f"cb_report_m:{m2}"),
-             InlineKeyboardButton("▶ " + _month_label_ru(m1)[:4], callback_data=f"cb_report_m:{m1}"),
-             InlineKeyboardButton(_month_label_ru(cur_m)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton("▶ " + _month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton(_month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1875,11 +1887,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         m1 = _offset_month(cur_m, -1)
         m2 = _offset_month(cur_m, -2)
         m3 = _offset_month(cur_m, -3)
-        html = await _build_report_html(session, period)
+        html = await _build_report_html(session, period, lang)
         nav_months = [m3, m2, m1, cur_m]
         nav_btns = []
         for nm in nav_months:
-            label = ("▶ " if nm == period else "") + _month_label_ru(nm)[:4]
+            label = ("▶ " if nm == period else "") + _month_label(nm, lang)[:4]
             nav_btns.append(InlineKeyboardButton(label, callback_data=f"cb_report_m:{nm}"))
         kb = _with_menu_btn(nav_btns)
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -1966,7 +1978,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Build confirmation with envelope info + sheet link button
         cap = match.get("Monthly_Cap") or match.get("monthly_cap", 0)
-        cap_str = f"{float(cap):,.0f} {match.get('Currency', 'EUR')}" if cap else "без лимита"
+        cap_str = f"{float(cap):,.0f} {match.get('Currency', 'EUR')}" if cap else i18n.NO_LIMIT.get(lang, "no limit")
         file_id_val = match.get("file_id", "")
         sheet_url = f"https://docs.google.com/spreadsheets/d/{file_id_val}" if file_id_val else ""
         extra_rows = []
@@ -2105,7 +2117,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 period_match = re.match(r'(\d{4}-\d{2})(?::(\d{4}-\d{2}))?', text.strip())
                 if period_match:
                     period = text.strip().split()[0]  # take first token
-                    html = await _build_report_html(session, period)
+                    html = await _build_report_html(session, period, lang)
                     kb = _with_menu_btn(
                         [InlineKeyboardButton(i18n.t_menu("rep_last", lang), callback_data="nav:rep_last"),
                          InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
@@ -2393,7 +2405,7 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
     session = get_session(mikhail_id, "Mikhail", "admin")
     try:
         html = await _build_week_html(session)
-        report_html = await _build_report_html(session, "current")
+        report_html = await _build_report_html(session, "current", getattr(session, "lang", "ru"))
         full = f"📅 <b>Еженедельный отчёт</b>\n\n{html}\n\n{report_html}"
         await context.bot.send_message(
             chat_id=mikhail_id,
