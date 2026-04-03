@@ -1386,6 +1386,8 @@ async def cmd_envelopes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     try:
         envelopes = sheets.list_envelopes_with_links()
+        # Filter to only envelopes the current user can access (T-039)
+        envelopes = [e for e in envelopes if auth.can_access_envelope(session.user_id, e["id"])]
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при загрузке конвертов: {e}")
         return
@@ -1915,6 +1917,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "envelopes":
                 try:
                     envelopes = sheets.list_envelopes_with_links()
+                    # Filter to only envelopes the current user can access (T-039)
+                    envelopes = [e for e in envelopes if auth.can_access_envelope(session.user_id, e["id"])]
                     if envelopes:
                         active_name = next(
                             (e["name"] for e in envelopes if e["id"] == session.current_envelope_id), "—"
@@ -2164,6 +2168,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "cb_envelopes":
         try:
             envelopes = sheets.list_envelopes_with_links()
+            # Filter to only envelopes the current user can access (T-039)
+            envelopes = [e for e in envelopes if auth.can_access_envelope(session.user_id, e["id"])]
         except Exception as e:
             await query.edit_message_text(f"❌ {e}")
             return
