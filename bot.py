@@ -735,6 +735,61 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
         return i18n.tu("trends_error", lang, detail=str(e))
 
 
+async def _build_category_html(session, period: str, category: str, lang: str = "ru") -> str:
+    """Drill-down: show all transactions for a given category in a period."""
+    try:
+        from tools.transactions import tool_find_transactions
+        result = await tool_find_transactions(
+            {"period": period, "category": category, "limit": 30},
+            session, sheets, auth,
+        )
+        if result.get("error"):
+            return f"❌ {result['error']}"
+
+        txs = [r for r in result.get("transactions", []) if r.get("Type") == "expense"]
+        label = _month_label(period, lang)
+        icon = _cat_icon(category)
+
+        titles = {
+            "ru": f"{icon} <b>{category}</b>  ·  {label}",
+            "uk": f"{icon} <b>{category}</b>  ·  {label}",
+            "en": f"{icon} <b>{category}</b>  ·  {label}",
+            "it": f"{icon} <b>{category}</b>  ·  {label}",
+        }
+        lines = [titles.get(lang, titles["ru"]), ""]
+
+        if not txs:
+            empty = {"ru": "Записей нет.", "uk": "Записів немає.",
+                     "en": "No records.", "it": "Nessun record."}
+            lines.append(empty.get(lang, empty["ru"]))
+            return "\n".join(lines)
+
+        total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
+        totals = {"ru": f"Итого: <b>{total:,.0f} EUR</b>  ·  {len(txs)} записей",
+                  "uk": f"Разом: <b>{total:,.0f} EUR</b>  ·  {len(txs)} записів",
+                  "en": f"Total: <b>{total:,.0f} EUR</b>  ·  {len(txs)} records",
+                  "it": f"Totale: <b>{total:,.0f} EUR</b>  ·  {len(txs)} voci"}
+        lines.append(totals.get(lang, totals["ru"]))
+        lines.append("")
+
+        for r in reversed(txs):  # chronological order
+            date = r.get("Date", "")[:10]
+            amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+            note = r.get("Note", "").strip()
+            who = r.get("Who", "").strip()
+            parts = [f"  {date}  <b>{amt:,.0f} EUR</b>"]
+            if note:
+                parts.append(f"  {note}")
+            if who and who not in (session.name or ""):
+                parts.append(f"  👤{who}")
+            lines.append("".join(parts))
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"_build_category_html failed: {e}", exc_info=True)
+        return f"❌ {e}"
+
+
 # ── Post init ──────────────────────────────────────────────────────────────────
 
 async def post_init(app: Application):
@@ -2149,12 +2204,51 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         m2 = _offset_month(cur_m, -2)
         m3 = _offset_month(cur_m, -3)
         html = await _build_report_html(session, period, lang)
+
+        # Build month navigation row
         nav_months = [m3, m2, m1, cur_m]
         nav_btns = []
         for nm in nav_months:
             label = ("▶ " if nm == period else "") + _month_label(nm, lang)[:4]
             nav_btns.append(InlineKeyboardButton(label, callback_data=f"cb_report_m:{nm}"))
-        kb = _with_menu_btn(nav_btns)
+
+        # Build category drill-down buttons (top categories of this period)
+        cat_rows = []
+        try:
+            from tools.summary import tool_get_summary
+            summ = await tool_get_summary({"period": period}, session, sheets, auth)
+            cats = sorted(summ.get("categories", {}).items(), key=lambda x: -x[1])[:6]
+            for cat, _ in cats:
+                # Telegram callback_data limit is 64 bytes; truncate category if needed
+                cat_key = cat[:20]
+                cat_label = f"{_cat_icon(cat)} {cat[:16]}"
+                cat_rows.append([InlineKeyboardButton(
+                    cat_label, callback_data=f"cb_cat_drill:{period}:{cat_key}"
+                )])
+        except Exception:
+            pass  # drill-down buttons are optional
+
+        kb = _with_menu_btn(nav_btns, *cat_rows, lang=lang)
+        await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+    # ── cb_cat_drill ───────────────────────────────────────────────────────
+    elif data.startswith("cb_cat_drill:"):
+        # cb_cat_drill:{period}:{category}
+        parts = data.split(":", 2)
+        if len(parts) < 3:
+            await query.answer("Bad callback", show_alert=False)
+            return
+        period = parts[1]
+        category = parts[2]
+
+        html = await _build_category_html(session, period, category, lang)
+        # "Back to report" button
+        back_labels = {"ru": "← Отчёт", "uk": "← Звіт", "en": "← Report", "it": "← Report"}
+        back_btn = InlineKeyboardButton(
+            back_labels.get(lang, "← Report"),
+            callback_data=f"cb_report_m:{period}"
+        )
+        kb = _with_menu_btn([back_btn], lang=lang)
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_transactions ────────────────────────────────────────────────────
