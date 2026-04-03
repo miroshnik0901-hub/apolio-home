@@ -143,6 +143,22 @@ CREATE INDEX IF NOT EXISTS idx_ideas_user
 
 CREATE INDEX IF NOT EXISTS idx_ideas_status
     ON ideas (status, ts DESC);
+
+
+CREATE TABLE IF NOT EXISTS user_goals (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    goal_type       VARCHAR(50) NOT NULL,    -- savings | expense_limit | contribution | custom
+    goal_text       TEXT NOT NULL,           -- human-readable description
+    rules_json      JSONB DEFAULT '{}',      -- {"target": N, "category": "...", "deadline": "YYYY-MM-DD"}
+    active          BOOLEAN NOT NULL DEFAULT TRUE,
+    progress        FLOAT DEFAULT 0,         -- 0.0–1.0 (filled by check_goal_progress)
+    envelope_id     VARCHAR(64) DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_goals_user
+    ON user_goals (user_id, active);
 """
 
 
@@ -1010,3 +1026,107 @@ async def get_ideas(
     except Exception as e:
         logger.warning(f"[DB] get_ideas failed: {e}")
         return []
+
+
+# ── User goals ─────────────────────────────────────────────────────────────────
+
+async def create_goal(
+    user_id: int,
+    goal_type: str,
+    goal_text: str,
+    rules: dict = None,
+    envelope_id: str = "",
+) -> Optional[int]:
+    """Insert a new user goal. Returns its id or None."""
+    if not is_ready():
+        return None
+    try:
+        import json as _json
+        rules_json = _json.dumps(rules or {}, ensure_ascii=False)
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO user_goals
+                       (user_id, goal_type, goal_text, rules_json, envelope_id)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING id""",
+                user_id, goal_type, goal_text, rules_json, envelope_id,
+            )
+            return int(row["id"]) if row else None
+    except Exception as e:
+        logger.warning(f"[DB] create_goal failed: {e}")
+        return None
+
+
+async def get_goals(user_id: int, active_only: bool = True) -> list[dict]:
+    """Fetch goals for a user."""
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with _pool.acquire() as conn:
+            if active_only:
+                rows = await conn.fetch(
+                    """SELECT id, ts, goal_type, goal_text, rules_json, active, progress, envelope_id
+                       FROM user_goals WHERE user_id=$1 AND active=TRUE
+                       ORDER BY ts DESC""",
+                    user_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, ts, goal_type, goal_text, rules_json, active, progress, envelope_id
+                       FROM user_goals WHERE user_id=$1
+                       ORDER BY ts DESC LIMIT 50""",
+                    user_id,
+                )
+            result = []
+            for r in rows:
+                try:
+                    rules = _json.loads(r["rules_json"]) if r["rules_json"] else {}
+                except Exception:
+                    rules = {}
+                result.append({
+                    "id":          int(r["id"]),
+                    "ts":          str(r["ts"])[:10],
+                    "goal_type":   r["goal_type"],
+                    "goal_text":   r["goal_text"],
+                    "rules":       rules,
+                    "active":      r["active"],
+                    "progress":    float(r["progress"] or 0),
+                    "envelope_id": r["envelope_id"] or "",
+                })
+            return result
+    except Exception as e:
+        logger.warning(f"[DB] get_goals failed: {e}")
+        return []
+
+
+async def update_goal_progress(goal_id: int, progress: float) -> bool:
+    """Update goal progress (0.0–1.0)."""
+    if not is_ready():
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE user_goals SET progress=$1 WHERE id=$2",
+                min(max(progress, 0.0), 1.0), goal_id,
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"[DB] update_goal_progress failed: {e}")
+        return False
+
+
+async def deactivate_goal(goal_id: int) -> bool:
+    """Mark a goal as inactive (soft delete)."""
+    if not is_ready():
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE user_goals SET active=FALSE WHERE id=$1",
+                goal_id,
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"[DB] deactivate_goal failed: {e}")
+        return False

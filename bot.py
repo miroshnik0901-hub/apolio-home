@@ -1173,6 +1173,97 @@ async def cmd_idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /goal ──────────────────────────────────────────────────────────────────────
+
+async def cmd_goal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/goal — show active goals; /goal add <type> <text>; /goal done #id."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+
+    lang = getattr(session, "lang", "ru")
+    args = ctx.args or []
+
+    from tools.goals import tool_get_goals, tool_add_goal, tool_deactivate_goal, GOAL_TYPES, _progress_bar, _goal_type_label
+
+    # /goal done <id>
+    if args and args[0].lower() in ("done", "close", "закрыть", "готово"):
+        raw_id = args[1].lstrip("#") if len(args) > 1 else ""
+        if not raw_id.isdigit():
+            await update.message.reply_text("Использование: /goal done <id>")
+            return
+        result = await tool_deactivate_goal({"id": int(raw_id)}, session, sheets, auth)
+        msgs = {
+            "ru": f"✅ Цель #{raw_id} закрыта.",
+            "uk": f"✅ Ціль #{raw_id} закрита.",
+            "en": f"✅ Goal #{raw_id} closed.",
+            "it": f"✅ Obiettivo #{raw_id} chiuso.",
+        }
+        await update.message.reply_text(msgs.get(lang, msgs["ru"]))
+        return
+
+    # /goal add <type> <text>
+    if args and args[0].lower() in ("add", "добавить", "новая", "нова"):
+        goal_type = args[1].lower() if len(args) > 1 else "custom"
+        goal_text = " ".join(args[2:]) if len(args) > 2 else ""
+        if not goal_text:
+            type_list = ", ".join(GOAL_TYPES.keys())
+            await update.message.reply_text(
+                f"Использование: /goal add <тип> <описание>\nТипы: {type_list}"
+            )
+            return
+        result = await tool_add_goal(
+            {"goal_type": goal_type, "goal_text": goal_text},
+            session, sheets, auth,
+        )
+        if result.get("error"):
+            await update.message.reply_text(f"❌ {result['error']}")
+            return
+        msgs = {
+            "ru": f"🎯 Цель добавлена (#{result['id']}):\n<i>{goal_text}</i>",
+            "uk": f"🎯 Ціль додано (#{result['id']}):\n<i>{goal_text}</i>",
+            "en": f"🎯 Goal added (#{result['id']}):\n<i>{goal_text}</i>",
+            "it": f"🎯 Obiettivo aggiunto (#{result['id']}):\n<i>{goal_text}</i>",
+        }
+        await update.message.reply_text(msgs.get(lang, msgs["ru"]), parse_mode=ParseMode.HTML)
+        return
+
+    # /goal — show current goals
+    result = await tool_get_goals({}, session, sheets, auth)
+    goals = result.get("goals", [])
+
+    if not goals:
+        empty = {
+            "ru": "🎯 Активных целей нет.\n\nДобавить: /goal add custom Описание цели",
+            "uk": "🎯 Активних цілей немає.\n\nДодати: /goal add custom Опис цілі",
+            "en": "🎯 No active goals.\n\nAdd one: /goal add custom Goal description",
+            "it": "🎯 Nessun obiettivo attivo.\n\nAggiungi: /goal add custom Descrizione obiettivo",
+        }
+        await update.message.reply_text(empty.get(lang, empty["ru"]))
+        return
+
+    titles = {"ru": "🎯 <b>Мои цели</b>", "uk": "🎯 <b>Мої цілі</b>",
+              "en": "🎯 <b>My Goals</b>", "it": "🎯 <b>I miei obiettivi</b>"}
+    lines = [titles.get(lang, titles["ru"]), ""]
+
+    for g in goals:
+        type_label = _goal_type_label(g["goal_type"], lang)
+        pct = round(g["progress"] * 100)
+        bar = _progress_bar(pct)
+        lines.append(
+            f"{type_label}  <code>#{g['id']}</code>\n"
+            f"<i>{g['goal_text']}</i>\n"
+            f"{bar}  {pct}%"
+        )
+
+    done_hint = {"ru": "Закрыть: /goal done #id", "uk": "Закрити: /goal done #id",
+                 "en": "Close: /goal done #id", "it": "Chiudi: /goal done #id"}
+    lines.append(f"\n{done_hint.get(lang, done_hint['ru'])}")
+
+    await update.message.reply_text("\n\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 # ── /menu ──────────────────────────────────────────────────────────────────────
 
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2629,6 +2720,7 @@ def main():
     app.add_handler(CommandHandler("stats",        cmd_stats))
     app.add_handler(CommandHandler("admin_support", cmd_admin_support))
     app.add_handler(CommandHandler("idea",         cmd_idea))
+    app.add_handler(CommandHandler("goal",         cmd_goal))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message
