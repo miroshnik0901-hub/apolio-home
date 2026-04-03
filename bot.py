@@ -246,12 +246,19 @@ def _month_name(period: str, lang: str = "ru") -> str:
 
 
 def _progress_bar(current: float, total: float, width: int = 10) -> str:
-    """Emoji block progress bar."""
+    """Emoji block progress bar. Uses rounded squares for a softer look."""
     if not total or total <= 0:
-        return "░" * width
+        return "▱" * width
     pct = min(current / total, 1.0)
     filled = round(pct * width)
-    return "█" * filled + "░" * (width - filled)
+    # 🟩 green for low spend, 🟨 for mid, 🟥 for high
+    if pct < 0.7:
+        block = "🟩"
+    elif pct < 0.9:
+        block = "🟨"
+    else:
+        block = "🟥"
+    return block * filled + "▱" * (width - filled)
 
 
 def _ru_plural(n: int, one: str, few: str, many: str) -> str:
@@ -733,6 +740,24 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
     except Exception as e:
         logger.error(f"_build_trends_html failed: {e}", exc_info=True)
         return i18n.tu("trends_error", lang, detail=str(e))
+
+
+async def _report_cat_rows(session, period: str, lang: str) -> list:
+    """Return list of InlineKeyboardButton rows for category drill-down.
+    Returns [] if categories can't be fetched (optional feature)."""
+    try:
+        from tools.summary import tool_get_summary
+        summ = await tool_get_summary({"period": period}, session, sheets, auth)
+        cats = sorted(summ.get("categories", {}).items(), key=lambda x: -x[1])[:6]
+        rows = []
+        for cat, _ in cats:
+            cat_key = cat[:20]  # Telegram callback_data max 64 bytes
+            cat_label = f"{_cat_icon(cat)} {cat[:18]}"
+            rows.append([InlineKeyboardButton(cat_label, callback_data=f"cb_cat_drill:{period}:{cat_key}")])
+        return rows
+    except Exception as e:
+        logger.debug(f"_report_cat_rows: {e}")
+        return []
 
 
 async def _build_category_html(session, period: str, category: str, lang: str = "ru") -> str:
@@ -1860,7 +1885,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     from tools.transactions import tool_find_transactions
                     find_params: dict = {"limit": limit_n}
                     if period == "current":
-                        today_str = datetime.now().strftime("%Y-%m")
+                        today_str = dt.date.today().strftime("%Y-%m")
                         find_params["date_from"] = f"{today_str}-01"
                     result = await tool_find_transactions(find_params, session, sheets, auth)
                     txs = result.get("transactions", [])
@@ -2178,10 +2203,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         m1 = _offset_month(cur_m, -1)
         m2 = _offset_month(cur_m, -2)
         html = await _build_report_html(session, cur_m, lang)
+        cat_rows = await _report_cat_rows(session, cur_m, lang)
         kb = _with_menu_btn(
             [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
              InlineKeyboardButton(_month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
              InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            *cat_rows, lang=lang,
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -2190,10 +2217,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         m1 = _offset_month(cur_m, -1)
         m2 = _offset_month(cur_m, -2)
         html = await _build_report_html(session, m1, lang)
+        cat_rows = await _report_cat_rows(session, m1, lang)
         kb = _with_menu_btn(
             [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
              InlineKeyboardButton("▶ " + _month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
              InlineKeyboardButton(_month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            *cat_rows, lang=lang,
         )
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -2205,28 +2234,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         m3 = _offset_month(cur_m, -3)
         html = await _build_report_html(session, period, lang)
 
-        # Build month navigation row
+        # Month navigation row
         nav_months = [m3, m2, m1, cur_m]
         nav_btns = []
         for nm in nav_months:
             label = ("▶ " if nm == period else "") + _month_label(nm, lang)[:4]
             nav_btns.append(InlineKeyboardButton(label, callback_data=f"cb_report_m:{nm}"))
 
-        # Build category drill-down buttons (top categories of this period)
-        cat_rows = []
-        try:
-            from tools.summary import tool_get_summary
-            summ = await tool_get_summary({"period": period}, session, sheets, auth)
-            cats = sorted(summ.get("categories", {}).items(), key=lambda x: -x[1])[:6]
-            for cat, _ in cats:
-                # Telegram callback_data limit is 64 bytes; truncate category if needed
-                cat_key = cat[:20]
-                cat_label = f"{_cat_icon(cat)} {cat[:16]}"
-                cat_rows.append([InlineKeyboardButton(
-                    cat_label, callback_data=f"cb_cat_drill:{period}:{cat_key}"
-                )])
-        except Exception:
-            pass  # drill-down buttons are optional
+        # Category drill-down buttons
+        cat_rows = await _report_cat_rows(session, period, lang)
 
         kb = _with_menu_btn(nav_btns, *cat_rows, lang=lang)
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)

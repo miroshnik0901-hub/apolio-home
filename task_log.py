@@ -200,7 +200,7 @@ class TaskLog:
                 if status is not None:
                     updates[COL_STATUS] = status
                     if status in {STATUS_CLOSED, STATUS_BLOCKED} and not row[COL_RESOLVED - 1]:
-                        updates[COL_RESOLVED] = resolved_at or datetime.now().strftime("%Y-%m-%d")
+                        updates[COL_RESOLVED] = resolved_at or datetime.now().strftime("%Y-%m-%d %H:%M")
                     elif status in {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD}:
                         updates[COL_RESOLVED] = ""
                     # DISCUSSION: leave Resolved At unchanged
