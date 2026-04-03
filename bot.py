@@ -85,10 +85,12 @@ _db_ready = False
 def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     """Build reply keyboard in the user's language.
 
-    Layout (3 rows × 2 columns):
-        📊 Статус   |  📋 Отчёт
-        📝 Записи   |  ➕ Добавить
-        📁 Конверты |  ⚙️ Настройки
+    Layout (1 row × 3 columns) — T-028:
+        💰 Бюджет  |  ➕ Добавить  |  ☰ Ещё
+
+    Бюджет → quick budget status
+    Добавить → prompted transaction entry
+    Ещё → opens the inline navigation menu
 
     is_persistent=False so the keyboard is collapsible and the toggle button
     stays visible in the input bar. The keyboard itself is re-sent whenever
@@ -97,9 +99,11 @@ def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     """
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(i18n.t_kb("status", lang)),    KeyboardButton(i18n.t_kb("report", lang))],
-            [KeyboardButton(i18n.t_kb("records", lang)),   KeyboardButton(i18n.t_kb("add", lang))],
-            [KeyboardButton(i18n.t_kb("envelopes", lang)), KeyboardButton(i18n.t_kb("settings", lang))],
+            [
+                KeyboardButton(i18n.t_kb("budget", lang)),
+                KeyboardButton(i18n.t_kb("add", lang)),
+                KeyboardButton(i18n.t_kb("more", lang)),
+            ],
         ],
         resize_keyboard=True,
         is_persistent=False,  # collapsible; toggle button visible on right side of input
@@ -1706,7 +1710,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "<b>Конверты:</b>\n"
         "› /envelopes — список с ссылками\n"
         "› /envelope MM_BUDGET — выбрать\n"
-        "› создай конверт «Отпуск» лимит 2000 EUR\n\n"
+        "› создай конверт «Отпуск» бюджет 2000 EUR\n\n"
         "<b>Исправления:</b>\n"
         "› не 45 а 54 / actually 90\n"
         "› это было вчера\n"
@@ -2321,7 +2325,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "Просто пишите естественным языком:\n"
                 "› «кофе 3.50» или «продукты 85 EUR»\n"
                 "› «покажи отчёт за март»\n"
-                "› «создай конверт Отпуск лимит 2000 EUR»\n\n"
+                "› «создай конверт Отпуск бюджет 2000 EUR»\n\n"
                 "<b>Команды:</b> /menu /envelopes /status /report /transactions /week /undo /help",
                 parse_mode=ParseMode.HTML,
             )
@@ -2565,8 +2569,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if action:
             tree = mc.get_menu()
             role = tg_user.get("role", "viewer")
-            if action == "status":
+            if action in ("budget", "status"):
+                # 💰 Бюджет (primary) or legacy 📊 Статус
                 await cmd_status(update, ctx)
+            elif action == "more":
+                # ☰ Ещё — opens the full inline navigation menu
+                kb = _build_inline_menu("", tree, role, lang)
+                await update.message.reply_text(i18n.t_menu("menu_title", lang), reply_markup=kb)
             elif action == "report":
                 kb = _build_inline_menu("report", tree, role, lang)
                 await update.message.reply_text(i18n.ts("report_title", lang), reply_markup=kb)

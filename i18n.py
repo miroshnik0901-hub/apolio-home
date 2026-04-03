@@ -19,34 +19,45 @@ def get_lang(code: str) -> str:
 
 KB_LABELS: dict[str, dict[str, str]] = {
     "ru": {
+        # ── Primary 3-button keyboard (T-028) ──
+        "budget":    "💰 Бюджет",
+        "add":       "➕ Добавить",
+        "more":      "☰ Ещё",
+        # ── Legacy keys — kept for KB_TEXT_TO_ACTION reverse map ──
+        # (so old messages / taps still route correctly)
         "status":    "📊 Статус",
         "report":    "📋 Отчёт",
         "records":   "📝 Записи",
-        "add":       "➕ Добавить",
         "envelopes": "📁 Конверты",
         "settings":  "⚙️ Настройки",
     },
     "uk": {
+        "budget":    "💰 Бюджет",
+        "add":       "➕ Додати",
+        "more":      "☰ Ще",
         "status":    "📊 Статус",
         "report":    "📋 Звіт",
         "records":   "📝 Записи",
-        "add":       "➕ Додати",
         "envelopes": "📁 Конверти",
         "settings":  "⚙️ Налаштування",
     },
     "en": {
+        "budget":    "💰 Budget",
+        "add":       "➕ Add",
+        "more":      "☰ More",
         "status":    "📊 Status",
         "report":    "📋 Report",
         "records":   "📝 Records",
-        "add":       "➕ Add",
         "envelopes": "📁 Envelopes",
         "settings":  "⚙️ Settings",
     },
     "it": {
+        "budget":    "💰 Budget",
+        "add":       "➕ Aggiungi",
+        "more":      "☰ Altro",
         "status":    "📊 Stato",
         "report":    "📋 Report",
         "records":   "📝 Voci",
-        "add":       "➕ Aggiungi",
         "envelopes": "📁 Buste",
         "settings":  "⚙️ Impostazioni",
     },
@@ -81,6 +92,8 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_envelope":  "📁 Активный конверт",
         "set_undo":      "↩️ Отменить",
         "set_refresh":   "🔄 Обновить меню",
+        # help
+        "help_top":      "❓ Помощь",
         # navigation
         "back":          "◀ Назад",
         # headings
@@ -106,6 +119,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_envelope":  "📁 Активний конверт",
         "set_undo":      "↩️ Скасувати",
         "set_refresh":   "🔄 Оновити меню",
+        "help_top":      "❓ Допомога",
         "back":          "◀ Назад",
         "menu_title":    "Меню:",
     },
@@ -129,6 +143,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_envelope":  "📁 Active Envelope",
         "set_undo":      "↩️ Undo",
         "set_refresh":   "🔄 Refresh Menu",
+        "help_top":      "❓ Help",
         "back":          "◀ Back",
         "menu_title":    "Menu:",
     },
@@ -152,6 +167,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_envelope":  "📁 Busta Attiva",
         "set_undo":      "↩️ Annulla",
         "set_refresh":   "🔄 Aggiorna Menu",
+        "help_top":      "❓ Aiuto",
         "back":          "◀ Indietro",
         "menu_title":    "Menu:",
     },
@@ -218,10 +234,10 @@ MONTH_NAMES: dict[str, dict[str, str]] = {
 # ── Misc UI strings ────────────────────────────────────────────────────────────
 
 NO_LIMIT: dict[str, str] = {
-    "ru": "без лимита",
-    "uk": "без ліміту",
-    "en": "no limit",
-    "it": "senza limite",
+    "ru": "без бюджета",
+    "uk": "без бюджету",
+    "en": "no budget",
+    "it": "senza budget",
 }
 
 # ── /start welcome message ─────────────────────────────────────────────────────
@@ -318,10 +334,10 @@ SYS: dict[str, dict[str, str]] = {
         "it": "🔄 Menu aggiornato.",
     },
     "no_envelopes": {
-        "ru": "Конверты ещё не созданы.\n\nНапишите: «создай конверт Название, лимит N EUR»",
-        "uk": "Конверти ще не створені.\n\nНапишіть: «створи конверт Назва, ліміт N EUR»",
-        "en": "No envelopes yet.\n\nWrite: «create envelope Name, limit N EUR»",
-        "it": "Nessuna busta ancora.\n\nScrivi: «crea busta Nome, limite N EUR»",
+        "ru": "Конверты ещё не созданы.\n\nНапишите: «создай конверт Название, бюджет N EUR»",
+        "uk": "Конверти ще не створені.\n\nНапишіть: «створи конверт Назва, бюджет N EUR»",
+        "en": "No envelopes yet.\n\nWrite: «create envelope Name, budget N EUR»",
+        "it": "Nessuna busta ancora.\n\nScrivi: «crea busta Nome, budget N EUR»",
     },
     "no_transactions": {
         "ru": "Записей пока нет.\n\nПросто напишите что потратили, например: «кофе 3.50»",

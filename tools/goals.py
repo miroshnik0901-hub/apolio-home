@@ -52,8 +52,8 @@ def _get_goal_templates(sheets) -> list[dict]:
             ws = wb.add_worksheet(title=GOALS_TAB, rows=50, cols=4)
             ws.append_row(GOALS_HEADERS)
             # Seed with default templates
-            ws.append_row(["Ежемесячный лимит", "expense_limit",
-                            "Не превышать лимит расходов за месяц",
+            ws.append_row(["Ежемесячный бюджет", "expense_limit",
+                            "Не превышать бюджет расходов за месяц",
                             '{"category": "", "limit_eur": 2500}'])
             ws.append_row(["Накопления", "savings",
                             "Накопить сумму к дате",
@@ -170,7 +170,7 @@ async def check_goals_against_transaction(
                     pct = amount_eur / limit * 100
                     if pct >= 30:
                         notifications.append(
-                            f"⚠️ Цель «{g['goal_text']}»: эта трата = {pct:.0f}% от лимита ({limit:,.0f} EUR)"
+                            f"⚠️ Цель «{g['goal_text']}»: эта трата = {pct:.0f}% от бюджета ({limit:,.0f} EUR)"
                         )
 
         # For savings / contribution goals, progress tracking is done separately

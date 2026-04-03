@@ -51,6 +51,11 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "submenu", "command": "", "params": {}, "order": 5,
         "roles": [],
     },
+    "help_top": {
+        "label": "❓ Помощь", "parent": "",
+        "type": "cmd", "command": "help", "params": {}, "order": 6,
+        "roles": [],
+    },
     # ── Analytics submenu ──────────────────────────────────────────────────
     "rep_curr": {
         "label": "▶ Этот месяц", "parent": "report",
@@ -216,6 +221,7 @@ _DEFAULT_ROWS = [
     ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     3, "TRUE", ""),
     ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     4, "TRUE", ""),
     ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     5, "TRUE", ""),
+    ("help_top",      "❓ Помощь",         "",             "cmd",     "help",         "",                     6, "TRUE", ""),
     # Analytics submenu
     ("rep_curr",         "▶ Этот месяц",         "report",       "cmd",       "report",          '{"period":"current"}',                                                                       1, "TRUE", ""),
     ("rep_last",         "◀ Прошлый месяц",      "report",       "cmd",       "report",          '{"period":"last"}',                                                                          2, "TRUE", ""),

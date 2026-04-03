@@ -497,7 +497,7 @@ class EnvelopeSheets:
 
             # ── Budget summary (current month) ───────────────────────────
             rows.append(["Месяц:", month, "", "", ""])
-            rows.append(["Лимит бюджета:", f"{cap:,.2f} {cur}", "", "", ""])
+            rows.append(["Бюджет:", f"{cap:,.2f} {cur}", "", "", ""])
             rows.append(["Расходы:", f"{spent:,.2f} {cur}", "", "", ""])
             rows.append(["Остаток:", f"{remaining:,.2f} {cur}", "", "", ""])
             rows.append(["Использовано:", f"{pct:.1f}%", "", "", ""])
@@ -562,7 +562,7 @@ class EnvelopeSheets:
 
                 # Build a wide table — need more than 5 cols; use column G+ for extra users
                 # Row 1: header
-                h_row = ["Месяц", "Расходы EUR", "Лимит EUR", "% лимита", ""]
+                h_row = ["Месяц", "Расходы EUR", "Бюджет EUR", "% бюджета", ""]
                 for u in all_users:
                     h_row += [f"{u}: внёс", f"{u}: доля", f"{u}: баланс", ""]
                 rows.append(h_row)
