@@ -147,5 +147,3 @@ Data architecture:
 сколько осталось                   → budget status
 /adduser 123456 Marina contributor MM
 ```
-
-<!-- Railway deploy trigger v3: 2026-04-01T11:02 -->
