@@ -390,21 +390,21 @@ async def _build_status_html(session, lang: str = "ru") -> str:
         projected = daily_rate * days_in_month if cap else 0
 
         lines = [
-            f"📊 <b>Бюджет {label}</b>  ·  📁 {env_label}{mode_tag}",
+            i18n.tu("status_title", lang, label=label, env=env_label, mode=mode_tag),
             "",
         ]
 
         if cap:
             lines.append(f"{bar}  {status_emoji}")
             lines.append(f"<b>{spent:,.0f}</b> / {cap:,.0f} EUR  <b>({pct:.0f}%)</b>")
-            lines.append(f"Осталось: <b>{remaining:,.0f} EUR</b>  ·  {days_left} дн.")
+            lines.append(i18n.tu("status_remaining", lang, remaining=remaining, days=days_left))
         else:
-            lines.append(f"Потрачено: <b>{spent:,.0f} EUR</b>")
+            lines.append(i18n.tu("status_spent", lang, spent=spent))
 
         if daily_rate > 0 and cap:
             pace_delta = projected - cap
             pace_str = (f"+{pace_delta:,.0f}" if pace_delta > 0 else f"{pace_delta:,.0f}")
-            lines.append(f"Темп: <i>{daily_rate:,.0f} EUR/день → прогноз {projected:,.0f} EUR ({pace_str})</i>")
+            lines.append(i18n.tu("status_pace", lang, rate=daily_rate, proj=projected, delta=pace_str))
 
         if summary.get("status") == "ok":
             cats = summary.get("categories", {})
@@ -413,7 +413,7 @@ async def _build_status_html(session, lang: str = "ru") -> str:
 
             if cats:
                 lines.append("")
-                lines.append("<b>По категориям:</b>")
+                lines.append(i18n.tu("by_category", lang))
                 for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:8]:
                     icon = _cat_icon(cat)
                     pct_cat = round(amt / spent * 100) if spent else 0
@@ -428,14 +428,14 @@ async def _build_status_html(session, lang: str = "ru") -> str:
 
             if len(by_who) > 1:
                 lines.append("")
-                lines.append("<b>По кому:</b>")
+                lines.append(i18n.tu("by_person", lang))
                 for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
                     lines.append(f"  👤 {who}: {amt:,.0f} EUR")
 
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_status_html failed: {e}", exc_info=True)
-        return f"❌ Не удалось загрузить статус: {e}"
+        return i18n.tu("status_error", lang, detail=str(e))
 
 
 async def _build_report_html(session, period: str = "current", lang: str = "ru") -> str:
@@ -476,10 +476,10 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
         except Exception:
             cap = 0
 
-        lines = [f"📋 <b>Отчёт — {label}</b>", ""]
+        lines = [i18n.tu("report_heading", lang, label=label), ""]
 
         if total == 0:
-            lines.append("Записей за этот период нет.")
+            lines.append(i18n.tu("report_no_records", lang))
             return "\n".join(lines)
 
         # Total with comparison
@@ -487,21 +487,20 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             delta = total - total_prev
             pct_delta = round(delta / total_prev * 100)
             arrow = "↑" if delta > 0 else "↓"
-            lines.append(
-                f"Итого: <b>{total:,.0f} EUR</b>  "
-                f"<i>{arrow}{abs(pct_delta)}% vs {_month_label(prev_period, lang)}</i>"
-            )
+            lines.append(i18n.tu("report_total_vs", lang,
+                                 total=total, arrow=arrow, pct=abs(pct_delta),
+                                 prev_label=_month_label(prev_period, lang)))
         else:
-            lines.append(f"Итого расходов: <b>{total:,.0f} EUR</b>")
+            lines.append(i18n.tu("report_total", lang, total=total))
 
         if cap:
             bar = _progress_bar(total, cap, 10)
             pct_of_cap = round(total / cap * 100)
-            lines.append(f"{bar}  {pct_of_cap}% от бюджета ({cap:,.0f} EUR)")
+            lines.append(f"{bar}  {i18n.tu('report_of_budget', lang, pct=pct_of_cap, cap=cap)}")
 
         if cats:
             lines.append("")
-            lines.append("<b>По категориям:</b>")
+            lines.append(i18n.tu("by_category", lang))
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 pct_share = round(amt / total * 100) if total else 0
                 bar = _progress_bar(amt, total, 6)
@@ -520,7 +519,7 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
 
         if len(by_who) > 1:
             lines.append("")
-            lines.append("<b>По кому:</b>")
+            lines.append(i18n.tu("by_person", lang))
             for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
                 pct_share = round(amt / total * 100) if total else 0
                 lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct_share}%)")
@@ -528,10 +527,10 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_report_html failed: {e}", exc_info=True)
-        return f"❌ Не удалось загрузить отчёт: {e}"
+        return i18n.tu("report_error", lang, detail=str(e))
 
 
-async def _build_week_html(session) -> str:
+async def _build_week_html(session, lang: str = "ru") -> str:
     """Render this-week expenses as HTML."""
     try:
         from tools.transactions import tool_find_transactions
@@ -546,7 +545,7 @@ async def _build_week_html(session) -> str:
 
         txs = [r for r in result.get("transactions", []) if r.get("Type") == "expense"]
         if not txs:
-            return "За эту неделю расходов ещё нет."
+            return i18n.tu("week_no_expenses", lang)
 
         total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
         cats: dict = {}
@@ -563,25 +562,25 @@ async def _build_week_html(session) -> str:
         daily_avg = total / days_elapsed
 
         lines = [
-            f"📅 <b>Эта неделя</b>  ({week_label})",
+            i18n.tu("week_title", lang, week_label=week_label),
             "",
-            f"Итого: <b>{total:,.0f} EUR</b>  ·  {len(txs)} {_ru_plural(len(txs), 'запись', 'записи', 'записей')}",
-            f"В среднем: <i>{daily_avg:,.0f} EUR/день</i>",
+            i18n.tu("week_total", lang, total=total, n=len(txs)),
+            i18n.tu("week_daily_avg", lang, avg=daily_avg),
         ]
 
         if by_day:
             lines.append("")
-            lines.append("<b>По дням:</b>")
+            lines.append(i18n.tu("by_day", lang))
             for day in sorted(by_day.keys()):
-                day_label = dt.datetime.strptime(day, "%Y-%m-%d").strftime("%d.%m %a").replace(
-                    "Mon", "Пн").replace("Tue", "Вт").replace("Wed", "Ср").replace(
-                    "Thu", "Чт").replace("Fri", "Пт").replace("Sat", "Сб").replace("Sun", "Вс")
+                eng_abbrev = dt.datetime.strptime(day, "%Y-%m-%d").strftime("%a")
+                day_abbrev = i18n.day_abbrev(eng_abbrev, lang)
+                day_label = dt.datetime.strptime(day, "%Y-%m-%d").strftime("%d.%m") + f" {day_abbrev}"
                 amt = by_day[day]
                 lines.append(f"  {day_label}: {amt:,.0f} EUR")
 
         if cats:
             lines.append("")
-            lines.append("<b>По категориям:</b>")
+            lines.append(i18n.tu("by_category", lang))
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 icon = _cat_icon(cat)
                 pct_share = round(amt / total * 100) if total else 0
@@ -590,7 +589,7 @@ async def _build_week_html(session) -> str:
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_week_html failed: {e}", exc_info=True)
-        return f"❌ Ошибка: {e}"
+        return i18n.tu("week_error", lang, detail=str(e))
 
 
 async def _build_contribution_html(session, lang: str = "ru") -> str:
@@ -602,7 +601,7 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
         if snap.get("error"):
             return f"❌ {snap['error']}"
         if snap.get("status") != "ok":
-            return "Данные о взносах недоступны."
+            return i18n.tu("contrib_unavailable", lang)
 
         cur = snap["currency"]
         month = snap["month"]
@@ -618,54 +617,54 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
         base_c = snap["base_contributor"]
         split_rule = snap["split_rule"]
 
-        lines = [f"💸 <b>Взносы — {label}</b>", ""]
+        lines = [i18n.tu("contrib_title", lang, label=label), ""]
 
         # Contributions (who put in how much)
         if contributions:
-            lines.append("<b>Внесено:</b>")
+            lines.append(i18n.tu("contrib_contributed", lang))
             for u in split_users:
                 amt = float(contributions.get(u, 0))
                 lines.append(f"  👤 {u}: {amt:,.0f} {cur}")
             lines.append("")
 
         # Total expenses and split
-        lines.append(f"Общие расходы: <b>{total_exp:,.0f} {cur}</b>")
+        lines.append(i18n.tu("contrib_total_exp", lang, total=total_exp, cur=cur))
 
         if split_rule == "solo" or len(split_users) <= 1:
-            lines.append(f"Схема: всё на {base_c}")
+            lines.append(i18n.tu("contrib_solo", lang, user=base_c))
         else:
             if total_exp <= threshold:
-                lines.append(f"До порога ({threshold:,.0f} {cur}) — всё на {base_c}")
+                lines.append(i18n.tu("contrib_below_threshold", lang,
+                                     thr=threshold, cur=cur, user=base_c))
             else:
-                lines.append(
-                    f"Порог: {threshold:,.0f} {cur}  →  превышение: <b>{excess:,.0f} {cur}</b>\n"
-                    f"Каждый платит: {excess_per:,.0f} {cur} (плюс доля {base_c})"
-                )
+                lines.append(i18n.tu("contrib_excess", lang,
+                                     thr=threshold, cur=cur, excess=excess,
+                                     per=excess_per, user=base_c))
 
         # Shares
         if user_shares:
             lines.append("")
-            lines.append("<b>Доля каждого:</b>")
+            lines.append(i18n.tu("contrib_shares", lang))
             for u in split_users:
                 share = float(user_shares.get(u, 0))
                 lines.append(f"  👤 {u}: {share:,.0f} {cur}")
 
         # Balances
         lines.append("")
-        lines.append("<b>Итог (внесено − доля):</b>")
+        lines.append(i18n.tu("contrib_balance", lang))
         for u in split_users:
             b = float(balances.get(u, 0))
             if b > 0:
-                lines.append(f"  👤 {u}: <b>+{b:,.0f} {cur}</b>  ✅ в плюсе")
+                lines.append(f"  👤 {u}: <b>+{b:,.0f} {cur}</b>  {i18n.tu('contrib_in_plus', lang)}")
             elif b < 0:
-                lines.append(f"  👤 {u}: <b>{b:,.0f} {cur}</b>  ⚠️ должен")
+                lines.append(f"  👤 {u}: <b>{b:,.0f} {cur}</b>  {i18n.tu('contrib_owes', lang)}")
             else:
-                lines.append(f"  👤 {u}: 0 {cur}  ≈ ровно")
+                lines.append(f"  👤 {u}: 0 {cur}  {i18n.tu('contrib_even', lang)}")
 
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_contribution_html failed: {e}", exc_info=True)
-        return f"❌ Ошибка: {e}"
+        return i18n.tu("trends_error", lang, detail=str(e))
 
 
 async def _build_trends_html(session, lang: str = "ru") -> str:
@@ -681,11 +680,11 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
         cur = snap.get("currency", "EUR")
         month = snap.get("month", "")
         label = _month_label(month, lang)
-        lines = [f"📈 <b>Тренды — {label}</b>", ""]
+        lines = [i18n.tu("trends_title", lang, label=label), ""]
 
         trends = snap.get("trends", [])
         if trends:
-            lines.append("<b>Изменения по категориям (vs пред. месяц):</b>")
+            lines.append(i18n.tu("trends_by_cat", lang))
             for t in trends:
                 direction = t["direction"]
                 cat = t["category"]
@@ -698,23 +697,23 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
                     f"({chg:+.0f}%  vs {prev_amt:,.0f} {cur})"
                 )
         else:
-            lines.append("Трендов пока нет (нужны данные за 2+ месяца).")
+            lines.append(i18n.tu("trends_empty", lang))
 
         anomalies = snap.get("anomalies", [])
         if anomalies:
             lines.append("")
-            lines.append("⚠️ <b>Аномалии (значительно выше среднего):</b>")
+            lines.append(i18n.tu("trends_anomalies", lang))
             for a in anomalies:
                 icon = _cat_icon(a["category"])
                 lines.append(
                     f"  {icon} {a['category']}: {a['current']:,.0f} {cur}  "
-                    f"(среднее {a['average']:,.0f}, ×{a['ratio']})"
+                    f"{i18n.tu('trends_anomaly_detail', lang, avg=a['average'], ratio=a['ratio'])}"
                 )
 
         large = snap.get("large_recent", [])
         if large:
             lines.append("")
-            lines.append("💸 <b>Крупные расходы (7 дней):</b>")
+            lines.append(i18n.tu("trends_large", lang))
             for r in large:
                 icon = _cat_icon(r.get("category", ""))
                 note = f" — {r['note']}" if r.get("note") else ""
@@ -726,14 +725,14 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
         if pace == "over_pace":
             projected = snap.get("projected_total", 0)
             cap = snap.get("cap", 0)
-            lines.append(f"\n⚠️ Темп: прогноз {projected:,.0f} {cur} при бюджете {cap:,.0f} {cur}")
+            lines.append(i18n.tu("trends_over_pace", lang, proj=projected, cur=cur, cap=cap))
         elif pace == "under_pace":
-            lines.append(f"\n✅ Темп: расходы ниже плана")
+            lines.append(i18n.tu("trends_under_pace", lang))
 
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_trends_html failed: {e}", exc_info=True)
-        return f"❌ Ошибка: {e}"
+        return i18n.tu("trends_error", lang, detail=str(e))
 
 
 # ── Post init ──────────────────────────────────────────────────────────────────
@@ -1266,7 +1265,7 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    html = await _build_week_html(session)
+    html = await _build_week_html(session, lang)
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=_with_menu_btn(lang=lang))
 
 
@@ -1616,7 +1615,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     lang=lang,
                 )
             elif command == "week":
-                html = await _build_week_html(session)
+                html = await _build_week_html(session, lang)
                 kb = _with_menu_btn(lang=lang)
             elif command == "transactions":
                 limit_n = params.get("limit", 10)
@@ -2485,9 +2484,10 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
         return
     session = get_session(mikhail_id, "Mikhail", "admin")
     try:
-        html = await _build_week_html(session)
-        report_html = await _build_report_html(session, "current", getattr(session, "lang", "ru"))
-        full = f"📅 <b>Еженедельный отчёт</b>\n\n{html}\n\n{report_html}"
+        lang = getattr(session, "lang", "ru")
+        html = await _build_week_html(session, lang)
+        report_html = await _build_report_html(session, "current", lang)
+        full = f"{i18n.tu('weekly_job_title', lang)}\n\n{html}\n\n{report_html}"
         await context.bot.send_message(
             chat_id=mikhail_id,
             text=full,

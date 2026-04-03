@@ -454,3 +454,294 @@ def _build_reverse() -> dict[str, str]:
 
 
 KB_TEXT_TO_ACTION: dict[str, str] = _build_reverse()
+
+
+# ── UI display strings (HTML responses) ────────────────────────────────────────
+# Use tu(key, lang, **kwargs) to retrieve and optionally format.
+
+UI: dict[str, dict[str, str]] = {
+    # ── Status ─────────────────────────────────────────────────────────────
+    "status_title": {
+        "ru": "📊 <b>Бюджет {label}</b>  ·  📁 {env}{mode}",
+        "uk": "📊 <b>Бюджет {label}</b>  ·  📁 {env}{mode}",
+        "en": "📊 <b>Budget {label}</b>  ·  📁 {env}{mode}",
+        "it": "📊 <b>Budget {label}</b>  ·  📁 {env}{mode}",
+    },
+    "status_remaining": {
+        "ru": "Осталось: <b>{remaining:,.0f} EUR</b>  ·  {days} дн.",
+        "uk": "Залишилось: <b>{remaining:,.0f} EUR</b>  ·  {days} дн.",
+        "en": "Remaining: <b>{remaining:,.0f} EUR</b>  ·  {days}d",
+        "it": "Rimanente: <b>{remaining:,.0f} EUR</b>  ·  {days}g",
+    },
+    "status_spent": {
+        "ru": "Потрачено: <b>{spent:,.0f} EUR</b>",
+        "uk": "Витрачено: <b>{spent:,.0f} EUR</b>",
+        "en": "Spent: <b>{spent:,.0f} EUR</b>",
+        "it": "Speso: <b>{spent:,.0f} EUR</b>",
+    },
+    "status_pace": {
+        "ru": "Темп: <i>{rate:,.0f} EUR/день → прогноз {proj:,.0f} EUR ({delta})</i>",
+        "uk": "Темп: <i>{rate:,.0f} EUR/день → прогноз {proj:,.0f} EUR ({delta})</i>",
+        "en": "Pace: <i>{rate:,.0f} EUR/day → forecast {proj:,.0f} EUR ({delta})</i>",
+        "it": "Ritmo: <i>{rate:,.0f} EUR/giorno → previsione {proj:,.0f} EUR ({delta})</i>",
+    },
+    "status_error": {
+        "ru": "❌ Не удалось загрузить статус: {detail}",
+        "uk": "❌ Не вдалося завантажити статус: {detail}",
+        "en": "❌ Failed to load status: {detail}",
+        "it": "❌ Impossibile caricare lo stato: {detail}",
+    },
+    # ── Report ─────────────────────────────────────────────────────────────
+    "report_heading": {
+        "ru": "📋 <b>Отчёт — {label}</b>",
+        "uk": "📋 <b>Звіт — {label}</b>",
+        "en": "📋 <b>Report — {label}</b>",
+        "it": "📋 <b>Report — {label}</b>",
+    },
+    "report_no_records": {
+        "ru": "Записей за этот период нет.",
+        "uk": "Записів за цей період немає.",
+        "en": "No records for this period.",
+        "it": "Nessun record per questo periodo.",
+    },
+    "report_total_vs": {
+        "ru": "Итого: <b>{total:,.0f} EUR</b>  <i>{arrow}{pct}% vs {prev_label}</i>",
+        "uk": "Разом: <b>{total:,.0f} EUR</b>  <i>{arrow}{pct}% vs {prev_label}</i>",
+        "en": "Total: <b>{total:,.0f} EUR</b>  <i>{arrow}{pct}% vs {prev_label}</i>",
+        "it": "Totale: <b>{total:,.0f} EUR</b>  <i>{arrow}{pct}% vs {prev_label}</i>",
+    },
+    "report_total": {
+        "ru": "Итого расходов: <b>{total:,.0f} EUR</b>",
+        "uk": "Разом витрат: <b>{total:,.0f} EUR</b>",
+        "en": "Total expenses: <b>{total:,.0f} EUR</b>",
+        "it": "Totale spese: <b>{total:,.0f} EUR</b>",
+    },
+    "report_of_budget": {
+        "ru": "{pct}% от бюджета ({cap:,.0f} EUR)",
+        "uk": "{pct}% від бюджету ({cap:,.0f} EUR)",
+        "en": "{pct}% of budget ({cap:,.0f} EUR)",
+        "it": "{pct}% del budget ({cap:,.0f} EUR)",
+    },
+    "report_error": {
+        "ru": "❌ Не удалось загрузить отчёт: {detail}",
+        "uk": "❌ Не вдалося завантажити звіт: {detail}",
+        "en": "❌ Failed to load report: {detail}",
+        "it": "❌ Impossibile caricare il report: {detail}",
+    },
+    # ── Week ───────────────────────────────────────────────────────────────
+    "week_title": {
+        "ru": "📅 <b>Эта неделя</b>  ({week_label})",
+        "uk": "📅 <b>Цей тиждень</b>  ({week_label})",
+        "en": "📅 <b>This Week</b>  ({week_label})",
+        "it": "📅 <b>Questa Settimana</b>  ({week_label})",
+    },
+    "week_no_expenses": {
+        "ru": "За эту неделю расходов ещё нет.",
+        "uk": "Цього тижня витрат ще немає.",
+        "en": "No expenses this week yet.",
+        "it": "Nessuna spesa questa settimana.",
+    },
+    "week_total": {
+        "ru": "Итого: <b>{total:,.0f} EUR</b>  ·  {n} записей",
+        "uk": "Разом: <b>{total:,.0f} EUR</b>  ·  {n} записів",
+        "en": "Total: <b>{total:,.0f} EUR</b>  ·  {n} records",
+        "it": "Totale: <b>{total:,.0f} EUR</b>  ·  {n} voci",
+    },
+    "week_daily_avg": {
+        "ru": "В среднем: <i>{avg:,.0f} EUR/день</i>",
+        "uk": "В середньому: <i>{avg:,.0f} EUR/день</i>",
+        "en": "Average: <i>{avg:,.0f} EUR/day</i>",
+        "it": "Media: <i>{avg:,.0f} EUR/giorno</i>",
+    },
+    "week_error": {
+        "ru": "❌ Ошибка загрузки недели: {detail}",
+        "uk": "❌ Помилка завантаження тижня: {detail}",
+        "en": "❌ Failed to load week: {detail}",
+        "it": "❌ Errore caricamento settimana: {detail}",
+    },
+    # ── Contribution ───────────────────────────────────────────────────────
+    "contrib_title": {
+        "ru": "💸 <b>Взносы — {label}</b>",
+        "uk": "💸 <b>Внески — {label}</b>",
+        "en": "💸 <b>Contributions — {label}</b>",
+        "it": "💸 <b>Contributi — {label}</b>",
+    },
+    "contrib_unavailable": {
+        "ru": "Данные о взносах недоступны.",
+        "uk": "Дані про внески недоступні.",
+        "en": "Contribution data unavailable.",
+        "it": "Dati contributi non disponibili.",
+    },
+    "contrib_contributed": {
+        "ru": "<b>Внесено:</b>",
+        "uk": "<b>Внесено:</b>",
+        "en": "<b>Contributed:</b>",
+        "it": "<b>Contribuito:</b>",
+    },
+    "contrib_total_exp": {
+        "ru": "Общие расходы: <b>{total:,.0f} {cur}</b>",
+        "uk": "Загальні витрати: <b>{total:,.0f} {cur}</b>",
+        "en": "Total expenses: <b>{total:,.0f} {cur}</b>",
+        "it": "Spese totali: <b>{total:,.0f} {cur}</b>",
+    },
+    "contrib_solo": {
+        "ru": "Схема: всё на {user}",
+        "uk": "Схема: все на {user}",
+        "en": "Scheme: all on {user}",
+        "it": "Schema: tutto su {user}",
+    },
+    "contrib_below_threshold": {
+        "ru": "До порога ({thr:,.0f} {cur}) — всё на {user}",
+        "uk": "До порогу ({thr:,.0f} {cur}) — все на {user}",
+        "en": "Below threshold ({thr:,.0f} {cur}) — all on {user}",
+        "it": "Sotto soglia ({thr:,.0f} {cur}) — tutto su {user}",
+    },
+    "contrib_excess": {
+        "ru": "Порог: {thr:,.0f} {cur}  →  превышение: <b>{excess:,.0f} {cur}</b>\nКаждый платит: {per:,.0f} {cur} (плюс доля {user})",
+        "uk": "Поріг: {thr:,.0f} {cur}  →  перевищення: <b>{excess:,.0f} {cur}</b>\nКожен платить: {per:,.0f} {cur} (плюс частка {user})",
+        "en": "Threshold: {thr:,.0f} {cur}  →  excess: <b>{excess:,.0f} {cur}</b>\nEach pays: {per:,.0f} {cur} (plus {user}'s share)",
+        "it": "Soglia: {thr:,.0f} {cur}  →  eccesso: <b>{excess:,.0f} {cur}</b>\nOgnuno paga: {per:,.0f} {cur} (più quota {user})",
+    },
+    "contrib_shares": {
+        "ru": "<b>Доля каждого:</b>",
+        "uk": "<b>Частка кожного:</b>",
+        "en": "<b>Each person's share:</b>",
+        "it": "<b>Quota di ciascuno:</b>",
+    },
+    "contrib_balance": {
+        "ru": "<b>Итог (внесено − доля):</b>",
+        "uk": "<b>Підсумок (внесено − частка):</b>",
+        "en": "<b>Balance (contributed − share):</b>",
+        "it": "<b>Saldo (contribuito − quota):</b>",
+    },
+    "contrib_in_plus": {
+        "ru": "✅ в плюсе",
+        "uk": "✅ в плюсі",
+        "en": "✅ in surplus",
+        "it": "✅ in attivo",
+    },
+    "contrib_owes": {
+        "ru": "⚠️ должен",
+        "uk": "⚠️ винен",
+        "en": "⚠️ owes",
+        "it": "⚠️ deve",
+    },
+    "contrib_even": {
+        "ru": "≈ ровно",
+        "uk": "≈ рівно",
+        "en": "≈ even",
+        "it": "≈ pari",
+    },
+    # ── Trends ─────────────────────────────────────────────────────────────
+    "trends_title": {
+        "ru": "📈 <b>Тренды — {label}</b>",
+        "uk": "📈 <b>Тренди — {label}</b>",
+        "en": "📈 <b>Trends — {label}</b>",
+        "it": "📈 <b>Tendenze — {label}</b>",
+    },
+    "trends_by_cat": {
+        "ru": "<b>Изменения по категориям (vs пред. месяц):</b>",
+        "uk": "<b>Зміни по категоріях (vs поп. місяць):</b>",
+        "en": "<b>Category changes (vs prev. month):</b>",
+        "it": "<b>Variazioni per categoria (vs mese prec.):</b>",
+    },
+    "trends_empty": {
+        "ru": "Трендов пока нет (нужны данные за 2+ месяца).",
+        "uk": "Трендів поки немає (потрібні дані за 2+ місяці).",
+        "en": "No trends yet (need 2+ months of data).",
+        "it": "Nessuna tendenza (servono 2+ mesi di dati).",
+    },
+    "trends_anomalies": {
+        "ru": "⚠️ <b>Аномалии (значительно выше среднего):</b>",
+        "uk": "⚠️ <b>Аномалії (значно вище середнього):</b>",
+        "en": "⚠️ <b>Anomalies (significantly above average):</b>",
+        "it": "⚠️ <b>Anomalie (significativamente sopra la media):</b>",
+    },
+    "trends_anomaly_detail": {
+        "ru": "(среднее {avg:,.0f}, ×{ratio})",
+        "uk": "(середнє {avg:,.0f}, ×{ratio})",
+        "en": "(avg {avg:,.0f}, ×{ratio})",
+        "it": "(media {avg:,.0f}, ×{ratio})",
+    },
+    "trends_large": {
+        "ru": "💸 <b>Крупные расходы (7 дней):</b>",
+        "uk": "💸 <b>Великі витрати (7 днів):</b>",
+        "en": "💸 <b>Large expenses (7 days):</b>",
+        "it": "💸 <b>Spese grandi (7 giorni):</b>",
+    },
+    "trends_over_pace": {
+        "ru": "\n⚠️ Темп: прогноз {proj:,.0f} {cur} при бюджете {cap:,.0f} {cur}",
+        "uk": "\n⚠️ Темп: прогноз {proj:,.0f} {cur} при бюджеті {cap:,.0f} {cur}",
+        "en": "\n⚠️ Pace: forecast {proj:,.0f} {cur} vs budget {cap:,.0f} {cur}",
+        "it": "\n⚠️ Ritmo: previsione {proj:,.0f} {cur} vs budget {cap:,.0f} {cur}",
+    },
+    "trends_under_pace": {
+        "ru": "\n✅ Темп: расходы ниже плана",
+        "uk": "\n✅ Темп: витрати нижче плану",
+        "en": "\n✅ Pace: spending below target",
+        "it": "\n✅ Ritmo: spesa sotto obiettivo",
+    },
+    "trends_error": {
+        "ru": "❌ Ошибка: {detail}",
+        "uk": "❌ Помилка: {detail}",
+        "en": "❌ Error: {detail}",
+        "it": "❌ Errore: {detail}",
+    },
+    # ── Shared section headers ──────────────────────────────────────────────
+    "by_category": {
+        "ru": "<b>По категориям:</b>",
+        "uk": "<b>По категоріях:</b>",
+        "en": "<b>By category:</b>",
+        "it": "<b>Per categoria:</b>",
+    },
+    "by_person": {
+        "ru": "<b>По кому:</b>",
+        "uk": "<b>По кому:</b>",
+        "en": "<b>By person:</b>",
+        "it": "<b>Per persona:</b>",
+    },
+    "by_day": {
+        "ru": "<b>По дням:</b>",
+        "uk": "<b>По днях:</b>",
+        "en": "<b>By day:</b>",
+        "it": "<b>Per giorno:</b>",
+    },
+    # ── Weekly job ─────────────────────────────────────────────────────────
+    "weekly_job_title": {
+        "ru": "📅 <b>Еженедельный отчёт</b>",
+        "uk": "📅 <b>Щотижневий звіт</b>",
+        "en": "📅 <b>Weekly Report</b>",
+        "it": "📅 <b>Report Settimanale</b>",
+    },
+}
+
+# ── Day-of-week abbreviations (Mon/Tue/... → localized) ────────────────────────
+
+DAY_ABBREVS: dict[str, dict[str, str]] = {
+    "ru": {"Mon": "Пн", "Tue": "Вт", "Wed": "Ср", "Thu": "Чт", "Fri": "Пт", "Sat": "Сб", "Sun": "Вс"},
+    "uk": {"Mon": "Пн", "Tue": "Вт", "Wed": "Ср", "Thu": "Чт", "Fri": "Пт", "Sat": "Сб", "Sun": "Нд"},
+    "en": {"Mon": "Mon", "Tue": "Tue", "Wed": "Wed", "Thu": "Thu", "Fri": "Fri", "Sat": "Sat", "Sun": "Sun"},
+    "it": {"Mon": "Lun", "Tue": "Mar", "Wed": "Mer", "Thu": "Gio", "Fri": "Ven", "Sat": "Sab", "Sun": "Dom"},
+}
+
+
+def tu(key: str, lang: str, **kwargs) -> str:
+    """Translate a UI string, optionally formatting with kwargs.
+
+    Falls back: lang → ru → en → key.
+    kwargs are passed to str.format() if provided.
+    """
+    lg = get_lang(lang)
+    tpl = (
+        UI.get(key, {}).get(lg)
+        or UI.get(key, {}).get("ru")
+        or UI.get(key, {}).get("en")
+        or key
+    )
+    return tpl.format(**kwargs) if kwargs else tpl
+
+
+def day_abbrev(eng_day: str, lang: str) -> str:
+    """Translate a 3-letter English day abbreviation (Mon/Tue/...) to lang."""
+    lg = get_lang(lang)
+    return DAY_ABBREVS.get(lg, DAY_ABBREVS["en"]).get(eng_day, eng_day)
