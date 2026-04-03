@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.4 | Updated: 2026-04-03
+# Version: 1.5 | Updated: 2026-04-03
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -257,89 +257,171 @@ Columns A–G are user-editable. H–P are automatic.
 **Shared with:** `apolio-home-bot@apolio-home.iam.gserviceaccount.com` (Editor)
 **Python module:** `task_log.py` → `TaskLog` class
 
-### Column layout
+### Column layout — EXACT sheet header names (col index, 1-based)
 ```
-A: ID          B: Date        C: Task         D: Status
-E: AI Comment  F: Branch      G: Resolved At  H: Topic
-I: Deploy      J: Confirm
+Col 1  A: ID               — auto: T-NNN (text, not number)
+Col 2  B: Date             — auto: YYYY-MM-DD when task created
+Col 3  C: Task             — task description (Mikhail writes here)
+Col 4  D: Status           — OPEN / IN PROCESS / ON HOLD / BLOCKED / DISCUSSION / CLOSED
+Col 5  E: Apolio Comment   — Claude's dated log (newest entry at top)
+Col 6  F: Branch           — git branch name if code was pushed, else empty
+Col 7  G: Resolved At      — YYYY-MM-DD set automatically when Status → CLOSED
+Col 8  H: Topic            — category for grouping
+Col 9  I: Deploy           — N/A / READY / DEPLOYED / FAILED
+Col 10 J: Confirm          — GO / HOLD / (empty)
 ```
+
+> ⚠️ CRITICAL: The column header in the sheet is **"Apolio Comment"**, not "AI Comment".
+> The HEADER list in `task_log.py` must match exactly. Never mix these up — a mismatch
+> causes `get_all_records()` to raise an exception and all updates will silently fail or
+> write to wrong columns.
 
 ### Status values
-`OPEN` → `IN PROCESS` → `ON HOLD` / `BLOCKED` → `CLOSED`
+`OPEN` → `IN PROCESS` → `ON HOLD` / `BLOCKED` / `DISCUSSION` → `CLOSED`
 
-### Topic values (for grouping)
-`Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Admin`
+### Topic values (pick exactly one)
+`Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Admin` | `Финансы`
 
-Both Status and Topic have dropdown validation. Valid values are also in the `config` sheet
-(column A = task_status, column B = topic).
+Both Status and Topic have dropdown validation in the sheet.
+Valid values are also in the `config` sheet tab (col A = statuses, col B = topics).
 
-### Python usage (bot-driven writes)
+---
+
+### How Claude works with the Task Log — step by step
+
+**Step 1 — Read the current state**
 ```python
 from task_log import TaskLog
-tl = TaskLog()  # uses GOOGLE_SERVICE_ACCOUNT env var
-task_id = tl.add_task("Fix onboarding flow", topic="Interface")   # → "T-007"
-tl.update_task("T-007", status="IN PROCESS", comment="Working on it")
-tl.close_task("T-007", comment="Fixed in abc123", branch="fix/onboarding")
-open_tasks = tl.get_open_tasks()
+tl = TaskLog()
+tasks = tl.get_all_tasks()
+# Filter: Status not in ("CLOSED",)
+open_tasks = [t for t in tasks if t.get("Status") != "CLOSED"]
+```
+For each open task, read:
+- `Task` (C) — full text including any notes Mikhail added
+- `Apolio Comment` (E) — prior history (newest at top)
+- `Status` (D), `Deploy` (I), `Confirm` (J)
+
+**Step 2 — Determine action**
+- Status = `OPEN` and task is clear → start working, set Status = `IN PROCESS`
+- Status = `IN PROCESS` → task already started, continue or close
+- Status = `DISCUSSION` → comment with architectural notes, no code yet
+- `Confirm` = `GO` and `Deploy` = `READY` → push to main, set Deploy = `DEPLOYED`
+
+**Step 3 — Write updates via task_log.py API**
+```python
+# Always use keyword arguments. Never pass positional args to update_task.
+tl.update_task(
+    "T-007",
+    status="IN PROCESS",          # optional
+    comment="[2026-04-03] ...",   # optional — prepended to existing comment
+    topic="Interface",             # optional
+    branch="dev",                  # optional — only if code was pushed
+    deploy="READY",               # optional
+    confirm="",                    # optional — clear when reopening after deploy
+)
 ```
 
-Auto-numbering is handled by `task_log.py` → `_next_id()` on every `add_task()` call.
+**Step 4 — Mandatory fields checklist** (before every `update_task` or `add_task`)
 
-### How it works
-1. **On-demand:** Mikhail says "check the task log" → Claude reads open rows via `tl.get_open_tasks()`,
-   processes each, writes AI Comment + updates Status, fills Branch where applicable.
-2. **Daily morning check (automated):** Scheduled task runs every morning (8:00 AM Italy time),
-   same processing flow.
-
-### Claude's behavior when checking Task Log
-- Read all rows where Status = `OPEN` or `IN PROCESS`
-- Read the full Task text (C) — Mikhail may have added notes or context after reopening
-- Read existing AI Comment (E) to understand prior history
-- Add a new dated line **at the top** of E: `[YYYY-MM-DD] что сделано / статус / блокер`
-- Set Status to `IN PROCESS` while working, `CLOSED` when complete
-- Fill `Branch` if code was pushed, `Resolved At` is auto-set when status → CLOSED/BLOCKED
-
-### Reopen workflow
-Mikhail can reopen any closed task: change Status → OPEN, add notes in the Task body (C).
-Claude reads the full updated C + history in E, then appends a new dated line to E and continues.
-
-### Mandatory fields — always fill when adding or closing a task
 | Field | Rule |
 |-------|------|
-| **Topic** (H) | Always set — pick from: `Interface` `Features` `Data` `Infrastructure` `AI` `Docs` `Admin` |
-| **AI Comment** (E) | Always write a short dated comment: `[YYYY-MM-DD] what was done`. New entries at top. |
-| **Branch** (F) | Fill if code was committed/pushed |
-| **Deploy** (I) | Always set — `N/A` if no deploy needed, `READY` when code is done and waiting for GO |
+| **Topic** (H) | Always set — never leave empty |
+| **Apolio Comment** (E) | Always write `[YYYY-MM-DD] что сделано`. New entries prepended at top. |
+| **Branch** (F) | Fill if code was committed/pushed; leave empty for admin/discussion tasks |
+| **Deploy** (I) | Always set — `N/A` for tasks with no code deploy; `READY` when code done |
+| **Status** (D) | Reflects actual current state — update as work progresses |
+
+**Step 5 — Verify after writing**
+After every batch of updates: call `tl.get_all_tasks()` again and spot-check that
+Topic / Status / Deploy are in the correct columns for at least 2–3 rows.
+If any value appears in the wrong column — fix immediately using direct `ws.update_cell(row, col, value)`.
+
+---
+
+### Python API reference
+
+```python
+from task_log import TaskLog
+tl = TaskLog()
+
+# Add new task
+task_id = tl.add_task(
+    title="Fix onboarding flow",
+    topic="Interface",   # REQUIRED
+    deploy="N/A",        # or "READY"
+    comment="[2026-04-03] Initial description",
+)  # → "T-NNN"
+
+# Update existing task (all kwargs optional except task_id)
+tl.update_task(
+    "T-007",
+    status="CLOSED",
+    comment="[2026-04-03] Done",
+    branch="dev",
+    deploy="N/A",
+    confirm="",
+)
+
+# Read tasks
+all_tasks   = tl.get_all_tasks()    # all rows
+open_tasks  = tl.get_open_tasks()   # Status != CLOSED
+```
+
+Auto-numbering: `task_log.py` → `_next_id()` on every `add_task()` call.
+Parses both text ("T-007") and numeric (7) IDs to avoid collision.
+
+---
 
 ### Deploy workflow
+
 | Step | Who | Action |
 |------|-----|--------|
-| 1 | Claude | Finishes code → sets Deploy (I) = `READY` |
-| 2 | Mikhail | Reviews → sets Confirm (J) = `GO` (or `HOLD` to pause) |
-| 3 | Claude | Sees GO → pushes to main → sets Deploy = `DEPLOYED` |
-| 4 | Claude | Writes dated entry in AI Comment (E): `[date] deployed, branch=...` |
+| 1 | Claude | Code done on `dev` → sets Deploy (I) = `READY`, sets Status = `IN PROCESS` |
+| 2 | Mikhail | Tests on @ApolioHomeTestBot → sets Confirm (J) = `GO` (or `HOLD` to pause) |
+| 3 | Claude | Sees `GO` → `git checkout main && git merge dev && git push origin main` |
+| 4 | Claude | Sets Deploy = `DEPLOYED`, adds to Apolio Comment: `[date] deployed to main, commit=...` |
 
 **Deploy values (I):** `N/A` · `READY` · `DEPLOYED` · `FAILED`
 **Confirm values (J):** `GO` · `HOLD` · *(empty = not yet reviewed)*
 
+**When to set Deploy = N/A:** tasks that are documentation, discussion, admin, or config-only
+(no Python code pushed to git).
+
+> 🔒 **HARD RULE: Claude NEVER pushes to `main` without Confirm = `GO`.**
+> If Deploy = `READY` and Confirm is empty or `HOLD` — Claude waits.
+> The check sequence when reviewing tasks:
+> 1. Read all tasks where Deploy = `READY`
+> 2. For each: check Confirm (J) in the sheet
+> 3. If `GO` → push to main, update Deploy = `DEPLOYED`, clear Confirm logic is N/A (Mikhail resets)
+> 4. If empty or `HOLD` → skip, add note to Apolio Comment if Mikhail needs to be reminded
+
+> ⚠️ **Never set Deploy = `READY` before code is actually written and pushed to `dev`.**
+> Setting READY prematurely (before implementation) gives false signal to Mikhail.
+
 ### Reopen-after-deploy rule
-If Mikhail reopens a task (Status → OPEN) after a deploy — bug found or fix needed:
-1. Claude reads full Task body (C) + AI Comment history (E)
-2. Claude fixes the issue
+
+If Mikhail reopens a task after a deploy (bug found or more work needed):
+1. Claude reads full Task (C) + Apolio Comment history (E)
+2. Claude fixes the issue, pushes to `dev`
 3. Claude resets: **Deploy (I) → `READY`**, **Confirm (J) → empty** — previous GO is void
-4. Mikhail sets GO again → Claude pushes again, updates Deploy = `DEPLOYED`
-
-### Apps Script (one-time manual setup for sheet UI)
-For users manually editing the sheet (not the bot), there is an Apps Script that:
-- Auto-assigns ID + Date + Status on new rows
-- Manages `Resolved At` automatically on status changes
-- Adds **🤖 Apolio** menu with sort options
-
-**To install:** Open Task Log → Extensions → Apps Script → paste `apps_script/task_log_automation.js` → Save → Run `onOpen()` once
+4. Mikhail sets GO again → Claude pushes to main, updates Deploy = `DEPLOYED`
 
 ---
 
-## 9. BACKLOG
+### Apps Script (sheet UI automation)
+
+Installed in the Task Log sheet. Handles:
+- Auto-assigns ID + Date + Status = OPEN on new rows
+- Sets `Resolved At` (G) automatically when Status → CLOSED
+- 🏠 Apolio menu: Sort by Date / Sort by Status / Archive CLOSED / Setup filter row
+
+**To reinstall:** Open Task Log → Extensions → Apps Script →
+paste `apps_script/task_log_automation.js` → Save → Run `setupTriggers()` once.
+
+---
+
+## 9. BACKLOG (tracked separately in Task Log)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
@@ -348,7 +430,7 @@ For users manually editing the sheet (not the bot), there is an Apps Script that
 
 ---
 
-## 9. WORKING RULES
+## 10. WORKING RULES
 
 ### Before any change
 1. Read ALL files the change touches (not just the obvious ones)
@@ -382,7 +464,7 @@ All testing is done by the AI without asking the user:
 
 ---
 
-## 10. LANGUAGE LOGIC (3 tiers)
+## 11. LANGUAGE LOGIC (3 tiers)
 
 ```
 1. UserContext sheet (saved preference) → highest priority
@@ -397,7 +479,7 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 
 ---
 
-## 11. GIT WORKFLOW + STAGING ENVIRONMENT
+## 12. GIT WORKFLOW + STAGING ENVIRONMENT
 
 ### Branches
 | Branch | Environment | Bot | Purpose |
@@ -445,7 +527,7 @@ git status
 
 ---
 
-## 12. HOW TO UPDATE THIS FILE
+## 13. HOW TO UPDATE THIS FILE
 
 Update after any of these events:
 - New tool added → section 6
@@ -455,7 +537,7 @@ Update after any of these events:
 - IDs or env vars changed → section 3
 ---
 
-## 10. REGRESSION ANALYSIS STUDIO
+## 14. REGRESSION ANALYSIS STUDIO
 
 **File:** `regression_studio.html` — standalone tool, no dependencies outside of cdnjs (Chart.js).
 Open directly in any browser.
