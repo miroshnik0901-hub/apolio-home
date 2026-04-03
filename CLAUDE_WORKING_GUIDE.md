@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.3 | Updated: 2026-04-02
+# Version: 1.4 | Updated: 2026-04-03
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -41,9 +41,14 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 | MM_BUDGET file_id | `1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ` |
 | Admin sheet | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
 | Mikhail Telegram ID | `360466156` |
+| Railway project ID | `55240cdd-2cbc-4451-b6c9-ca97ce595c18` |
+| Railway service ID (bot) | `8ec97839-6d49-4cdd-a012-1f6d54853454` |
+| Railway production env ID | `08e40bf3-cbe4-4a80-be54-1f291c21fe0d` |
+| Railway staging env ID | `1e6973d7-2c9c-48a3-8197-b61fd4174ba4` |
+| @ApolioHomeTestBot token | `8298458285:AAHm8doTLplljbrErzCo9FAMhhwnhvamaP8` |
 
-Env vars: `TELEGRAM_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GOOGLE_SERVICE_ACCOUNT_B64`, `MM_BUDGET_FILE_ID`, `ADMIN_SHEET_ID`, `DATABASE_URL`,
+Env vars: `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GOOGLE_SERVICE_ACCOUNT`, `ADMIN_SHEETS_ID`, `DATABASE_URL`,
 `MM_TEST_FILE_ID` (optional, for test mode)
 
 ---
@@ -200,6 +205,37 @@ Tabs: `Config`, `Users`, `Envelopes`, `FX_Rates`, `UserContext`, `DashboardConfi
 Tabs: `Transactions`, `Summary`, `Dashboard`, `Categories`, `Accounts`,
 `ConversationLog`, `Receipts` (created on first use)
 
+### Envelope Config tab — per-user contribution model
+
+Each envelope has its own `Config` tab (key-value). Keys:
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `split_rule` | `per_user` | `per_user` (new) or `50_50` / `solo` (legacy) |
+| `split_threshold` | `2500` | Legacy threshold (not used in per_user mode) |
+| `split_users` | `Mikhail,Maryna` | Comma-separated list of users in split |
+| `base_contributor` | `Mikhail` | Legacy base contributor |
+| `monthly_cap` | `5000` | Monthly budget cap |
+| `currency` | `EUR` | Budget currency |
+| `min_<user>` | `min_Mikhail=2500` | Monthly minimum contribution per user |
+| `split_<user>` | `split_Mikhail=50` | % share of overflow expenses per user |
+
+**Obligation formula (per-user model):**
+```
+total_min_pool = sum(min_<user> for all users)
+overflow = max(0, total_expenses - total_min_pool)
+obligation_user = (expenses * user_min / total_min_pool) + overflow * split_user%
+```
+
+**Auto-init:** `ensure_envelope_config(file_id)` writes missing keys on first use.
+It reads active users from Admin/Users and sets `min_<user>=0` (non-admin) or threshold (admin), `split_<user>=50/N`.
+
+**Detection in intelligence.py:** If any `min_<user>` key exists in Config → per-user model.
+Otherwise falls back to legacy `split_rule` model.
+
+**Dashboard tab:** Formulas use `LET()` + `VLOOKUP(Config)` to pull min/split values live.
+No Python needed for display — agent reads from Dashboard or computes via `get_contribution_status`.
+
 ### Transactions column order (STRICTLY FOLLOW)
 ```
 A: Date       B: Amount_Orig  C: Currency_Orig
@@ -271,18 +307,43 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 
 ---
 
-## 11. GIT WORKFLOW
+## 11. GIT WORKFLOW + STAGING ENVIRONMENT
+
+### Branches
+| Branch | Environment | Bot | Purpose |
+|--------|-------------|-----|---------|
+| `main` | production (Railway) | @ApolioHomeBot | Live bot, Mikhail + Marina use it |
+| `dev`  | staging (Railway)   | @ApolioHomeTestBot | Testing before merge |
+
+### Staging environment (Railway)
+- **Environment ID:** `1e6973d7-2c9c-48a3-8197-b61fd4174ba4`
+- **Test bot token:** `8298458285:AAHm8doTLplljbrErzCo9FAMhhwnhvamaP8`
+- **Bot username:** @ApolioHomeTestBot
+- Deploys automatically on push to `dev` branch
+- Uses same Google Sheets / DB as production (for now)
+
+### Dev workflow
+```bash
+# 1. Make changes on dev branch
+git checkout dev
+git add bot.py agent.py  # specific files
+git commit -m "feat: description"
+git push origin dev
+# → Railway staging deploys automatically
+
+# 2. Test on @ApolioHomeTestBot in Telegram
+
+# 3. Merge to main when ready
+git checkout main
+git merge dev
+git push origin main
+# → Railway production deploys automatically
+```
 
 ```bash
 # Check actual code state
 git log --oneline -5
 git status
-
-# After changes — add specific files, not everything at once
-git add bot.py agent.py tools/transactions.py
-git commit -m "short description"
-git push
-# Railway deploys automatically after push to main
 ```
 
 > ⚠️ If a context summary from a previous session describes a commit not in git log —
