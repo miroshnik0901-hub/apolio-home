@@ -1083,6 +1083,96 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /admin_support ─────────────────────────────────────────────────────────────
+
+async def cmd_admin_support(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/admin_support [status] — list open support requests (admin only)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+    if not auth.is_admin(session.user_id):
+        await update.message.reply_text(i18n.ts("admin_only", "ru"))
+        return
+
+    args = ctx.args or []
+    status_filter = args[0].upper() if args else "OPEN"
+
+    from tools.support import tool_get_support_requests
+    result = await tool_get_support_requests(
+        {"status": status_filter, "limit": 20}, session, sheets, auth
+    )
+
+    if result.get("error"):
+        await update.message.reply_text(f"❌ {result['error']}")
+        return
+
+    requests = result.get("requests", [])
+    if not requests:
+        await update.message.reply_text(
+            f"📩 Нет запросов со статусом <b>{status_filter}</b>.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    lines = [f"📩 <b>Support — {status_filter}</b>  ({len(requests)} запросов)\n"]
+    for r in requests:
+        intent_icon = {"error": "🔴", "question": "🔵", "feedback": "🟡"}.get(r["intent"], "⚪")
+        text_short = r["text"][:80].replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f"{intent_icon} <code>#{r['id']}</code>  {r['ts']}  {r['user_name'] or r['user_id']}\n"
+            f"   {text_short}"
+        )
+
+    full = "\n\n".join(lines)
+    if len(full) > 4000:
+        full = full[:4000] + "\n…"
+    await update.message.reply_text(full, parse_mode=ParseMode.HTML)
+
+
+# ── /idea ───────────────────────────────────────────────────────────────────────
+
+async def cmd_idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/idea <text> — save an idea."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        await update.message.reply_text(i18n.ts("access_denied", "ru"))
+        return
+
+    lang = getattr(session, "lang", "ru")
+    idea_text = " ".join(ctx.args or "").strip()
+    if not idea_text:
+        prompts = {
+            "ru": "💡 Напишите идею после команды:\n<code>/idea ваша идея</code>",
+            "uk": "💡 Напишіть ідею після команди:\n<code>/idea ваша ідея</code>",
+            "en": "💡 Write your idea after the command:\n<code>/idea your idea</code>",
+            "it": "💡 Scrivi la tua idea dopo il comando:\n<code>/idea la tua idea</code>",
+        }
+        await update.message.reply_text(
+            prompts.get(lang, prompts["ru"]), parse_mode=ParseMode.HTML
+        )
+        return
+
+    from tools.ideas import tool_save_idea
+    result = await tool_save_idea(
+        {"text": idea_text}, session, sheets, auth
+    )
+
+    if result.get("error"):
+        await update.message.reply_text(f"❌ {result['error']}")
+        return
+
+    confirms = {
+        "ru": f"💡 Идея сохранена (#{result['id']}):\n<i>{idea_text[:200]}</i>",
+        "uk": f"💡 Ідею збережено (#{result['id']}):\n<i>{idea_text[:200]}</i>",
+        "en": f"💡 Idea saved (#{result['id']}):\n<i>{idea_text[:200]}</i>",
+        "it": f"💡 Idea salvata (#{result['id']}):\n<i>{idea_text[:200]}</i>",
+    }
+    await update.message.reply_text(
+        confirms.get(lang, confirms["ru"]), parse_mode=ParseMode.HTML
+    )
+
+
 # ── /menu ──────────────────────────────────────────────────────────────────────
 
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2535,8 +2625,10 @@ def main():
     app.add_handler(CommandHandler("undo",         cmd_undo))
     app.add_handler(CommandHandler("help",         cmd_help))
     app.add_handler(CommandHandler("refresh",      cmd_refresh))
-    app.add_handler(CommandHandler("log",          cmd_log))
+    app.add_handler(CommandHandler("log",           cmd_log))
     app.add_handler(CommandHandler("stats",        cmd_stats))
+    app.add_handler(CommandHandler("admin_support", cmd_admin_support))
+    app.add_handler(CommandHandler("idea",         cmd_idea))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message

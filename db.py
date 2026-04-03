@@ -105,6 +105,44 @@ CREATE INDEX IF NOT EXISTS idx_parsed_data_user
 
 CREATE INDEX IF NOT EXISTS idx_parsed_data_type
     ON parsed_data (user_id, data_type);
+
+
+CREATE TABLE IF NOT EXISTS support_requests (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    user_name       VARCHAR(100) DEFAULT '',
+    text            TEXT NOT NULL,
+    intent          VARCHAR(20) DEFAULT 'other',  -- error | question | feedback | other
+    status          VARCHAR(20) DEFAULT 'OPEN',   -- OPEN | RESOLVED | AUTO_ANSWERED
+    resolution      TEXT DEFAULT '',
+    resolved_at     TIMESTAMPTZ DEFAULT NULL,
+    envelope_id     VARCHAR(64) DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_user
+    ON support_requests (user_id, ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_status
+    ON support_requests (status, ts DESC);
+
+
+CREATE TABLE IF NOT EXISTS ideas (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         BIGINT NOT NULL,
+    user_name       VARCHAR(100) DEFAULT '',
+    text            TEXT NOT NULL,
+    tags_json       JSONB DEFAULT '[]',
+    status          VARCHAR(20) DEFAULT 'NEW',    -- NEW | REVIEWED | ARCHIVED
+    envelope_id     VARCHAR(64) DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_ideas_user
+    ON ideas (user_id, ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ideas_status
+    ON ideas (status, ts DESC);
 """
 
 
@@ -805,4 +843,170 @@ async def get_parsed_data(
     except Exception as e:
         logger.warning(f"[DB] get_parsed_data failed: {e}")
         return []
+
+
+# ── Support requests ───────────────────────────────────────────────────────────
+
+async def create_support_request(
+    user_id: int,
+    text: str,
+    intent: str = "other",
+    user_name: str = "",
+    envelope_id: str = "",
+) -> Optional[int]:
+    """Insert a new support request. Returns its id or None."""
+    if not is_ready():
+        return None
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO support_requests
+                       (user_id, user_name, text, intent, envelope_id)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING id""",
+                user_id, user_name, text, intent, envelope_id,
+            )
+            return int(row["id"]) if row else None
+    except Exception as e:
+        logger.warning(f"[DB] create_support_request failed: {e}")
+        return None
+
+
+async def get_support_requests(
+    status: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Fetch support requests, optionally filtered by status."""
+    if not is_ready():
+        return []
+    try:
+        async with _pool.acquire() as conn:
+            if status:
+                rows = await conn.fetch(
+                    """SELECT id, ts, user_id, user_name, text, intent, status, resolution
+                       FROM support_requests
+                       WHERE status=$1
+                       ORDER BY ts DESC LIMIT $2""",
+                    status, limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, ts, user_id, user_name, text, intent, status, resolution
+                       FROM support_requests
+                       ORDER BY ts DESC LIMIT $1""",
+                    limit,
+                )
+            return [
+                {
+                    "id":         int(r["id"]),
+                    "ts":         str(r["ts"])[:16],
+                    "user_id":    r["user_id"],
+                    "user_name":  r["user_name"] or "",
+                    "text":       r["text"],
+                    "intent":     r["intent"],
+                    "status":     r["status"],
+                    "resolution": r["resolution"] or "",
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.warning(f"[DB] get_support_requests failed: {e}")
+        return []
+
+
+async def resolve_support_request(request_id: int, resolution: str = "") -> bool:
+    """Mark a support request as RESOLVED."""
+    if not is_ready():
+        return False
+    try:
+        import datetime
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE support_requests
+                   SET status='RESOLVED', resolution=$1, resolved_at=NOW()
+                   WHERE id=$2""",
+                resolution, request_id,
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"[DB] resolve_support_request failed: {e}")
+        return False
+
+
+# ── Ideas ──────────────────────────────────────────────────────────────────────
+
+async def create_idea(
+    user_id: int,
+    text: str,
+    user_name: str = "",
+    tags: list = None,
+    envelope_id: str = "",
+) -> Optional[int]:
+    """Insert a new idea. Returns its id or None."""
+    if not is_ready():
+        return None
+    try:
+        import json as _json
+        tags_json = _json.dumps(tags or [], ensure_ascii=False)
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO ideas (user_id, user_name, text, tags_json, envelope_id)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING id""",
+                user_id, user_name, text, tags_json, envelope_id,
+            )
+            return int(row["id"]) if row else None
+    except Exception as e:
+        logger.warning(f"[DB] create_idea failed: {e}")
+        return None
+
+
+async def get_ideas(
+    user_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 30,
+) -> list[dict]:
+    """Fetch ideas, optionally filtered by user_id and/or status."""
+    if not is_ready():
+        return []
+    try:
+        import json as _json
+        async with _pool.acquire() as conn:
+            conditions = []
+            params: list = []
+            idx = 1
+            if user_id is not None:
+                conditions.append(f"user_id=${idx}")
+                params.append(user_id)
+                idx += 1
+            if status:
+                conditions.append(f"status=${idx}")
+                params.append(status)
+                idx += 1
+            params.append(limit)
+            where = "WHERE " + " AND ".join(conditions) if conditions else ""
+            rows = await conn.fetch(
+                f"""SELECT id, ts, user_id, user_name, text, tags_json, status
+                    FROM ideas {where}
+                    ORDER BY ts DESC LIMIT ${idx}""",
+                *params,
+            )
+            result = []
+            for r in rows:
+                try:
+                    tags = _json.loads(r["tags_json"]) if r["tags_json"] else []
+                except Exception:
+                    tags = []
+                result.append({
+                    "id":        int(r["id"]),
+                    "ts":        str(r["ts"])[:16],
+                    "user_id":   r["user_id"],
+                    "user_name": r["user_name"] or "",
+                    "text":      r["text"],
+                    "tags":      tags,
+                    "status":    r["status"],
+                })
+            return result
+    except Exception as e:
+        logger.warning(f"[DB] get_ideas failed: {e}")
         return []
