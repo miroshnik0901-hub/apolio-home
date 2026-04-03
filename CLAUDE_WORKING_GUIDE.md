@@ -40,6 +40,8 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 |----------|-----|
 | MM_BUDGET file_id | `1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ` |
 | Admin sheet | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
+| Test Budget file_id | `1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So` |
+| Test Admin sheet | `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` |
 | Mikhail Telegram ID | `360466156` |
 | Railway project ID | `55240cdd-2cbc-4451-b6c9-ca97ce595c18` |
 | Railway service ID (bot) | `8ec97839-6d49-4cdd-a012-1f6d54853454` |
@@ -320,7 +322,11 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 - **Test bot token:** `8298458285:AAHm8doTLplljbrErzCo9FAMhhwnhvamaP8`
 - **Bot username:** @ApolioHomeTestBot
 - Deploys automatically on push to `dev` branch
-- Uses same Google Sheets / DB as production (for now)
+- **Overridden env vars in staging:**
+  - `TELEGRAM_BOT_TOKEN` → @ApolioHomeTestBot token
+  - `MM_BUDGET_FILE_ID` → `1UNhBQqM5L0fhFMef_f6y-QBYrGAK0csCsLksnAwi-So` (Test Budget)
+  - `ADMIN_SHEETS_ID` → `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` (Test Admin)
+- Uses same PostgreSQL DB as production (conversation history shared)
 
 ### Dev workflow
 ```bash
