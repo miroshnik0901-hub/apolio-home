@@ -385,8 +385,17 @@ Parses both text ("T-007") and numeric (7) IDs to avoid collision.
 **Deploy values (I):** `N/A` · `READY` · `DEPLOYED` · `FAILED`
 **Confirm values (J):** `GO` · `HOLD` · *(empty = not yet reviewed)*
 
-**When to set Deploy = N/A:** tasks that are documentation, discussion, admin, or config-only
-(no Python code pushed to git).
+**When to set Deploy = N/A:** ONLY tasks with zero code changes — documentation, discussion,
+admin, config sheet edits, Apps Script only. If ANY Python file was committed to git → Deploy ≠ N/A.
+
+**Status vs Deploy lifecycle for code tasks:**
+```
+Code written + pushed to dev  → Status=IN PROCESS, Deploy=READY
+Mikhail sets Confirm=GO       → Claude pushes to main
+Pushed to main + deployed     → Status=CLOSED, Deploy=DEPLOYED, Resolved At=today
+```
+Never close a code task with Deploy=N/A. That combination says "nothing was deployed" which
+is false if code is on dev. CLOSED + N/A is only correct for admin/discussion tasks.
 
 > 🔒 **HARD RULE: Claude NEVER pushes to `main` without Confirm = `GO`.**
 > If Deploy = `READY` and Confirm is empty or `HOLD` — Claude waits.
