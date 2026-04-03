@@ -807,26 +807,20 @@ class SheetsClient:
             env_sheets = self._env_sheets(file_id)
             existing = env_sheets.read_config()
 
-            # Derive sensible defaults from the Envelopes registry row
-            split_rule_default = env.get("Split_Rule", "solo").lower().replace("/", "_")
-            threshold_default  = str(env.get("Monthly_Cap", "0") or "0")
-            # Try to infer split_users from Users sheet
+            # Infer active users for this envelope from Users sheet
             users = self.get_users()
             active_users = [
                 u.get("name", "") for u in users
                 if envelope_id in str(u.get("envelopes", ""))
                 and str(u.get("status", "active")).lower() == "active"
             ]
-            split_users_default = ",".join(active_users) if active_users else env.get("Owner_TG", "Mikhail")
-            # base_contributor = first user in list (admin preference)
-            admin_users = [
-                u.get("name", "") for u in users
-                if envelope_id in str(u.get("envelopes", ""))
-                and u.get("role", "") == "admin"
-            ]
-            base_contrib_default = admin_users[0] if admin_users else (active_users[0] if active_users else "Mikhail")
+            split_users_default = ",".join(active_users) if active_users else ""
 
-            # Build per-user min/split defaults from active users list
+            # Per-user min/split defaults:
+            # - admin user gets Monthly_Cap from Envelopes registry as their min
+            # - other users get 0
+            # - split % is equal share across all users
+            threshold_default = str(env.get("Monthly_Cap", "0") or "0")
             per_user_defaults: dict[str, str] = {}
             for u in active_users:
                 is_admin = any(
@@ -839,10 +833,8 @@ class SheetsClient:
                 )
 
             DEFAULTS = {
-                "split_rule":        split_rule_default,
-                "split_threshold":   threshold_default,
-                "split_users":       split_users_default,
-                "base_contributor":  base_contrib_default,
+                "currency":    env.get("Currency", "EUR"),
+                "split_users": split_users_default,
                 **per_user_defaults,
             }
 
