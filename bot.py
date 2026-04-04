@@ -219,6 +219,48 @@ def _cat_icon(category: str) -> str:
     return CAT_ICONS.get(category, "•")
 
 
+def _format_txn_list(txs: list[dict], lang: str = "ru", *, show_title: bool = True) -> str:
+    """Format transaction list with expenses/income grouped separately (T-046)."""
+    if not txs:
+        return i18n.ts("no_transactions", lang)
+
+    ordered = list(reversed(txs))  # newest first
+    expenses = [tx for tx in ordered if tx.get("Type", "expense") == "expense"]
+    income = [tx for tx in ordered if tx.get("Type", "") == "income"]
+
+    lines: list[str] = []
+    if show_title:
+        lines.append(i18n.tu("txn_list_title", lang, count=len(txs)))
+
+    def _render(tx_list: list[dict]) -> None:
+        for tx in tx_list:
+            date = tx.get("Date", "")
+            cat = tx.get("Category", "?")
+            amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
+            curr = tx.get("Currency_Orig", "EUR")
+            amt_eur = tx.get("Amount_EUR", "")
+            who = tx.get("Who", "")
+            note = tx.get("Note", "")
+            icon = _cat_icon(cat)
+            if curr != "EUR" and amt_eur:
+                amt_str = f"{amt} {curr} ({amt_eur} EUR)"
+            else:
+                amt_str = f"{amt} EUR"
+            who_str = f" — {who}" if who else ""
+            note_str = f"\n     📎 {note}" if note else ""
+            lines.append(f"{icon} <b>{cat}</b>  {amt_str}{who_str}  <i>{date}</i>{note_str}")
+
+    if expenses:
+        if income:
+            lines.append(i18n.tu("txn_section_expense", lang))
+        _render(expenses)
+    if income:
+        lines.append(i18n.tu("txn_section_income", lang))
+        _render(income)
+
+    return "\n".join(lines)
+
+
 def _month_name_ru(period: str) -> str:
     """Convert YYYY-MM to 'апреле 2026' (Russian, legacy — use _month_name where lang is available)."""
     return _month_name(period, "ru")
@@ -845,6 +887,33 @@ async def post_init(app: Application):
     except Exception as e:
         logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
+
+    # ── Staging/prod env sanity check (T-042) ──────────────────────────────
+    _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    _prod_budget_id = "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+    _prod_admin_id = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
+    _is_test_token = _token.startswith("8298458285:")  # test bot token prefix
+    _uses_prod_budget = os.environ.get("MM_BUDGET_FILE_ID", _prod_budget_id) == _prod_budget_id
+    _uses_prod_admin = os.environ.get("ADMIN_SHEETS_ID", _prod_admin_id) == _prod_admin_id
+    if _is_test_token and (_uses_prod_budget or _uses_prod_admin):
+        logger.error(
+            "⚠️ ENV MISMATCH: test bot token but using PRODUCTION sheets! "
+            "Set MM_BUDGET_FILE_ID and ADMIN_SHEETS_ID to test values in Railway Staging."
+        )
+        # Notify admin on startup
+        try:
+            admin_tg = int(os.environ.get("MIKHAIL_TELEGRAM_ID", 0))
+            if admin_tg:
+                await app.bot.send_message(
+                    admin_tg,
+                    "⚠️ <b>Внимание:</b> тестовый бот использует данные продакшена!\n\n"
+                    "Нужно в Railway → Staging → Variables:\n"
+                    "• <code>MM_BUDGET_FILE_ID</code> → тестовый\n"
+                    "• <code>ADMIN_SHEETS_ID</code> → тестовый",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
 
     # Reset BotMenu tab to current defaults on every deploy (keeps sheet in sync with code)
     try:
@@ -1592,32 +1661,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        lines = ["📝 <b>Последние записи:</b>\n"]
-        # Show newest first
-        for tx in reversed(txs):
-            date = tx.get("Date", "")
-            cat = tx.get("Category", "?")
-            amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
-            curr = tx.get("Currency_Orig", "EUR")
-            amt_eur = tx.get("Amount_EUR", "")
-            who = tx.get("Who", "")
-            note = tx.get("Note", "")
-            tx_id = tx.get("ID", "")
-            icon = _cat_icon(cat)
-
-            # Amount display: show original + EUR if different currency
-            if curr != "EUR" and amt_eur:
-                amt_str = f"{amt} {curr} ({amt_eur} EUR)"
-            else:
-                amt_str = f"{amt} EUR"
-
-            who_str = f" · {who}" if who and who not in ("Mikhail", "") else ""
-            note_str = f"\n     📎 {note}" if note else ""
-            lines.append(
-                f"{icon} <b>{cat}</b>  {amt_str}{who_str}  <i>{date}</i>"
-                f"{note_str}"
-            )
-            lines.append("")
+        html_body = _format_txn_list(txs, lang)
 
         # Inline delete buttons for last 5 transactions (1 per row)
         recent = list(reversed(txs))[:5]
@@ -1633,7 +1677,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
         await update.message.reply_text(
-            "\n".join(lines),
+            html_body,
             parse_mode=ParseMode.HTML,
             reply_markup=markup,
         )
@@ -1895,25 +1939,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         find_params["date_from"] = f"{today_str}-01"
                     result = await tool_find_transactions(find_params, session, sheets, auth)
                     txs = result.get("transactions", [])
-                    if txs:
-                        tlines = [f"📝 <b>Последние {len(txs)} записей:</b>\n"]
-                        for tx in reversed(txs):  # newest first
-                            d = tx.get("Date", "?")
-                            a = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
-                            curr = tx.get("Currency_Orig", "EUR")
-                            c = tx.get("Category", "")
-                            n = tx.get("Note", "")
-                            w = tx.get("Who", "")
-                            icon = _cat_icon(c)
-                            amt_str = f"{a} EUR" if curr == "EUR" else f"{a} {curr}"
-                            who_str = f" — {w}" if w else ""
-                            tlines.append(
-                                f"{icon} <b>{c}</b>  {amt_str}{who_str}  <i>{d}</i>"
-                                + (f"\n     📎 {n}" if n else "")
-                            )
-                        html = "\n".join(tlines)
-                    else:
-                        html = i18n.ts("no_transactions", lang)
+                    html = _format_txn_list(txs, lang) if txs else i18n.ts("no_transactions", lang)
                 except Exception as e:
                     logger.error(f"transactions handler: {e}", exc_info=True)
                     html = f"❌ Ошибка: {e}"
@@ -2016,7 +2042,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     current_mode = cfg.get("mode", "prod").lower()
                     new_mode = "test" if current_mode == "prod" else "prod"
                     sheets.write_dashboard_config("mode", new_mode)
-                    html = f"{'🧪 Переключено в TEST режим' if new_mode == 'test' else '🟢 Переключено в PROD режим'}"
+                    html = i18n.tu("mode_test_on" if new_mode == "test" else "mode_prod_on", lang)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
@@ -2286,19 +2312,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not txs:
                 await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn(lang=lang))
                 return
-            lines = ["📝 <b>Последние записи:</b>\n"]
-            for tx in reversed(txs):
-                date = tx.get("Date", "")
-                cat = tx.get("Category", "?")
-                amt = tx.get("Amount_Orig", tx.get("Amount_EUR", "?"))
-                curr = tx.get("Currency_Orig", "EUR")
-                note = tx.get("Note", "")
-                icon = _cat_icon(cat)
-                note_str = f" · {note}" if note else ""
-                lines.append(
-                    f"{icon} <b>{cat}</b>  {amt} {curr}  <i>{date}</i>{note_str}"
-                )
-                lines.append("")
+            html_body = _format_txn_list(txs, lang)
             del_rows = []
             recent = list(reversed(txs))[:4]
             for tx in recent:
@@ -2310,7 +2324,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )])
             markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
             await query.message.reply_text(
-                "\n".join(lines),
+                html_body,
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
             )

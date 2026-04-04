@@ -789,6 +789,38 @@ UI: dict[str, dict[str, str]] = {
         "en": "📅 <b>Weekly Report</b>",
         "it": "📅 <b>Report Settimanale</b>",
     },
+    # ── Mode toggle (T-040) ───────────────────────────────────────────────
+    "mode_test_on": {
+        "ru": "🧪 <b>Тестовый режим включён</b>\n\nБот работает с тестовыми данными.\nИзменения не влияют на реальный бюджет.\n\nДля возврата — нажми эту кнопку ещё раз.",
+        "uk": "🧪 <b>Тестовий режим увімкнено</b>\n\nБот працює з тестовими даними.\nЗміни не впливають на реальний бюджет.\n\nДля повернення — натисни цю кнопку ще раз.",
+        "en": "🧪 <b>Test mode enabled</b>\n\nBot is using test data.\nChanges won't affect the real budget.\n\nTo switch back — press this button again.",
+        "it": "🧪 <b>Modalità test attivata</b>\n\nIl bot usa dati di test.\nLe modifiche non influenzano il budget reale.\n\nPer tornare — premi di nuovo questo pulsante.",
+    },
+    "mode_prod_on": {
+        "ru": "🟢 <b>Рабочий режим включён</b>\n\nБот работает с реальными данными бюджета.",
+        "uk": "🟢 <b>Робочий режим увімкнено</b>\n\nБот працює з реальними даними бюджету.",
+        "en": "🟢 <b>Production mode enabled</b>\n\nBot is using real budget data.",
+        "it": "🟢 <b>Modalità produzione attivata</b>\n\nIl bot usa dati reali del budget.",
+    },
+    # ── Transaction list (T-046) ──────────────────────────────────────────
+    "txn_list_title": {
+        "ru": "📝 <b>Последние {count} записей:</b>",
+        "uk": "📝 <b>Останні {count} записів:</b>",
+        "en": "📝 <b>Last {count} records:</b>",
+        "it": "📝 <b>Ultime {count} voci:</b>",
+    },
+    "txn_section_expense": {
+        "ru": "\n💸 <b>Расходы:</b>",
+        "uk": "\n💸 <b>Витрати:</b>",
+        "en": "\n💸 <b>Expenses:</b>",
+        "it": "\n💸 <b>Spese:</b>",
+    },
+    "txn_section_income": {
+        "ru": "\n💰 <b>Поступления:</b>",
+        "uk": "\n💰 <b>Надходження:</b>",
+        "en": "\n💰 <b>Income:</b>",
+        "it": "\n💰 <b>Entrate:</b>",
+    },
 }
 
 # ── Day-of-week abbreviations (Mon/Tue/... → localized) ────────────────────────
