@@ -5,6 +5,7 @@ from typing import Any
 
 from sheets import SheetsClient
 from auth import AuthManager, SessionContext
+from tools.transactions import _normalize_who
 
 
 def _current_month() -> str:
@@ -38,6 +39,13 @@ async def tool_get_summary(params: dict, session: SessionContext,
                      if str(r.get("Date", "")).startswith(period)
                      and r.get("Type") == "expense"]
 
+    # Load known users for who-normalization (fixes "Maslo" → "Marina" etc.)
+    try:
+        ref = sheets.get_reference_data(file_id)
+        known_who = ref.get("who", [])
+    except Exception:
+        known_who = []
+
     by_category = defaultdict(float)
     by_who = defaultdict(float)
     total = 0.0
@@ -45,7 +53,8 @@ async def tool_get_summary(params: dict, session: SessionContext,
     for r in month_records:
         amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
         cat = r.get("Category", "Other")
-        who = r.get("Who", "Unknown")
+        who_raw = r.get("Who", "Unknown")
+        who = _normalize_who(who_raw, known_who) or who_raw
         by_category[cat] += amt
         by_who[who] += amt
         total += amt

@@ -10,6 +10,7 @@ from collections import defaultdict
 from typing import Optional
 
 from sheets import SheetsClient
+from tools.transactions import _normalize_who
 
 logger = logging.getLogger(__name__)
 
@@ -240,11 +241,20 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         all_txns = sheets.get_transactions(file_id)
         month_txns = [t for t in all_txns if str(t.get("Date", "")).startswith(month)]
 
+        # Load known users for who-normalization (fixes "Maslo" → "Marina" etc.)
+        try:
+            ref = sheets.get_reference_data(file_id)
+            known_who = ref.get("who", [])
+        except Exception:
+            known_who = []
+
         # Contributions = income-type transactions this month
         contributions: dict[str, float] = defaultdict(float)
         for t in month_txns:
             if t.get("Type") in ("income", "transfer") and _parse_amount(t) > 0:
-                contributions[t.get("Who", "Unknown")] += _parse_amount(t)
+                who_raw = t.get("Who", "Unknown")
+                who = _normalize_who(who_raw, known_who) or who_raw
+                contributions[who] += _parse_amount(t)
 
         # Total expenses
         total_expenses = sum(
