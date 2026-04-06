@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 GOAL_TYPES = {
     "savings":       {"ru": "💰 Накопления",       "uk": "💰 Заощадження",   "en": "💰 Savings",       "it": "💰 Risparmio"},
-    "expense_limit": {"ru": "🚫 Лимит расходов",   "uk": "🚫 Ліміт витрат",  "en": "🚫 Expense limit", "it": "🚫 Limite spese"},
+    "expense_limit": {"ru": "🚫 Бюджет расходов",   "uk": "🚫 Бюджет витрат",  "en": "🚫 Expense budget", "it": "🚫 Budget spese"},
     "contribution":  {"ru": "🤝 Взнос",            "uk": "🤝 Внесок",         "en": "🤝 Contribution",  "it": "🤝 Contributo"},
     "custom":        {"ru": "🎯 Цель",              "uk": "🎯 Ціль",           "en": "🎯 Goal",          "it": "🎯 Obiettivo"},
 }

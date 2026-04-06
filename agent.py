@@ -518,6 +518,35 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "store_pending_receipt",
+        "description": (
+            "Save parsed receipt/photo data to session so it persists between messages. "
+            "Call this IMMEDIATELY after analyzing a receipt photo, BEFORE present_options. "
+            "When the user later confirms, the stored data is injected into your context "
+            "so you can call add_transaction without asking again."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["merchant", "total_amount"],
+            "properties": {
+                "merchant": {"type": "string"},
+                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "total_amount": {"type": "number"},
+                "currency": {"type": "string", "default": "EUR"},
+                "category": {"type": "string"},
+                "subcategory": {"type": "string"},
+                "who": {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Parsed line items from receipt",
+                },
+                "ai_summary": {"type": "string"},
+                "raw_text": {"type": "string", "description": "Raw OCR text from receipt"},
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -705,6 +734,11 @@ class ApolioAgent:
         # Build enriched context (async — loads PostgreSQL history + intelligence)
         context = await self._build_context(session)
 
+        # Map lang code to full language name for system prompt
+        _lang_names = {"ru": "Russian", "uk": "Ukrainian", "en": "English", "it": "Italian"}
+        user_lang = getattr(session, "lang", "ru") or "ru"
+        lang_name = _lang_names.get(user_lang, "Russian")
+
         system = _safe_format(
             _SYSTEM_PROMPT_TEMPLATE,
             today=today,
@@ -717,6 +751,34 @@ class ApolioAgent:
             conversation_context=context.get("conversation_context", ""),
             learning_context=context.get("learning_context", ""),
         )
+
+        # T-066: Inject strict language directive so agent never switches language
+        system += (
+            f"\n\n---\n\n## MANDATORY LANGUAGE\n"
+            f"The user's language is **{lang_name}** (code: {user_lang}). "
+            f"You MUST respond in {lang_name}. Do NOT switch to another language "
+            f"under any circumstances, even if the input looks like a callback value "
+            f"or a single English word. Always {lang_name}."
+        )
+
+        # T-065/T-067: Inject pending receipt context so agent remembers photo analysis
+        pending_receipt = getattr(session, "pending_receipt", None)
+        if pending_receipt:
+            system += (
+                f"\n\n---\n\n## PENDING RECEIPT (awaiting user confirmation)\n"
+                f"The user previously sent a receipt photo. You analyzed it and proposed a transaction.\n"
+                f"Receipt data:\n"
+                f"- Merchant: {pending_receipt.get('merchant', 'Unknown')}\n"
+                f"- Date: {pending_receipt.get('date', 'today')}\n"
+                f"- Total: {pending_receipt.get('total_amount', 0)} {pending_receipt.get('currency', 'EUR')}\n"
+                f"- Category: {pending_receipt.get('category', 'Food')}/{pending_receipt.get('subcategory', '')}\n"
+                f"- Items: {len(pending_receipt.get('items', []))} items\n"
+                f"- tg_file_id: {pending_receipt.get('tg_file_id', '')}\n\n"
+                f"If the user confirms (says 'yes', 'да', 'так', 'запиши', or clicks a confirm button), "
+                f"call add_transaction with the receipt data above. Do NOT ask for more information.\n"
+                f"If the user wants to correct something, update the relevant field and confirm again.\n"
+                f"If the user cancels, acknowledge and clear."
+            )
 
         # Build user content (text or with media)
         if media_type == "photo" and media_data:
@@ -903,6 +965,8 @@ class ApolioAgent:
             "update_dashboard_config":  self._tool_update_dashboard_config,
             # Inline choice buttons for user confirmation
             "present_options":          self._tool_present_options,
+            # Store receipt data in session for cross-message persistence
+            "store_pending_receipt":    self._tool_store_pending_receipt,
         }
 
         handler = dispatch.get(name)
@@ -916,12 +980,17 @@ class ApolioAgent:
                             "list_envelopes", "get_intelligence", "search_history",
                             "get_contribution_status", "refresh_dashboard",
                             "save_learning", "save_receipt", "get_reference_data",
-                            "present_options", "update_dashboard_config"):
+                            "present_options", "store_pending_receipt",
+                            "update_dashboard_config"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
                     json.dumps(params)[:200]
                 )
+            # Clear pending receipt after successful transaction add
+            if name == "add_transaction" and isinstance(result, dict) and "error" not in result:
+                session.pending_receipt = None
+
             return result
         except Exception as e:
             logger.error(f"Tool {name} failed: {e}", exc_info=True)
@@ -1241,3 +1310,22 @@ class ApolioAgent:
                 return {"error": "Each choice must have 'label' and 'value' keys"}
         session.pending_choice = choices
         return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}
+
+    async def _tool_store_pending_receipt(self, params: dict, session: SessionContext,
+                                           sheets: SheetsClient, auth: AuthManager):
+        """Store parsed receipt data in session for cross-message persistence.
+        This ensures the agent remembers receipt details when user confirms in next message."""
+        receipt_data = {
+            "merchant": params.get("merchant", ""),
+            "date": params.get("date", ""),
+            "total_amount": float(params.get("total_amount", 0)),
+            "currency": params.get("currency", "EUR"),
+            "category": params.get("category", ""),
+            "subcategory": params.get("subcategory", ""),
+            "who": params.get("who", session.user_name or ""),
+            "items": params.get("items", []),
+            "ai_summary": params.get("ai_summary", ""),
+            "raw_text": params.get("raw_text", ""),
+        }
+        session.pending_receipt = receipt_data
+        return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}

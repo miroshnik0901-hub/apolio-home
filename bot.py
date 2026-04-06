@@ -2382,7 +2382,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await query.edit_message_text(
                 f"✅ <b>Активный конверт: {match['Name']}</b>  (<code>{env_id}</code>)\n"
-                f"Лимит: {cap_str}",
+                f"Бюджет: {cap_str}",
                 parse_mode=ParseMode.HTML,
                 reply_markup=_with_menu_btn(*extra_rows, lang=lang),
             )
@@ -2785,6 +2785,26 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _safe_reply(update.message, response, reply_markup=kb)
     elif la and la.action == "add" and "✓" in response:
         tx_id = la.tx_id
+        # T-058: Append budget remaining after every expense add
+        try:
+            from tools.summary import tool_get_budget_status
+            budget = await tool_get_budget_status(
+                {"envelope_id": session.current_envelope_id},
+                session, sheets, auth,
+            )
+            if budget.get("status") == "ok":
+                spent = budget["spent"]
+                cap = budget["cap"]
+                remaining = budget["remaining"]
+                pct = budget["pct_used"]
+                _bal_labels = {
+                    "ru": "Осталось", "uk": "Залишилось",
+                    "en": "Remaining", "it": "Rimanente",
+                }
+                bal_label = _bal_labels.get(lang, "Remaining")
+                response += f"\n📊 {bal_label}: <b>{remaining:.0f}€</b> из {cap:.0f}€ ({pct}%)"
+        except Exception:
+            pass  # Non-critical — don't break the flow
         kb = _with_menu_btn(
             [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
              InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],

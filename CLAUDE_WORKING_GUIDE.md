@@ -312,7 +312,19 @@ For each open task, read ALL fields fully:
 - Status = `OPEN`, has prior Apolio Comment → Mikhail reopened it; read new text in Task (C) first
 - Status = `IN PROCESS` → task is in progress; if code is NOT written yet → write it now, do not leave "начинаю реализацию" without actual implementation
 - Status = `DISCUSSION` → write architectural comment in E, set next step, no code until Mikhail confirms
-- `Confirm` = `GO` and `Deploy` = `READY` → push to main, set Deploy = `DEPLOYED`
+- Status = `ON HOLD` → **DO NOT process. Skip.** Mikhail will reopen when ready.
+- `Confirm` = `GO` and `Deploy` = `READY` → push to main, set Deploy = `DEPLOYED`, Status = `DISCUSSION`
+
+> ⚠️ **CRITICAL RULE — Who closes tasks (T-047):**
+> Claude NEVER sets Status = CLOSED. Only Mikhail closes tasks.
+> After completing work, Claude sets Status = `DISCUSSION`.
+> Mikhail reviews → sets CLOSED himself.
+> This applies to ALL tasks: code, docs, discussions, explanations.
+
+> ⚠️ **CRITICAL RULE — No deploy without GO (T-048):**
+> Claude NEVER pushes to main without Confirm = GO from Mikhail.
+> Workflow: code on dev → Deploy=READY → wait for Mikhail's GO → then push.
+> No exceptions.
 
 > ⚠️ **"IN PROCESS" means work is actively happening, not planned.**
 > Never set Status = IN PROCESS without immediately doing the actual work in the same session.
@@ -402,10 +414,12 @@ admin, config sheet edits, Apps Script only. If ANY Python file was committed to
 ```
 Code written + pushed to dev  → Status=IN PROCESS, Deploy=READY
 Mikhail sets Confirm=GO       → Claude pushes to main
-Pushed to main + deployed     → Status=CLOSED, Deploy=DEPLOYED, Resolved At=today
+Pushed to main + deployed     → Status=DISCUSSION, Deploy=DEPLOYED, Resolved At=today
+Mikhail reviews               → sets Status=CLOSED (only Mikhail!)
 ```
+Claude NEVER sets CLOSED. Only DISCUSSION after completing work.
 Never close a code task with Deploy=N/A. That combination says "nothing was deployed" which
-is false if code is on dev. CLOSED + N/A is only correct for admin/discussion tasks.
+is false if code is on dev. DISCUSSION + N/A is only correct for admin/discussion tasks.
 
 > 🔒 **HARD RULE: Claude NEVER pushes to `main` without Confirm = `GO`.**
 > If Deploy = `READY` and Confirm is empty or `HOLD` — Claude waits.

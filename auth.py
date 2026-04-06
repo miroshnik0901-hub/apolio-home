@@ -127,6 +127,14 @@ class SessionContext:
         # Format: [{"label": "✅ Да", "value": "yes"}, ...]
         # Bot.py attaches these as InlineKeyboard after the agent response, then clears.
         self.pending_choice: Optional[list] = None
+        # Pending delete state
+        self.pending_delete: Optional[dict] = None
+        # Pending receipt: parsed data from photo analysis awaiting user confirmation.
+        # Format: {"merchant": str, "total_amount": float, "currency": str,
+        #          "date": str, "items": list, "category": str, "subcategory": str,
+        #          "tg_file_id": str, "ai_summary": str, "raw_text": str}
+        # Set by agent after photo analysis, consumed when user confirms.
+        self.pending_receipt: Optional[dict] = None
 
 
 # In-memory session store (keyed by user_id)
