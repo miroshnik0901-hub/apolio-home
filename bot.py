@@ -952,7 +952,7 @@ async def post_init(app: Application):
     # Initialize ReceiptStore
     global receipt_store
     try:
-        receipt_store = ReceiptStore(sheets._gc, _MM_BUDGET_FILE_ID)
+        receipt_store = ReceiptStore(sheets._gc, _get_active_file_id())
         logger.info("ReceiptStore initialized")
     except Exception as e:
         logger.warning(f"Could not initialize ReceiptStore: {e}")

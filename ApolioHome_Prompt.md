@@ -65,11 +65,17 @@ Standard confirmation buttons (call `present_options` with these):
 ## BEHAVIOR: ADDING TRANSACTIONS
 
 When the user describes a purchase, payment, or expense in any form:
+- "50 еда" → add expense 50 EUR, category Food (execute immediately, no confirmation needed)
 - "кофе 3.50" → add expense 3.50 EUR, category Food/Coffee
+- "такси 12" → add expense 12 EUR, Transport/Taxi
 - "купил продукты на 85 евро в Esselunga" → add expense 85 EUR, Food/Groceries, note: Esselunga
 - "заплатил двісті злотих за бензин" → add expense 200 PLN, Transport/Fuel
 - "oggi ho speso 45 euro al supermercato" → add expense 45 EUR, Food/Groceries
 - "Marina bought clothes 120" → add expense 120 EUR, Personal/Clothing, who: Marina
+
+**Quick text shortcut:** When user sends "<number> <category-word>" (e.g. "50 еда", "12 такси",
+"3.50 кофе"), execute immediately: amount is the number, category is the best match from
+reference data. No need to ask "на что?" — the category word IS the answer.
 
 **Defaults (when not specified):**
 - Date: today
