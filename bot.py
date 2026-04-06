@@ -45,7 +45,7 @@ from telegram.error import BadRequest
 from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
-from tools.conversation_log import make_session_id
+from tools.conversation_log import ConversationLogger, make_session_id
 from tools.receipt_store import ReceiptStore
 import db as appdb
 
@@ -54,6 +54,7 @@ sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
 receipt_store: Optional[ReceiptStore] = None
+conv_logger: Optional[ConversationLogger] = None
 
 _PROD_FILE_ID = os.environ.get(
     "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
@@ -955,6 +956,19 @@ async def post_init(app: Application):
         logger.info("ReceiptStore initialized")
     except Exception as e:
         logger.warning(f"Could not initialize ReceiptStore: {e}")
+
+    # Initialize ConversationLogger (writes to Admin Sheets)
+    global conv_logger
+    try:
+        admin_id = os.environ.get("ADMIN_SHEETS_ID", "")
+        if admin_id and sheets._gc:
+            conv_logger = ConversationLogger(sheets._gc, admin_id)
+            conv_logger.start()
+            logger.info("ConversationLogger (Sheets) initialized")
+        else:
+            logger.warning("ConversationLogger skipped — no ADMIN_SHEETS_ID or sheets client")
+    except Exception as e:
+        logger.warning(f"Could not initialize ConversationLogger: {e}")
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
@@ -2725,6 +2739,18 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception:
             pass  # Conversation logging is not critical
+        # Mirror to Google Sheets
+        try:
+            if conv_logger:
+                conv_logger.log_user(
+                    user_id=session.user_id,
+                    session_id=session.session_id or "",
+                    envelope_id=session.current_envelope_id or "",
+                    message_type=media_type,
+                    raw_text=text,
+                )
+        except Exception:
+            pass
 
         response = await agent.run(
             text, session,
@@ -2746,6 +2772,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception:
             pass  # Conversation logging is not critical
+        # Mirror to Google Sheets
+        try:
+            if conv_logger:
+                conv_logger.log_bot(
+                    user_id=session.user_id,
+                    session_id=session.session_id or "",
+                    envelope_id=session.current_envelope_id or "",
+                    response_text=response[:300],
+                )
+        except Exception:
+            pass
     finally:
         typing_task.cancel()
         # Remove the thinking indicator
