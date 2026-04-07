@@ -51,7 +51,7 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 
 Env vars: `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GOOGLE_SERVICE_ACCOUNT`, `ADMIN_SHEETS_ID`, `DATABASE_URL`,
-`MM_TEST_FILE_ID` (optional, for test mode)
+`MM_BUDGET_FILE_ID` (fallback only — budget file_id resolves from Admin → Envelopes)
 
 ---
 
@@ -475,6 +475,7 @@ paste `apps_script/task_log_automation.js` → Save → Run `setupTriggers()` on
 - User names → do not hardcode `["Mikhail", "Marina"]`
 - Categories → do not hardcode category lists
 - Accounts → do not hardcode account lists
+- Budget file IDs → resolve from Admin → Envelopes tab (`_get_active_file_id()` in bot.py, `_resolve_budget_file_id()` in agent.py)
 - All reference data comes from Google Sheets
 
 ### Errors and exceptions
@@ -527,8 +528,9 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 - Deploys automatically on push to `dev` branch
 - **Overridden env vars in staging:**
   - `TELEGRAM_BOT_TOKEN` → @ApolioHomeTestBot token
-  - `MM_BUDGET_FILE_ID` → `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788` (Test Budget)
   - `ADMIN_SHEETS_ID` → `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` (Test Admin)
+  - Budget file_id resolves automatically from Test Admin → Envelopes (no MM_BUDGET_FILE_ID override needed)
+- **Auto-switch**: if bot token starts with `8298458285:` and ADMIN_SHEETS_ID points to prod, bot auto-switches to Test Admin at startup
 - Uses same PostgreSQL DB as production (conversation history shared)
 
 ### Dev workflow
