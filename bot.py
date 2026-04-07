@@ -59,7 +59,12 @@ conv_logger: Optional[ConversationLogger] = None
 _PROD_FILE_ID = os.environ.get(
     "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
 )
-_TEST_FILE_ID = os.environ.get("MM_TEST_FILE_ID", "")
+_TEST_FILE_ID = os.environ.get(
+    "MM_TEST_FILE_ID", "196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788"
+)
+_TEST_ADMIN_ID = os.environ.get(
+    "TEST_ADMIN_SHEETS_ID", "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM"
+)
 
 
 def _get_active_file_id() -> str:
@@ -889,7 +894,7 @@ async def post_init(app: Application):
         logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
 
-    # ── Staging/prod env sanity check (T-042) ──────────────────────────────
+    # ── Auto-switch to test sheets when running with test bot token (T-042) ─
     _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _prod_budget_id = "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
     _prod_admin_id = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
@@ -897,9 +902,17 @@ async def post_init(app: Application):
     _uses_prod_budget = os.environ.get("MM_BUDGET_FILE_ID", _prod_budget_id) == _prod_budget_id
     _uses_prod_admin = os.environ.get("ADMIN_SHEETS_ID", _prod_admin_id) == _prod_admin_id
     if _is_test_token and (_uses_prod_budget or _uses_prod_admin):
-        logger.error(
-            "⚠️ ENV MISMATCH: test bot token but using PRODUCTION sheets! "
-            "Set MM_BUDGET_FILE_ID and ADMIN_SHEETS_ID to test values in Railway Staging."
+        # Auto-fix: switch to test sheets instead of just warning
+        global _MM_BUDGET_FILE_ID
+        _MM_BUDGET_FILE_ID = _TEST_FILE_ID
+        os.environ["MM_BUDGET_FILE_ID"] = _TEST_FILE_ID
+        os.environ["ADMIN_SHEETS_ID"] = _TEST_ADMIN_ID
+        # Re-init sheets client with test admin (AdminSheets was already created with prod ID)
+        sheets._admin.sheet_id = _TEST_ADMIN_ID
+        sheets._admin._wb = None  # force re-open on next access
+        logger.info(
+            "🔄 TEST MODE: auto-switched to test sheets "
+            f"(budget={_TEST_FILE_ID[:12]}…, admin={_TEST_ADMIN_ID[:12]}…)"
         )
         # Notify admin on startup
         try:
@@ -907,10 +920,10 @@ async def post_init(app: Application):
             if admin_tg:
                 await app.bot.send_message(
                     admin_tg,
-                    "⚠️ <b>Внимание:</b> тестовый бот использует данные продакшена!\n\n"
-                    "Нужно в Railway → Staging → Variables:\n"
-                    "• <code>MM_BUDGET_FILE_ID</code> → тестовый\n"
-                    "• <code>ADMIN_SHEETS_ID</code> → тестовый",
+                    "🧪 <b>Тестовый режим</b>\n\n"
+                    "Автоматически переключен на тестовые файлы:\n"
+                    f"• Budget: <code>{_TEST_FILE_ID}</code>\n"
+                    f"• Admin: <code>{_TEST_ADMIN_ID}</code>",
                     parse_mode="HTML",
                 )
         except Exception:
