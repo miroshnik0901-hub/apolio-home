@@ -26,34 +26,31 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MENU: dict[str, dict] = {
     # ── Top level ──────────────────────────────────────────────────────────
-    "status": {
-        "label": "📊 Статус", "parent": "",
-        "type": "cmd", "command": "status", "params": {}, "order": 1,
-        "roles": [],
-    },
+    # NOTE: "status" (Бюджет) is NOT in inline menu — it's the primary
+    # reply keyboard button. Inline menu starts from "report".
     "report": {
         "label": "📋 Аналитика", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 2,
+        "type": "submenu", "command": "", "params": {}, "order": 1,
         "roles": [],
     },
     "transactions": {
         "label": "📝 Записи", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 3,
+        "type": "submenu", "command": "", "params": {}, "order": 2,
         "roles": [],
     },
     "envelopes_top": {
         "label": "📁 Конверты", "parent": "",
-        "type": "cmd", "command": "envelopes", "params": {}, "order": 4,
+        "type": "cmd", "command": "envelopes", "params": {}, "order": 3,
         "roles": [],
     },
     "settings": {
         "label": "⚙️ Система", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 5,
+        "type": "submenu", "command": "", "params": {}, "order": 4,
         "roles": [],
     },
     "help_top": {
         "label": "❓ Помощь", "parent": "",
-        "type": "cmd", "command": "help", "params": {}, "order": 6,
+        "type": "cmd", "command": "help", "params": {}, "order": 5,
         "roles": [],
     },
     # ── Analytics submenu ──────────────────────────────────────────────────
@@ -215,13 +212,12 @@ DEFAULT_MENU: dict[str, dict] = {
 
 # Rows for auto-creating / re-creating the BotMenu sheet
 _DEFAULT_ROWS = [
-    # Top level
-    ("status",        "📊 Статус",         "",             "cmd",     "status",       "",                     1, "TRUE", ""),
-    ("report",        "📋 Аналитика",      "",             "submenu", "",             "",                     2, "TRUE", ""),
-    ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     3, "TRUE", ""),
-    ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     4, "TRUE", ""),
-    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     5, "TRUE", ""),
-    ("help_top",      "❓ Помощь",         "",             "cmd",     "help",         "",                     6, "TRUE", ""),
+    # Top level (no "status" — it's the reply keyboard "Бюджет" button)
+    ("report",        "📋 Аналитика",      "",             "submenu", "",             "",                     1, "TRUE", ""),
+    ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     2, "TRUE", ""),
+    ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     3, "TRUE", ""),
+    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     4, "TRUE", ""),
+    ("help_top",      "❓ Помощь",         "",             "cmd",     "help",         "",                     5, "TRUE", ""),
     # Analytics submenu
     ("rep_curr",         "▶ Этот месяц",         "report",       "cmd",       "report",          '{"period":"current"}',                                                                       1, "TRUE", ""),
     ("rep_last",         "◀ Прошлый месяц",      "report",       "cmd",       "report",          '{"period":"last"}',                                                                          2, "TRUE", ""),

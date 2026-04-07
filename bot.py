@@ -1129,7 +1129,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Show welcome with persistent reply keyboard (stays in input bar)
     # Inline quick-access buttons below the text
     welcome_inline = InlineKeyboardMarkup([
-        [InlineKeyboardButton(i18n.t_menu("status", lang), callback_data="nav:status")],
         [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
         [InlineKeyboardButton(_menu_label(lang), callback_data="nav:__menu__")],
     ])
@@ -2845,7 +2844,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         kb = _with_menu_btn(
             [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
              InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],
-            [InlineKeyboardButton("📊 Статус",   callback_data="cb_status")],
+            [InlineKeyboardButton("💰 Бюджет",   callback_data="cb_status")],
             lang=lang,
         )
         await _safe_reply(update.message, response, reply_markup=kb)
