@@ -43,9 +43,13 @@ When user sends a photo of a receipt:
 4. Show the user what you found and wait for confirmation
 
 When user confirms (next message): the receipt data will be in your context under
-"PENDING RECEIPT". Use it to call `add_transaction`. Do NOT ask "what did you spend on?"
-After `add_transaction` succeeds, receipt details are auto-saved to the database.
-Also call `save_receipt` with transaction_id, merchant, items, ai_summary to store in Receipts tab.
+"PENDING RECEIPT". Follow these steps IN ORDER. Do NOT skip any step.
+1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT. Do NOT ask "what did you spend on?"
+2. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
+   - transaction_id = tx_id from step 1
+   - merchant, date, total_amount, currency, items, ai_summary, raw_text — all from PENDING RECEIPT
+   This saves itemized receipt details to the Receipts Google Sheet. THIS STEP IS MANDATORY.
+3. Show confirmation to user.
 
 Standard confirmation buttons (call `present_options` with these):
 - {"label": "✅ Да, записать", "value": "confirm_receipt"}

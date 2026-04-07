@@ -1240,7 +1240,14 @@ class ApolioAgent:
             import bot as _bot_module
             rs = getattr(_bot_module, "receipt_store", None)
             if rs is None:
-                return {"status": "skipped", "reason": "ReceiptStore not initialized"}
+                # Lazy init if post_init didn't create it
+                from tools.receipt_store import ReceiptStore
+                file_id = _bot_module._get_active_file_id()
+                if file_id:
+                    rs = ReceiptStore(self.sheets._gc, file_id)
+                    _bot_module.receipt_store = rs
+                else:
+                    return {"status": "skipped", "reason": "No active file_id"}
             receipt_id = rs.save_receipt(
                 transaction_id=params.get("transaction_id", ""),
                 date=params.get("date", "") or "",
