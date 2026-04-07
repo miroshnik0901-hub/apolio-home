@@ -513,16 +513,27 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
         by_who = summary.get("by_who", {})
         prev_cats = summary_prev.get("categories", {}) if summary_prev.get("status") == "ok" else {}
 
-        # Envelope cap for reference
+        # Envelope info for heading + cap
         try:
             env_id = session.current_envelope_id or "MM_BUDGET"
             env_list = sheets.get_envelopes()
             env_match = next((e for e in env_list if e.get("ID") == env_id), None)
             cap = float(env_match.get("Monthly_Cap") or env_match.get("monthly_cap") or 0) if env_match else 0
+            env_label = env_match.get("Name", env_id) if env_match else env_id
         except Exception:
             cap = 0
+            env_label = env_id
 
-        lines = [i18n.tu("report_heading", lang, label=label), ""]
+        # TEST mode tag
+        try:
+            mode_tag = ""
+            dash_cfg = sheets.get_dashboard_config()
+            if dash_cfg.get("mode", "prod").lower() == "test":
+                mode_tag = "  🧪 <b>TEST</b>"
+        except Exception:
+            mode_tag = ""
+
+        lines = [i18n.tu("report_heading", lang, label=label, env=env_label, mode=mode_tag), ""]
 
         if total == 0:
             lines.append(i18n.tu("report_no_records", lang))

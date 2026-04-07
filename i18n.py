@@ -538,10 +538,10 @@ KB_TEXT_TO_ACTION: dict[str, str] = _build_reverse()
 UI: dict[str, dict[str, str]] = {
     # ── Status ─────────────────────────────────────────────────────────────
     "status_title": {
-        "ru": "📊 <b>Бюджет {label}</b>  ·  📁 {env}{mode}",
-        "uk": "📊 <b>Бюджет {label}</b>  ·  📁 {env}{mode}",
-        "en": "📊 <b>Budget {label}</b>  ·  📁 {env}{mode}",
-        "it": "📊 <b>Budget {label}</b>  ·  📁 {env}{mode}",
+        "ru": "💰 <b>Бюджет · {label}</b>  ·  📁 {env}{mode}",
+        "uk": "💰 <b>Бюджет · {label}</b>  ·  📁 {env}{mode}",
+        "en": "💰 <b>Budget · {label}</b>  ·  📁 {env}{mode}",
+        "it": "💰 <b>Budget · {label}</b>  ·  📁 {env}{mode}",
     },
     "status_remaining": {
         "ru": "Осталось: <b>{remaining:,.0f} EUR</b>  ·  {days} дн.",
@@ -569,10 +569,10 @@ UI: dict[str, dict[str, str]] = {
     },
     # ── Report ─────────────────────────────────────────────────────────────
     "report_heading": {
-        "ru": "📋 <b>Отчёт — {label}</b>",
-        "uk": "📋 <b>Звіт — {label}</b>",
-        "en": "📋 <b>Report — {label}</b>",
-        "it": "📋 <b>Report — {label}</b>",
+        "ru": "📋 <b>Аналитика · {label}</b>  ·  📁 {env}{mode}",
+        "uk": "📋 <b>Аналітика · {label}</b>  ·  📁 {env}{mode}",
+        "en": "📋 <b>Analytics · {label}</b>  ·  📁 {env}{mode}",
+        "it": "📋 <b>Analisi · {label}</b>  ·  📁 {env}{mode}",
     },
     "report_no_records": {
         "ru": "Записей за этот период нет.",
