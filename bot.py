@@ -83,6 +83,8 @@ def _get_active_file_id() -> str:
 
 
 _MM_BUDGET_FILE_ID = _PROD_FILE_ID  # legacy alias — use _get_active_file_id() for new code
+# True when running with the test bot token (8298458285:…)
+_IS_TEST_BOT = os.environ.get("TELEGRAM_BOT_TOKEN", "").startswith("8298458285:")
 # Flag: True once PostgreSQL is ready (set in post_init)
 _db_ready = False
 
@@ -423,12 +425,14 @@ async def _build_status_html(session, lang: str = "ru") -> str:
         except Exception:
             env_label = env_id
 
-        # Show TEST mode warning if active
+        # Show TEST tag only on PROD bot running in test mode (misconfiguration)
+        # Test bot = test data by definition, no tag needed
         try:
             mode_tag = ""
-            dash_cfg = sheets.get_dashboard_config()
-            if dash_cfg.get("mode", "prod").lower() == "test":
-                mode_tag = "  🧪 <b>TEST</b>"
+            if not _IS_TEST_BOT:
+                dash_cfg = sheets.get_dashboard_config()
+                if dash_cfg.get("mode", "prod").lower() == "test":
+                    mode_tag = "  🧪 <b>TEST</b>"
         except Exception:
             mode_tag = ""
 
@@ -524,12 +528,13 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             cap = 0
             env_label = env_id
 
-        # TEST mode tag
+        # Show TEST tag only on PROD bot running in test mode (misconfiguration)
         try:
             mode_tag = ""
-            dash_cfg = sheets.get_dashboard_config()
-            if dash_cfg.get("mode", "prod").lower() == "test":
-                mode_tag = "  🧪 <b>TEST</b>"
+            if not _IS_TEST_BOT:
+                dash_cfg = sheets.get_dashboard_config()
+                if dash_cfg.get("mode", "prod").lower() == "test":
+                    mode_tag = "  🧪 <b>TEST</b>"
         except Exception:
             mode_tag = ""
 
