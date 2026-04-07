@@ -857,6 +857,43 @@ UI: dict[str, dict[str, str]] = {
         "en": "\n💰 <b>Income:</b>",
         "it": "\n💰 <b>Entrate:</b>",
     },
+    # ── Inline keyboard button labels ─────────────────────────────────────────
+    "btn_edit": {
+        "ru": "✏ Изменить",
+        "uk": "✏ Змінити",
+        "en": "✏ Edit",
+        "it": "✏ Modifica",
+    },
+    "btn_delete": {
+        "ru": "🗑 Удалить",
+        "uk": "🗑 Видалити",
+        "en": "🗑 Delete",
+        "it": "🗑 Elimina",
+    },
+    "btn_budget": {
+        "ru": "💰 Бюджет",
+        "uk": "💰 Бюджет",
+        "en": "💰 Budget",
+        "it": "💰 Budget",
+    },
+    "btn_cancel": {
+        "ru": "❌ Отмена",
+        "uk": "❌ Скасувати",
+        "en": "❌ Cancel",
+        "it": "❌ Annulla",
+    },
+    "btn_yes_delete": {
+        "ru": "✅ Да, удалить",
+        "uk": "✅ Так, видалити",
+        "en": "✅ Yes, delete",
+        "it": "✅ Sì, elimina",
+    },
+    "btn_yes_delete_rows": {
+        "ru": "✅ Да, удалить строки {s}–{e}",
+        "uk": "✅ Так, видалити рядки {s}–{e}",
+        "en": "✅ Yes, delete rows {s}–{e}",
+        "it": "✅ Sì, elimina righe {s}–{e}",
+    },
 }
 
 # ── Day-of-week abbreviations (Mon/Tue/... → localized) ────────────────────────

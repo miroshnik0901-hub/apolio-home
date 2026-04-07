@@ -2446,8 +2446,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await query.edit_message_reply_markup(
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Да, удалить", callback_data=f"cb_del_confirm_{tx_id}"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="cb_cancel"),
+                    InlineKeyboardButton(i18n.tu("btn_yes_delete", lang), callback_data=f"cb_del_confirm_{tx_id}"),
+                    InlineKeyboardButton(i18n.tu("btn_cancel", lang), callback_data="cb_cancel"),
                 ]])
             )
         except BadRequest:
@@ -2798,10 +2798,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         s, e = pd["start_row"], pd["end_row"]
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                f"✅ Да, удалить строки {s}–{e}",
+                i18n.tu("btn_yes_delete_rows", lang, s=s, e=e),
                 callback_data=f"cb_confirm_del_{s}_{e}",
             )],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cb_cancel_del")],
+            [InlineKeyboardButton(i18n.tu("btn_cancel", lang), callback_data="cb_cancel_del")],
         ])
         await _safe_reply(update.message, response, reply_markup=kb)
     elif la and la.action == "add" and "✓" in response:
@@ -2827,9 +2827,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass  # Non-critical — don't break the flow
         kb = _with_menu_btn(
-            [InlineKeyboardButton("✏ Изменить", callback_data=f"cb_edit_{tx_id}"),
-             InlineKeyboardButton("🗑 Удалить",  callback_data=f"cb_del_{tx_id}")],
-            [InlineKeyboardButton("💰 Бюджет",   callback_data="cb_status")],
+            [InlineKeyboardButton(i18n.tu("btn_edit", lang),   callback_data=f"cb_edit_{tx_id}"),
+             InlineKeyboardButton(i18n.tu("btn_delete", lang), callback_data=f"cb_del_{tx_id}")],
+            [InlineKeyboardButton(i18n.tu("btn_budget", lang), callback_data="cb_status")],
             lang=lang,
         )
         await _safe_reply(update.message, response, reply_markup=kb)
