@@ -70,7 +70,8 @@ class ConversationLogger:
                         break
                 # Write batch
                 if batch:
-                    await asyncio.get_event_loop().run_in_executor(
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
                         None, self._write_batch, batch
                     )
             except asyncio.TimeoutError:
