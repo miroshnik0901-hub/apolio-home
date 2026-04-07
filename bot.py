@@ -298,12 +298,11 @@ def _month_name(period: str, lang: str = "ru") -> str:
 
 
 def _progress_bar(current: float, total: float, width: int = 10) -> str:
-    """Emoji block progress bar. Uses rounded squares for a softer look."""
+    """Budget progress bar: green→yellow→red based on spend level."""
     if not total or total <= 0:
         return "▱" * width
     pct = min(current / total, 1.0)
     filled = round(pct * width)
-    # 🟩 green for low spend, 🟨 for mid, 🟥 for high
     if pct < 0.7:
         block = "🟩"
     elif pct < 0.9:
@@ -311,6 +310,15 @@ def _progress_bar(current: float, total: float, width: int = 10) -> str:
     else:
         block = "🟥"
     return block * filled + "▱" * (width - filled)
+
+
+def _share_bar(current: float, total: float, width: int = 6) -> str:
+    """Neutral share bar for category breakdown (always blue, no alarm colors)."""
+    if not total or total <= 0:
+        return "▱" * width
+    pct = min(current / total, 1.0)
+    filled = round(pct * width)
+    return "🟦" * filled + "▱" * (width - filled)
 
 
 def _ru_plural(n: int, one: str, few: str, many: str) -> str:
@@ -541,7 +549,7 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             lines.append(i18n.tu("by_category", lang))
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 pct_share = round(amt / total * 100) if total else 0
-                bar = _progress_bar(amt, total, 6)
+                bar = _share_bar(amt, total, 6)
                 icon = _cat_icon(cat)
                 prev_amt = prev_cats.get(cat, 0)
                 if prev_amt > 0:
