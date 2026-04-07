@@ -245,7 +245,7 @@ def _format_txn_list(txs: list[dict], lang: str = "ru", *, show_title: bool = Tr
                 amt_str = f"{amt} EUR"
             who_str = f" — {who}" if who else ""
             note_str = f"\n     📎 {note}" if note else ""
-            lines.append(f"{icon} <b>{cat}</b>  {amt_str}{who_str}  <i>{date}</i>{note_str}")
+            lines.append(f"{icon} <b>{i18n.t_cat(cat, lang)}</b>  {amt_str}{who_str}  <i>{date}</i>{note_str}")
 
     if expenses:
         if income:
@@ -564,7 +564,7 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
                 else:
                     trend = ""
                 lines.append(
-                    f"{icon} <b>{cat}</b>  {bar}\n"
+                    f"{icon} <b>{i18n.t_cat(cat, lang)}</b>  {bar}\n"
                     f"   {amt:,.0f} EUR  ({pct_share}%){trend}"
                 )
 
@@ -635,7 +635,7 @@ async def _build_week_html(session, lang: str = "ru") -> str:
             for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
                 icon = _cat_icon(cat)
                 pct_share = round(amt / total * 100) if total else 0
-                lines.append(f"  {icon} {cat}: {amt:,.0f} EUR  ({pct_share}%)")
+                lines.append(f"  {icon} {i18n.t_cat(cat, lang)}: {amt:,.0f} EUR  ({pct_share}%)")
 
         return "\n".join(lines)
     except Exception as e:
@@ -744,7 +744,7 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
                 chg = t["change_pct"]
                 icon = _cat_icon(cat)
                 lines.append(
-                    f"  {direction} {icon} <b>{cat}</b>: {cur_amt:,.0f} → "
+                    f"  {direction} {icon} <b>{i18n.t_cat(cat, lang)}</b>: {cur_amt:,.0f} → "
                     f"({chg:+.0f}%  vs {prev_amt:,.0f} {cur})"
                 )
         else:
@@ -757,7 +757,7 @@ async def _build_trends_html(session, lang: str = "ru") -> str:
             for a in anomalies:
                 icon = _cat_icon(a["category"])
                 lines.append(
-                    f"  {icon} {a['category']}: {a['current']:,.0f} {cur}  "
+                    f"  {icon} {i18n.t_cat(a['category'], lang)}: {a['current']:,.0f} {cur}  "
                     f"{i18n.tu('trends_anomaly_detail', lang, avg=a['average'], ratio=a['ratio'])}"
                 )
 
@@ -796,7 +796,7 @@ async def _report_cat_rows(session, period: str, lang: str) -> list:
         rows = []
         for cat, _ in cats:
             cat_key = cat[:20]  # Telegram callback_data max 64 bytes
-            cat_label = f"{_cat_icon(cat)} {cat[:18]}"
+            cat_label = f"{_cat_icon(cat)} {i18n.t_cat(cat, lang)[:18]}"
             rows.append([InlineKeyboardButton(cat_label, callback_data=f"cb_cat_drill:{period}:{cat_key}")])
         return rows
     except Exception as e:
@@ -819,11 +819,12 @@ async def _build_category_html(session, period: str, category: str, lang: str = 
         label = _month_label(period, lang)
         icon = _cat_icon(category)
 
+        cat_name = i18n.t_cat(category, lang)
         titles = {
-            "ru": f"{icon} <b>{category}</b>  ·  {label}",
-            "uk": f"{icon} <b>{category}</b>  ·  {label}",
-            "en": f"{icon} <b>{category}</b>  ·  {label}",
-            "it": f"{icon} <b>{category}</b>  ·  {label}",
+            "ru": f"{icon} <b>{cat_name}</b>  ·  {label}",
+            "uk": f"{icon} <b>{cat_name}</b>  ·  {label}",
+            "en": f"{icon} <b>{cat_name}</b>  ·  {label}",
+            "it": f"{icon} <b>{cat_name}</b>  ·  {label}",
         }
         lines = [titles.get(lang, titles["ru"]), ""]
 
@@ -849,7 +850,7 @@ async def _build_category_html(session, period: str, category: str, lang: str = 
             parts = [f"  {date}  <b>{amt:,.0f} EUR</b>"]
             if note:
                 parts.append(f"  {note}")
-            if who and who not in (session.name or ""):
+            if who and who not in (session.user_name or ""):
                 parts.append(f"  👤{who}")
             lines.append("".join(parts))
 
@@ -1669,7 +1670,7 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             amt = tx.get("Amount_Orig", "?")
             date = tx.get("Date", "")[-5:]  # MM-DD
             del_rows.append([InlineKeyboardButton(
-                f"🗑 {cat} · {amt} EUR · {date}", callback_data=f"cb_del_{tx_id}"
+                f"🗑 {i18n.t_cat(cat, lang)} · {amt} EUR · {date}", callback_data=f"cb_del_{tx_id}"
             )])
 
         markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
@@ -2317,7 +2318,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 cat = tx.get("Category", "?")
                 amt = tx.get("Amount_Orig", "?")
                 del_rows.append([InlineKeyboardButton(
-                    f"🗑 {cat} · {amt} EUR", callback_data=f"cb_del_{tx_id}"
+                    f"🗑 {i18n.t_cat(cat, lang)} · {amt} EUR", callback_data=f"cb_del_{tx_id}"
                 )])
             markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
             await query.message.reply_text(

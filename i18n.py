@@ -479,6 +479,42 @@ SYS: dict[str, dict[str, str]] = {
     },
 }
 
+# ── Category translations (Sheets store English names) ────────────────────────
+# Key = English category name (as in Google Sheets Categories tab).
+# Value = {lang: translated name}.
+# English falls back to the key itself, so only ru/uk/it needed.
+
+CAT_NAMES: dict[str, dict[str, str]] = {
+    "Food":           {"ru": "Еда",           "uk": "Їжа",            "it": "Cibo"},
+    "Housing":        {"ru": "Жильё",         "uk": "Житло",          "it": "Casa"},
+    "Transport":      {"ru": "Транспорт",     "uk": "Транспорт",      "it": "Trasporto"},
+    "Health":         {"ru": "Здоровье",      "uk": "Здоров'я",       "it": "Salute"},
+    "Entertainment":  {"ru": "Развлечения",   "uk": "Розваги",        "it": "Svago"},
+    "Education":      {"ru": "Образование",   "uk": "Освіта",         "it": "Istruzione"},
+    "Travel":         {"ru": "Путешествия",   "uk": "Подорожі",       "it": "Viaggi"},
+    "Savings":        {"ru": "Сбережения",    "uk": "Заощадження",    "it": "Risparmi"},
+    "Other":          {"ru": "Другое",        "uk": "Інше",           "it": "Altro"},
+    "Transfer":       {"ru": "Перевод",       "uk": "Переказ",        "it": "Trasferimento"},
+    "Children":       {"ru": "Дети",          "uk": "Діти",           "it": "Bambini"},
+    "Personal":       {"ru": "Личное",        "uk": "Особисте",       "it": "Personale"},
+    "Household":      {"ru": "Быт",           "uk": "Побут",          "it": "Domestico"},
+    "Subscriptions":  {"ru": "Подписки",      "uk": "Підписки",       "it": "Abbonamenti"},
+    "Income":         {"ru": "Доход",         "uk": "Дохід",          "it": "Entrate"},
+}
+
+
+def t_cat(category: str, lang: str) -> str:
+    """Translate a category name from English (Sheets) to user language."""
+    if not category:
+        return category
+    lg = get_lang(lang)
+    if lg == "en":
+        return category
+    entry = CAT_NAMES.get(category)
+    if entry:
+        return entry.get(lg) or entry.get("ru") or category
+    return category
+
 
 def ts(key: str, lang: str) -> str:
     """Translate a system message key. Falls back to ru then en."""
