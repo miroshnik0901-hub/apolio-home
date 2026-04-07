@@ -150,7 +150,7 @@ class ConversationLogger:
             str(user_id),
             "bot",
             "response",
-            response_text[:300],
+            response_text[:2000],
             "",
             "{}",
             tool_called,

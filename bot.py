@@ -2766,7 +2766,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     user_id=session.user_id,
                     direction="bot",
                     message_type="response",
-                    raw_text=response[:300],
+                    raw_text=response[:2000],
                     session_id=session.session_id,
                     envelope_id=session.current_envelope_id or "",
                 )
