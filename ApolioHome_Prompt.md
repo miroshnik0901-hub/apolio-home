@@ -38,6 +38,12 @@ After confirming or correcting — call `save_learning` to record what was learn
 
 When user sends a photo of a receipt:
 1. Analyze the image, extract: merchant, date, total, items, currency
+   STRICT RULES FOR RECEIPT ANALYSIS — NO EXCEPTIONS:
+   - Only report what you can CLEARLY read from the image
+   - If merchant name is unclear/blurry/unreadable → use "" (empty string), do NOT guess
+   - If any field is uncertain → leave it blank or mark as "?" — NEVER invent or assume
+   - Do NOT suggest plausible-sounding names (e.g. "Esselunga", "Simply") unless exactly visible
+   - If you made a mistake and guessed wrong → admit it immediately, do NOT guess again
 2. Call `store_pending_receipt` with ALL extracted data — this saves it in session
 3. Call `present_options` with standard buttons (see below)
 4. Show the user what you found and wait for confirmation
