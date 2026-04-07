@@ -1235,33 +1235,82 @@ class ApolioAgent:
 
     async def _tool_save_receipt(self, params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager):
-        """Save itemized receipt data to Receipts tab."""
+        """Save itemized receipt data to Receipts tab (Sheets) + parsed_data (PostgreSQL)."""
+        tx_id = params.get("transaction_id", "")
+        merchant = params.get("merchant", "") or ""
+        date = params.get("date", "") or ""
+        total_amount = float(params.get("total_amount", 0))
+        currency = params.get("currency", "EUR")
+        items = params.get("items", [])
+        ai_summary = params.get("ai_summary", "") or ""
+        raw_text = params.get("raw_text", "") or ""
+        tg_file_id = params.get("tg_file_id", "") or ""
+
+        receipt_id = ""
+
+        # 1. Google Sheets (Receipts tab)
         try:
             import bot as _bot_module
             rs = getattr(_bot_module, "receipt_store", None)
             if rs is None:
-                # Lazy init if post_init didn't create it
                 from tools.receipt_store import ReceiptStore
                 file_id = _bot_module._get_active_file_id()
                 if file_id:
                     rs = ReceiptStore(self.sheets._gc, file_id)
                     _bot_module.receipt_store = rs
-                else:
-                    return {"status": "skipped", "reason": "No active file_id"}
-            receipt_id = rs.save_receipt(
-                transaction_id=params.get("transaction_id", ""),
-                date=params.get("date", "") or "",
-                merchant=params.get("merchant", "") or "",
-                total_amount=float(params.get("total_amount", 0)),
-                currency=params.get("currency", "EUR"),
-                items=params.get("items", []),
-                ai_summary=params.get("ai_summary", "") or "",
-                raw_text=params.get("raw_text", "") or "",
-                tg_file_id=params.get("tg_file_id", "") or "",
-            )
-            return {"status": "ok", "receipt_id": receipt_id}
+            if rs:
+                receipt_id = rs.save_receipt(
+                    transaction_id=tx_id,
+                    date=date,
+                    merchant=merchant,
+                    total_amount=total_amount,
+                    currency=currency,
+                    items=items,
+                    ai_summary=ai_summary,
+                    raw_text=raw_text,
+                    tg_file_id=tg_file_id,
+                )
         except Exception as e:
-            return {"error": str(e)}
+            logger.warning(f"save_receipt Sheets write failed: {e}")
+
+        # 2. PostgreSQL parsed_data — primary store, queried on "дай чек"
+        try:
+            import db as _db
+            if _db.is_ready() and tx_id:
+                # Dedup: skip if this tx_id is already stored
+                existing = await _db.get_parsed_data(
+                    user_id=session.user_id,
+                    data_type="receipt",
+                    limit=5,
+                )
+                already_saved = any(
+                    r.get("transaction_id") == tx_id for r in existing
+                )
+                if not already_saved:
+                    await _db.save_parsed_data(
+                        user_id=session.user_id,
+                        data_type="receipt",
+                        payload={
+                            "merchant": merchant,
+                            "date": date,
+                            "total_amount": total_amount,
+                            "currency": currency,
+                            "items": items,
+                            "ai_summary": ai_summary,
+                            "raw_text": raw_text,
+                            "tg_file_id": tg_file_id,
+                            "receipt_id": receipt_id,
+                        },
+                        envelope_id=session.current_envelope_id or "",
+                        transaction_id=tx_id,
+                    )
+                    logger.info(f"Receipt saved to parsed_data: tx={tx_id}, merchant={merchant}")
+                else:
+                    logger.info(f"Receipt already in parsed_data, skipping duplicate: tx={tx_id}")
+        except Exception as e:
+            logger.warning(f"save_receipt PostgreSQL write failed: {e}")
+
+        return {"status": "ok", "receipt_id": receipt_id}
 
     async def _tool_refresh_learning_summary(self, params: dict, session: SessionContext,
                                               sheets: SheetsClient, auth: AuthManager):
