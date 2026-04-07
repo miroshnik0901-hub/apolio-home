@@ -2823,7 +2823,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "en": "Remaining", "it": "Rimanente",
                 }
                 bal_label = _bal_labels.get(lang, "Remaining")
-                response += f"\n📊 {bal_label}: <b>{remaining:.0f}€</b> из {cap:.0f}€ ({pct}%)"
+                response += f"\n📊 {bal_label}: *{remaining:.0f}€* из {cap:.0f}€ ({pct}%)"
         except Exception:
             pass  # Non-critical — don't break the flow
         kb = _with_menu_btn(
