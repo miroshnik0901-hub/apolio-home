@@ -529,9 +529,11 @@ New strings → add to all 4 dictionaries (ru/uk/en/it).
 - **Overridden env vars in staging:**
   - `TELEGRAM_BOT_TOKEN` → @ApolioHomeTestBot token
   - `ADMIN_SHEETS_ID` → `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` (Test Admin)
+  - `DATABASE_URL` → `${{Postgres-pCvV.DATABASE_URL}}` (separate staging DB)
+  - `DATABASE_PUBLIC_URL` → `${{Postgres-pCvV.DATABASE_PUBLIC_URL}}`
   - Budget file_id resolves automatically from Test Admin → Envelopes (no MM_BUDGET_FILE_ID override needed)
 - **Auto-switch**: if bot token starts with `8298458285:` and ADMIN_SHEETS_ID points to prod, bot auto-switches to Test Admin at startup
-- Uses same PostgreSQL DB as production (conversation history shared)
+- **Separate PostgreSQL**: Postgres-pCvV (service `81b39ec8-3f97-4a10-8e55-d052f64ef1fd`) — staging DB fully isolated from prod
 
 ### Dev workflow
 ```bash
