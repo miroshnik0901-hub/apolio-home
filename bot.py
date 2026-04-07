@@ -398,11 +398,6 @@ async def _build_status_html(session, lang: str = "ru") -> str:
         summary = await tool_get_summary(
             {"breakdown_by": "category"}, session, sheets, auth
         )
-        # Previous month for trend comparison
-        prev_period = _offset_month(_current_month_str(), -1)
-        summary_prev = await tool_get_summary(
-            {"breakdown_by": "category", "period": prev_period}, session, sheets, auth
-        )
 
         cap = float(status.get("cap") or 0)
         spent = float(status.get("spent") or 0)
@@ -465,31 +460,15 @@ async def _build_status_html(session, lang: str = "ru") -> str:
             pace_str = (f"+{pace_delta:,.0f}" if pace_delta > 0 else f"{pace_delta:,.0f}")
             lines.append(i18n.tu("status_pace", lang, rate=daily_rate, proj=projected, delta=pace_str))
 
+        # Status is a COMPACT widget — no category/who breakdown.
+        # Detailed breakdown is in _build_report_html (📋 Аналітика).
         if summary.get("status") == "ok":
-            cats = summary.get("categories", {})
-            prev_cats = summary_prev.get("categories", {}) if summary_prev.get("status") == "ok" else {}
             by_who = summary.get("by_who", {})
-
-            if cats:
-                lines.append("")
-                lines.append(i18n.tu("by_category", lang))
-                for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:8]:
-                    icon = _cat_icon(cat)
-                    pct_cat = round(amt / spent * 100) if spent else 0
-                    prev_amt = prev_cats.get(cat, 0)
-                    if prev_amt > 0:
-                        delta = amt - prev_amt
-                        sign = "↑" if delta > 0 else "↓"
-                        trend = f"  <i>{sign}{abs(delta):,.0f}</i>"
-                    else:
-                        trend = ""
-                    lines.append(f"  {icon} {cat}: {amt:,.0f} EUR  ({pct_cat}%){trend}")
-
+            # Only show top spender as a one-liner if 2+ people
             if len(by_who) > 1:
+                top_who = max(by_who.items(), key=lambda x: x[1])
                 lines.append("")
-                lines.append(i18n.tu("by_person", lang))
-                for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
-                    lines.append(f"  👤 {who}: {amt:,.0f} EUR")
+                lines.append(f"👥 {' · '.join(f'{w}: {a:,.0f}' for w, a in sorted(by_who.items(), key=lambda x: -x[1]))}")
 
         return "\n".join(lines)
     except Exception as e:
