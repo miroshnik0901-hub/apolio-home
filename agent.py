@@ -993,8 +993,34 @@ class ApolioAgent:
                     name, session.current_envelope_id,
                     json.dumps(params)[:200]
                 )
-            # Clear pending receipt after successful transaction add
+            # Auto-save receipt details to parsed_data + clear pending receipt
             if name == "add_transaction" and isinstance(result, dict) and "error" not in result:
+                if session.pending_receipt:
+                    try:
+                        import db as _db_receipt
+                        tx_id = result.get("tx_id", "")
+                        receipt = session.pending_receipt
+                        await _db_receipt.save_parsed_data(
+                            user_id=session.user_id,
+                            data_type="receipt",
+                            payload={
+                                "merchant": receipt.get("merchant", ""),
+                                "date": receipt.get("date", ""),
+                                "total_amount": receipt.get("total_amount", 0),
+                                "currency": receipt.get("currency", "EUR"),
+                                "category": receipt.get("category", ""),
+                                "subcategory": receipt.get("subcategory", ""),
+                                "who": receipt.get("who", ""),
+                                "items": receipt.get("items", []),
+                                "ai_summary": receipt.get("ai_summary", ""),
+                                "raw_text": receipt.get("raw_text", ""),
+                            },
+                            envelope_id=session.current_envelope_id or "",
+                            transaction_id=tx_id,
+                        )
+                        logger.info(f"Receipt details saved to parsed_data for tx {tx_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save receipt to parsed_data: {e}")
                 session.pending_receipt = None
 
             return result

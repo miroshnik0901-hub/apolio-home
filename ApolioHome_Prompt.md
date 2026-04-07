@@ -44,6 +44,8 @@ When user sends a photo of a receipt:
 
 When user confirms (next message): the receipt data will be in your context under
 "PENDING RECEIPT". Use it to call `add_transaction`. Do NOT ask "what did you spend on?"
+After `add_transaction` succeeds, receipt details are auto-saved to the database.
+Also call `save_receipt` with transaction_id, merchant, items, ai_summary to store in Receipts tab.
 
 Standard confirmation buttons (call `present_options` with these):
 - {"label": "✅ Да, записать", "value": "confirm_receipt"}
