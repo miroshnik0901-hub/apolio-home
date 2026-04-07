@@ -20,9 +20,15 @@ from auth import AuthManager, SessionContext
 
 logger = logging.getLogger(__name__)
 
-_MM_BUDGET_FILE_ID = os.environ.get(
-    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
-)
+def _resolve_budget_file_id(sheets_client) -> str:
+    """Get budget file_id from Admin → Envelopes (no hardcoded IDs)."""
+    try:
+        for e in sheets_client.get_envelopes():
+            if e.get("ID") == "MM_BUDGET" and str(e.get("Active", "")).upper() == "TRUE":
+                return e["file_id"]
+    except Exception:
+        pass
+    return os.environ.get("MM_BUDGET_FILE_ID", "")
 
 # ── Tools schema ───────────────────────────────────────────────────────────────
 
@@ -626,7 +632,7 @@ def _get_user_context_mgr(sheets: SheetsClient):
     global _user_context_mgr
     if _user_context_mgr is None:
         from user_context import UserContextManager
-        _user_context_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+        _user_context_mgr = UserContextManager(sheets._gc, _resolve_budget_file_id(sheets))
     return _user_context_mgr
 
 

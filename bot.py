@@ -56,33 +56,22 @@ agent = ApolioAgent(sheets, auth)
 receipt_store: Optional[ReceiptStore] = None
 conv_logger: Optional[ConversationLogger] = None
 
-_PROD_FILE_ID = os.environ.get(
-    "MM_BUDGET_FILE_ID", "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
-)
-_TEST_FILE_ID = os.environ.get(
-    "MM_TEST_FILE_ID", "196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788"
-)
-_TEST_ADMIN_ID = os.environ.get(
-    "TEST_ADMIN_SHEETS_ID", "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM"
-)
+_PROD_ADMIN_ID = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
+_TEST_ADMIN_ID = "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM"
 
 
 def _get_active_file_id() -> str:
-    """Return the active budget file ID based on mode in DashboardConfig.
-    mode=test → use MM_TEST_FILE_ID env var (or test_file_id from config).
-    mode=prod → use MM_BUDGET_FILE_ID (default)."""
+    """Return the budget file_id for the default envelope (MM_BUDGET).
+    Reads from Admin → Envelopes tab — no hardcoded budget file IDs."""
     try:
-        cfg = sheets.get_dashboard_config()
-        if cfg.get("mode", "prod").lower() == "test":
-            test_id = cfg.get("test_file_id", "") or _TEST_FILE_ID
-            if test_id:
-                return test_id
+        envs = sheets.get_envelopes()
+        for e in envs:
+            if e.get("ID") == "MM_BUDGET" and str(e.get("Active", "")).upper() == "TRUE":
+                return e["file_id"]
     except Exception:
         pass
-    return _PROD_FILE_ID
-
-
-_MM_BUDGET_FILE_ID = _PROD_FILE_ID  # legacy alias — use _get_active_file_id() for new code
+    # Last resort fallback (should never reach here if Admin is configured)
+    return os.environ.get("MM_BUDGET_FILE_ID", "")
 # True when running with the test bot token (8298458285:…)
 _IS_TEST_BOT = os.environ.get("TELEGRAM_BOT_TOKEN", "").startswith("8298458285:")
 # Flag: True once PostgreSQL is ready (set in post_init)
@@ -897,40 +886,19 @@ async def post_init(app: Application):
         logger.warning(f"Could not set admin commands: {e}")
     logger.info("Bot commands registered in Telegram")
 
-    # ── Auto-switch to test sheets when running with test bot token (T-042) ─
+    # ── Auto-switch to test Admin when running with test bot token (T-042) ──
     _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    _prod_budget_id = "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
-    _prod_admin_id = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
     _is_test_token = _token.startswith("8298458285:")  # test bot token prefix
-    _uses_prod_budget = os.environ.get("MM_BUDGET_FILE_ID", _prod_budget_id) == _prod_budget_id
-    _uses_prod_admin = os.environ.get("ADMIN_SHEETS_ID", _prod_admin_id) == _prod_admin_id
-    if _is_test_token and (_uses_prod_budget or _uses_prod_admin):
-        # Auto-fix: switch to test sheets instead of just warning
-        global _MM_BUDGET_FILE_ID
-        _MM_BUDGET_FILE_ID = _TEST_FILE_ID
-        os.environ["MM_BUDGET_FILE_ID"] = _TEST_FILE_ID
+    _uses_prod_admin = os.environ.get("ADMIN_SHEETS_ID", _PROD_ADMIN_ID) == _PROD_ADMIN_ID
+    if _is_test_token and _uses_prod_admin:
+        # Auto-fix: switch Admin to test — budget file_id resolves from Envelopes tab
         os.environ["ADMIN_SHEETS_ID"] = _TEST_ADMIN_ID
-        # Re-init sheets client with test admin (AdminSheets was already created with prod ID)
         sheets._admin.sheet_id = _TEST_ADMIN_ID
         sheets._admin._wb = None  # force re-open on next access
         logger.info(
-            "🔄 TEST MODE: auto-switched to test sheets "
-            f"(budget={_TEST_FILE_ID[:12]}…, admin={_TEST_ADMIN_ID[:12]}…)"
+            "🔄 TEST MODE: auto-switched to test Admin "
+            f"(admin={_TEST_ADMIN_ID[:12]}…). Budget file resolves from Envelopes."
         )
-        # Notify admin on startup
-        try:
-            admin_tg = int(os.environ.get("MIKHAIL_TELEGRAM_ID", 0))
-            if admin_tg:
-                await app.bot.send_message(
-                    admin_tg,
-                    "🧪 <b>Тестовый режим</b>\n\n"
-                    "Автоматически переключен на тестовые файлы:\n"
-                    f"• Budget: <code>{_TEST_FILE_ID}</code>\n"
-                    f"• Admin: <code>{_TEST_ADMIN_ID}</code>",
-                    parse_mode="HTML",
-                )
-        except Exception:
-            pass
 
     # Reset BotMenu tab to current defaults on every deploy (keeps sheet in sync with code)
     try:
@@ -1001,7 +969,7 @@ def _require_user(update: Update):
         return tg_user, session
     try:
         from user_context import UserContextManager
-        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+        ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
 
         # Language preference
         saved_lang = ctx_mgr.get(user.id, "language")
@@ -1815,7 +1783,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not getattr(session, "_lang_loaded", False):
         try:
             from user_context import UserContextManager
-            ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+            ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
             saved_lang = ctx_mgr.get(query.from_user.id, "language")
             if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
                 session.lang = saved_lang
@@ -1909,7 +1877,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     # Save to UserContext
                     try:
                         from user_context import UserContextManager
-                        ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+                        ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
                         ctx_mgr.set(query.from_user.id, "language", target_lang)
                     except Exception as e:
                         logger.debug(f"Could not save language to UserContext: {e}")
@@ -2395,7 +2363,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Persist to UserContext so it survives bot restarts
         try:
             from user_context import UserContextManager
-            ctx_mgr = UserContextManager(sheets._gc, _MM_BUDGET_FILE_ID)
+            ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
             ctx_mgr.set(query.from_user.id, "active_envelope", env_id)
         except Exception as e:
             logger.debug(f"Could not save active_envelope: {e}")
