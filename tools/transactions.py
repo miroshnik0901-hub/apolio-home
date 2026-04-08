@@ -2,11 +2,14 @@
 import uuid
 import csv
 import io
+import logging
 from datetime import datetime
 from typing import Any
 
 from sheets import SheetsClient
 from auth import AuthManager, SessionContext, LastAction
+
+logger = logging.getLogger(__name__)
 
 
 def _gen_id() -> str:
