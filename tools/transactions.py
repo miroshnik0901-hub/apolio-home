@@ -242,7 +242,11 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         "FALSE",        # P - Deleted
     ]
 
-    sheets.add_transaction(envelope["file_id"], row)
+    try:
+        sheets.add_transaction(envelope["file_id"], row)
+    except Exception as e:
+        logger.error(f"sheets.add_transaction failed for {tx_id}: {e}", exc_info=True)
+        return {"error": f"TRANSACTION FAILED to save: {e}", "tx_id": tx_id}
 
     # Update session last_action for undo
     session.last_action = LastAction(

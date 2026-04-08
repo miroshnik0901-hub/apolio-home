@@ -823,6 +823,7 @@ class ApolioAgent:
         # Agentic loop
         max_iterations = 5
         last_text = ""
+        tool_results = []  # last round's tool results — used by fallback error check
 
         for iteration in range(max_iterations):
             response = await self.client.messages.create(
@@ -897,9 +898,36 @@ class ApolioAgent:
                     except Exception:
                         pass
 
+                # Check for tool errors before continuing — surface them to user immediately
+                for tr in tool_results:
+                    try:
+                        tr_content = json.loads(tr["content"]) if isinstance(tr["content"], str) else tr["content"]
+                        if isinstance(tr_content, dict) and "error" in tr_content:
+                            err_msg = tr_content["error"]
+                            logger.error(f"Tool returned error, surfacing to user: {err_msg}")
+                            # Only surface CRITICAL write-errors (TRANSACTION FAILED, DELETION FAILED)
+                            if any(tag in err_msg for tag in ("TRANSACTION FAILED", "DELETION FAILED", "SAVE FAILED")):
+                                return f"⚠️ Ошибка: {err_msg}"
+                    except Exception:
+                        pass
+
                 messages.append({"role": "user", "content": tool_results})
 
-        # Fallback: ask Claude for a short plain-text summary of what happened
+        # Fallback: ask Claude for a short plain-text summary of what happened.
+        # IMPORTANT: first check if the last tool result was an error — if so,
+        # do NOT let Claude fabricate a success description.
+        last_tool_had_error = False
+        if tool_results:
+            try:
+                last_tr = json.loads(tool_results[-1]["content"]) if isinstance(tool_results[-1]["content"], str) else tool_results[-1]["content"]
+                if isinstance(last_tr, dict) and "error" in last_tr:
+                    last_tool_had_error = True
+                    err_text = last_tr["error"]
+                    logger.error(f"Fallback blocked: last tool errored: {err_text}")
+                    return f"⚠️ Не удалось выполнить операцию: {err_text}"
+            except Exception:
+                pass
+
         try:
             fallback = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
