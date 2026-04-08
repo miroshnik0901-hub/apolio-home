@@ -420,6 +420,19 @@ def test_receipt_yes_joint_literal():
     return True
 
 
+@test("2.6 bot.py deterministic receipt handler bypasses LLM for yes_joint/yes_personal")
+def test_deterministic_receipt_handler():
+    src = (ROOT / "bot.py").read_text()
+    # Must have deterministic handler that checks for yes_joint/yes_personal + pending_receipt
+    assert 'chosen_value in ("yes_joint", "yes_personal")' in src, \
+        "bot.py must handle yes_joint/yes_personal deterministically"
+    assert "tool_add_transaction" in src, \
+        "bot.py must call tool_add_transaction directly for receipt confirmation"
+    assert "pending_receipt" in src, \
+        "bot.py must check session.pending_receipt before deterministic add"
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -2475,6 +2475,104 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("cb_choice_"):
         chosen_value = data[10:]
         await query.answer()
+
+        # ── T-076 FIX: Deterministic receipt confirmation ─────────────────
+        # When user clicks yes_joint / yes_personal, call add_transaction
+        # directly — do NOT route through the LLM (which fabricates success
+        # without actually calling the tool).
+        if chosen_value in ("yes_joint", "yes_personal") and getattr(session, "pending_receipt", None):
+            receipt = session.pending_receipt
+            account = "Joint" if chosen_value == "yes_joint" else "Personal"
+            try:
+                await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+                from tools.transactions import tool_add_transaction
+                add_params = {
+                    "amount": receipt.get("total_amount", 0),
+                    "currency": receipt.get("currency", "EUR"),
+                    "category": receipt.get("category", "Food"),
+                    "subcategory": receipt.get("subcategory", ""),
+                    "who": receipt.get("who", session.user_name),
+                    "date": receipt.get("date", ""),
+                    "note": receipt.get("merchant", ""),
+                    "account": account,
+                    "type": "expense",
+                    "force_add": True,  # skip duplicate check for confirmed receipts
+                }
+                result = await tool_add_transaction(add_params, session, sheets, auth)
+
+                if isinstance(result, dict) and "error" in result:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⚠️ {result['error']}",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                    return
+
+                tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
+                msg = result.get("message", "") if isinstance(result, dict) else str(result)
+
+                # Save receipt details (Sheets Receipts tab + PostgreSQL parsed_data)
+                try:
+                    await agent._tool_save_receipt(
+                        {
+                            "transaction_id": tx_id,
+                            "merchant": receipt.get("merchant", ""),
+                            "date": receipt.get("date", ""),
+                            "total_amount": receipt.get("total_amount", 0),
+                            "currency": receipt.get("currency", "EUR"),
+                            "items": receipt.get("items", []),
+                            "ai_summary": receipt.get("ai_summary", ""),
+                            "raw_text": receipt.get("raw_text", ""),
+                            "tg_file_id": receipt.get("tg_file_id", ""),
+                        },
+                        session, sheets, auth,
+                    )
+                except Exception as save_err:
+                    logger.warning(f"save_receipt after deterministic add failed: {save_err}")
+
+                # Log to conversation_log
+                try:
+                    await appdb.log_message(
+                        user_id=session.user_id,
+                        direction="bot",
+                        message_type="tool",
+                        raw_text=f"[tool:add_transaction] {msg}",
+                        tool_called="add_transaction",
+                        result_short=msg[:200] if msg else "",
+                        session_id=session.session_id,
+                        envelope_id=session.current_envelope_id or "",
+                    )
+                except Exception:
+                    pass
+
+                # Write audit log
+                try:
+                    import json as _json
+                    sheets.write_audit(
+                        session.user_id, session.user_name,
+                        "add_transaction", session.current_envelope_id,
+                        _json.dumps(add_params)[:200],
+                    )
+                except Exception:
+                    pass
+
+                session.pending_receipt = None
+
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=msg,
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+            except Exception as e:
+                logger.error(f"Deterministic receipt add failed: {e}", exc_info=True)
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"❌ {e}",
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+            return
+        # ── END T-076 FIX ─────────────────────────────────────────────────
+
         # Pass chosen value back to agent as if the user sent it as text
         try:
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
