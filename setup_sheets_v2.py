@@ -294,29 +294,28 @@ def rebuild_summary(gc, service):
     print("  Summary sheet rebuilt with 12-month formulas ✓")
 
 
-# ── 3. MM Budget — Accounts sheet ─────────────────────────────────────────────
+# ── 3. Admin — Accounts sheet (Joint/Personal) ────────────────────────────────
+# Accounts are global config in Admin, not per-budget envelope.
 
 def setup_accounts(gc, service):
-    print("\n[3] Setting up Accounts sheet...")
-    wb = gc.open_by_key(MM_BUDGET_ID)
+    print("\n[3] Setting up Admin Accounts sheet...")
+    wb = gc.open_by_key(os.environ["ADMIN_SHEETS_ID"])
 
     try:
         ws = wb.worksheet("Accounts")
-        print("  Accounts sheet already exists, skipping")
+        print("  Admin Accounts sheet already exists, skipping")
         return
     except Exception:
-        ws = wb.add_worksheet("Accounts", rows=20, cols=6)
+        ws = wb.add_worksheet("Accounts", rows=20, cols=4)
 
-    headers = ["Account", "Owner", "Currency", "Description", "Active"]
+    headers = ["Name", "Type", "Description", "Active"]
     data = [
         headers,
-        ["Wise Family",  "Joint",   "EUR", "Семейный счёт Wise",    "TRUE"],
-        ["Wise Mikhail", "Mikhail", "EUR", "Личный счёт Михаила",   "TRUE"],
-        ["Cash IT",      "Mikhail", "EUR", "Наличные Италия",        "TRUE"],
-        ["Cash PL",      "Mikhail", "PLN", "Наличные Польша",        "TRUE"],
+        ["Joint",    "Joint",    "Спільний бюджет / Общий бюджет",    "TRUE"],
+        ["Personal", "Personal", "Особистий рахунок / Личный счёт", "TRUE"],
     ]
     ws.update(data, "A1")
-    print("  Accounts sheet created with 4 accounts ✓")
+    print("  Admin Accounts sheet created (Joint + Personal) ✓")
 
 
 # ── 4. Admin — Config sheet ────────────────────────────────────────────────────
