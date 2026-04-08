@@ -1236,6 +1236,31 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── /admin_support ─────────────────────────────────────────────────────────────
 
+async def cmd_version(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/version — show deployed git commit and branch."""
+    import subprocess
+    try:
+        commit = subprocess.check_output(
+            ["git", "log", "-1", "--format=%h %s (%ci)"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception as e:
+        commit = f"unavailable ({e})"
+        branch = "?"
+    await update.message.reply_text(
+        f"🤖 <b>Apolio Home Bot</b>\n"
+        f"Branch: <code>{branch}</code>\n"
+        f"Commit: <code>{commit}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_dbstatus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/dbstatus — show PostgreSQL connection state and row counts (admin only)."""
     tg_user, session = _require_user(update)
@@ -2934,6 +2959,7 @@ def main():
     app.add_handler(CommandHandler("log",           cmd_log))
     app.add_handler(CommandHandler("stats",        cmd_stats))
     app.add_handler(CommandHandler("admin_support", cmd_admin_support))
+    app.add_handler(CommandHandler("version",      cmd_version))
     app.add_handler(CommandHandler("dbstatus",     cmd_dbstatus))
     app.add_handler(CommandHandler("idea",         cmd_idea))
     app.add_handler(CommandHandler("goal",         cmd_goal))
