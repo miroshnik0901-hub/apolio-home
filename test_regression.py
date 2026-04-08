@@ -433,6 +433,22 @@ def test_deterministic_receipt_handler():
     return True
 
 
+@test("2.7 db.py excludes tool-type rows from API conversation history")
+def test_db_excludes_tool_rows():
+    src = (ROOT / "db.py").read_text()
+    assert "message_type != 'tool'" in src, \
+        "get_recent_context must filter out message_type='tool' rows to prevent Claude mimicking tool log text"
+    return True
+
+
+@test("2.8 bot.py strips leaked tool-log lines from agent response")
+def test_bot_strips_tool_lines():
+    src = (ROOT / "bot.py").read_text()
+    assert r"tool:\w+" in src, \
+        "bot.py must have regex to strip [tool:xyz] lines from response"
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)
 # ─────────────────────────────────────────────────────────────────────────────

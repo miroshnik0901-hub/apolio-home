@@ -2901,6 +2901,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             telegram_bot=ctx.bot,
         )
 
+        # Strip leaked tool-log lines from response (defense in depth).
+        # Claude sometimes mimics "[tool:xyz] ..." lines from conversation
+        # history — these are internal and must never reach the user.
+        import re as _re
+        response = _re.sub(
+            r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
+        ).strip()
+
         # Log bot response after agent call
         try:
             if _db_ready:

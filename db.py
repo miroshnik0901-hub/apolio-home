@@ -280,12 +280,18 @@ async def get_recent_context(user_id: int, n: int = 5) -> list[dict]:
         return []
     try:
         async with acquire() as conn:
+            # Exclude message_type='tool' rows — they are internal tool-call
+            # logs (e.g. "[tool:present_options] 4 options queued") and must NOT
+            # appear in the API conversation history.  When Claude sees them it
+            # mimics the format and generates fake tool results as plain text
+            # instead of actually calling the tools.
             rows = await conn.fetch(
                 """
                 SELECT ts, direction, message_type, raw_text,
                        tool_called, result_short, media_file_id
                 FROM conversation_log
                 WHERE user_id = $1
+                  AND message_type != 'tool'
                 ORDER BY ts DESC
                 LIMIT $2
                 """,
