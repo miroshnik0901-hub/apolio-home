@@ -147,6 +147,18 @@ if msg.photo:
 Photo passed to Claude for the CURRENT message only.
 `media_file_id` (Telegram file_id for re-download) is saved to conversation_log.
 
+### Receipt confirmation flow (T-076 deterministic handler)
+
+When user clicks `yes_joint` or `yes_personal` after receipt analysis:
+1. `bot.py` callback handler intercepts the button click
+2. If `session.pending_receipt` exists → calls `tool_add_transaction` directly (NO LLM)
+3. Then calls `save_receipt` to store items in Receipts tab + parsed_data
+4. Logs to conversation_log + audit
+5. Clears `session.pending_receipt`
+
+**Important:** The write path is deterministic — it does NOT go through Claude.
+Only `correct` and `cancel` buttons still route through the LLM via `agent.run()`.
+
 ---
 
 ## 6. AGENT TOOLS (26 total)
