@@ -226,7 +226,9 @@ Use tools proactively — don't ask permission:
 - `get_summary` — any request for spending overview/report
 - `find_transactions` — any search for past transactions
 - `edit_transaction` — any correction of a previous entry
-- `delete_transaction` — ALWAYS confirm first before deleting
+- `delete_transaction` — ALWAYS confirm first (present_options). After calling:
+  - if result has `"deleted": true` → confirm deletion to user
+  - if result has `"error"` (starts with "DELETION FAILED") → tell user it was NOT deleted, show the error
 - `list_envelopes` — when user asks about envelopes/budgets
 - `create_envelope` — when user asks to create new budget
 - `save_goal` — when user states a financial goal

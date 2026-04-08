@@ -295,27 +295,55 @@ async def tool_edit_transaction(params: dict, session: SessionContext,
 
 async def tool_delete_transaction(params: dict, session: SessionContext,
                                    sheets: SheetsClient, auth: AuthManager) -> Any:
+    import db as _db
     if not auth.can_write(session.user_id):
         return {"error": "Permission denied."}
 
     if not params.get("confirmed"):
         return {
             "status": "confirm_required",
-            "message": f"Reply /confirm_delete_{params['tx_id']} to remove this entry.",
+            "message": "confirmed=true required to proceed with deletion.",
         }
 
-    tx_id = params["tx_id"]
+    tx_id = params.get("tx_id", "").strip()
+    if not tx_id:
+        return {"error": "tx_id is required."}
+
     envelope_id = params.get("envelope_id") or session.current_envelope_id
     envelopes = sheets.get_envelopes()
-    for e in envelopes:
-        if e.get("ID") == envelope_id:
-            deleted = sheets.hard_delete_transaction(e["file_id"], tx_id)
-            if deleted:
-                return {"status": "ok", "message": f"✓ Строка удалена физически ({tx_id})"}
-            else:
-                return {"error": f"Транзакция {tx_id} не найдена."}
+    matched_envelope = next((e for e in envelopes if e.get("ID") == envelope_id), None)
 
-    return {"error": "Envelope not found."}
+    if not matched_envelope:
+        return {
+            "error": f"DELETION FAILED — envelope '{envelope_id}' not found. "
+                     f"Transaction was NOT deleted. Check envelope_id.",
+        }
+
+    deleted = sheets.hard_delete_transaction(matched_envelope["file_id"], tx_id)
+    if not deleted:
+        return {
+            "error": f"DELETION FAILED — transaction '{tx_id}' not found in "
+                     f"envelope '{envelope_id}'. Row was NOT removed.",
+        }
+
+    # Clean up parsed_data in PostgreSQL
+    if _db.is_ready():
+        try:
+            pool = await _db.get_pool()
+            if pool:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "DELETE FROM parsed_data WHERE transaction_id = $1", tx_id
+                    )
+        except Exception as e:
+            logger.warning(f"delete_transaction: parsed_data cleanup failed: {e}")
+
+    return {
+        "status": "ok",
+        "deleted": True,
+        "tx_id": tx_id,
+        "message": f"Transaction {tx_id} permanently deleted from Sheets and DB.",
+    }
 
 
 async def tool_delete_transaction_rows(params: dict, session: SessionContext,
