@@ -469,7 +469,6 @@ def test_txn_button_labels_disambiguation():
     return True
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)
 # ─────────────────────────────────────────────────────────────────────────────

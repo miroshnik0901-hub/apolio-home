@@ -81,6 +81,25 @@ TOOLS = [
         },
     },
     {
+        "name": "add_category",
+        "description": (
+            "Add a new category/subcategory to the Budget's Categories reference sheet. "
+            "Call this ONLY when user explicitly confirms adding a new category "
+            "(via force_new_category button). "
+            "Type: 'expense', 'income', or 'transfer'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Category name (English)"},
+                "subcategory": {"type": "string", "description": "Subcategory name (English)"},
+                "type": {"type": "string", "enum": ["expense", "income", "transfer"], "description": "Transaction type"},
+                "emoji": {"type": "string", "description": "Emoji for the category (optional)"},
+            },
+            "required": ["category", "type"],
+        },
+    },
+    {
         "name": "save_learning",
         "description": (
             "Record a learning event to improve future interpretations. "
@@ -1018,6 +1037,7 @@ class ApolioAgent:
             "refresh_dashboard":      self._tool_refresh_dashboard,
             # Reference data
             "get_reference_data":     self._tool_get_reference_data,
+            "add_category":           self._tool_add_category,
             # Self-learning
             "save_learning":          self._tool_save_learning,
             # Receipt storage
@@ -1254,6 +1274,32 @@ class ApolioAgent:
             "currencies": ref.get("currencies", []),
             "base_currency": ref.get("base_currency", "EUR"),
         }
+
+    async def _tool_add_category(self, params: dict, session: SessionContext,
+                                  sheets: SheetsClient, auth: AuthManager):
+        """Add a new category/subcategory to the Budget's Categories sheet."""
+        from tools.transactions import _resolve_envelope
+        try:
+            envelope = _resolve_envelope(params, session, sheets)
+        except ValueError as e:
+            return {"error": str(e)}
+        category = params.get("category", "").strip()
+        if not category:
+            return {"error": "Category name is required"}
+        subcategory = params.get("subcategory", "").strip()
+        cat_type = params.get("type", "expense")
+        emoji = params.get("emoji", "📦")
+        try:
+            env_sheets = sheets._env_sheets(envelope["file_id"])
+            ws = env_sheets._ws("Categories")
+            ws.append_row([category, subcategory, cat_type, emoji], value_input_option="RAW")
+            sheets._cache.pop(f"ref_{envelope['file_id']}", None)  # invalidate ref cache
+            return {
+                "status": "ok",
+                "message": f"Категория «{category}» / «{subcategory}» ({cat_type}) добавлена в справочник.",
+            }
+        except Exception as e:
+            return {"error": f"Не удалось добавить категорию: {e}"}
 
     async def _tool_save_learning(self, params: dict, session: SessionContext,
                                    sheets: SheetsClient, auth: AuthManager):

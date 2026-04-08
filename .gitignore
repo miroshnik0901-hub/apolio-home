@@ -14,3 +14,7 @@ get_telegram_id.py
 setup.py
 setup_admin.py
 .DS_Store
+apolio-home_MEMORY_*.md
+source_files/
+scripts/
+.python-version

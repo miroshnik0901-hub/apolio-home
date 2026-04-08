@@ -1,3 +1,8 @@
+"""
+⚠️ DEPRECATED — DO NOT USE ⚠️
+Dead code. Not imported anywhere. Active envelope tools are in envelope_tools.py.
+Will be removed in next cleanup.
+"""
 import gspread
 from datetime import datetime
 

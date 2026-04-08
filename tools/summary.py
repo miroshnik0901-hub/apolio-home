@@ -79,18 +79,18 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
     if not auth.can_access_envelope(session.user_id, envelope_id):
         return {"error": "Permission denied."}
 
-    config = sheets.read_config()
     envelopes = sheets.get_envelopes()
     env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
     if not env:
         return {"error": "Envelope not found."}
 
-    # Monthly_Cap is a direct column in the Envelopes sheet (not a JSON field)
-    cap = float(env.get("Monthly_Cap") or env.get("monthly_cap") or
-                config.get(f"budget_{envelope_id}_monthly", 0))
+    # Read monthly_cap from Budget Config (canonical), fallback to Admin Envelopes
+    file_id = env["file_id"]
+    env_config = sheets.read_envelope_config(file_id)
+    cap = float(env_config.get("monthly_cap") or
+                env.get("Monthly_Cap") or env.get("monthly_cap") or 0)
 
     month = _current_month()
-    file_id = env["file_id"]
     records = sheets.get_transactions(file_id)
     month_records = [r for r in records
                      if str(r.get("Date", "")).startswith(month)
@@ -100,7 +100,8 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
                 for r in month_records)
     remaining = cap - spent
     pct = round(spent / cap * 100, 1) if cap else 0
-    threshold = float(config.get("alert_threshold_pct", 80))
+    global_config = sheets.read_config()
+    threshold = float(global_config.get("alert_threshold_pct", 80))
 
     return {
         "status": "ok",

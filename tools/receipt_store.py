@@ -1,4 +1,9 @@
 """
+⚠️ DEPRECATED — DO NOT USE ⚠️
+This file is no longer imported or used. Receipts are stored in PostgreSQL parsed_data only.
+Kept temporarily for reference. Will be removed in next cleanup.
+
+Original description:
 Receipt storage for Apolio Home.
 Saves itemized receipt data from photo analysis into the Receipts sheet
 within the MM_BUDGET spreadsheet.

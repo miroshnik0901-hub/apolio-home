@@ -905,7 +905,11 @@ class SheetsClient:
 
             DEFAULTS = {
                 "currency":    env.get("Currency", "EUR"),
+                "monthly_cap": str(env.get("Monthly_Cap", "0") or "0"),
+                "split_rule":  str(env.get("Split_Rule", "50_50") or "50_50"),
                 "split_users": split_users_default,
+                "base_contributor": active_users[0] if active_users else "",
+                "split_threshold": threshold_default,
                 **per_user_defaults,
             }
 

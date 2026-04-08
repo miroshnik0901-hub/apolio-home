@@ -209,6 +209,13 @@ CAT_ICONS = {
     "Beauty": "💅", "Красота": "💅",
     "Home": "🏠", "Дом": "🏠",
     "Bills": "📄", "Счета": "📄",
+    "Top-up": "💳", "Пополнение": "💳",
+    "Income": "💰", "Доход": "💰",
+    "Housing": "🏠", "Жилье": "🏠",
+    "Personal": "👤", "Личное": "👤",
+    "Household": "🔧", "Хозтовары": "🔧",
+    "Subscriptions": "📱", "Подписки": "📱",
+    "Children": "👧",
 }
 
 
@@ -471,6 +478,27 @@ async def _build_status_html(session, lang: str = "ru") -> str:
                 lines.append("")
                 lines.append(f"👥 {' · '.join(f'{w}: {a:,.0f}' for w, a in sorted(by_who.items(), key=lambda x: -x[1]))}")
 
+        # T-094: User balance (obligations / credits)
+        try:
+            from intelligence import compute_contribution_status
+            snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
+            if snap.get("status") == "ok" and len(snap.get("split_users", [])) > 1:
+                balances = snap.get("balances", {})
+                bal_parts = []
+                for u in snap["split_users"]:
+                    b = float(balances.get(u, 0))
+                    if b > 0:
+                        bal_parts.append(f"{u}: +{b:,.0f}")
+                    elif b < 0:
+                        bal_parts.append(f"{u}: {b:,.0f}")
+                    else:
+                        bal_parts.append(f"{u}: 0")
+                if bal_parts:
+                    lines.append("")
+                    lines.append(f"⚖️ {' · '.join(bal_parts)} EUR")
+        except Exception:
+            pass
+
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_status_html failed: {e}", exc_info=True)
@@ -511,7 +539,11 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             env_id = session.current_envelope_id or "MM_BUDGET"
             env_list = sheets.get_envelopes()
             env_match = next((e for e in env_list if e.get("ID") == env_id), None)
-            cap = float(env_match.get("Monthly_Cap") or env_match.get("monthly_cap") or 0) if env_match else 0
+            # T-100: read monthly_cap from Budget Config (canonical), fallback to Admin Envelopes
+            file_id_r = env_match.get("file_id", "") if env_match else ""
+            env_cfg_r = sheets.read_envelope_config(file_id_r) if file_id_r else {}
+            cap = float(env_cfg_r.get("monthly_cap") or
+                        (env_match.get("Monthly_Cap") or env_match.get("monthly_cap") or 0) if env_match else 0)
             env_label = env_match.get("Name", env_id) if env_match else env_id
         except Exception:
             cap = 0
@@ -574,6 +606,28 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             for who, amt in sorted(by_who.items(), key=lambda x: -x[1]):
                 pct_share = round(amt / total * 100) if total else 0
                 lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct_share}%)")
+
+        # T-094: User balance (obligations / credits) in report
+        try:
+            from intelligence import compute_contribution_status
+            snap = compute_contribution_status(sheets, env_id, month=period)
+            if snap.get("status") == "ok" and len(snap.get("split_users", [])) > 1:
+                balances = snap.get("balances", {})
+                assets = snap.get("assets", {})
+                user_shares = snap.get("user_shares", {})
+                lines.append("")
+                lines.append(i18n.tu("contrib_balance", lang))
+                for u in snap["split_users"]:
+                    a = float(assets.get(u, 0))
+                    s = float(user_shares.get(u, 0))
+                    b = float(balances.get(u, 0))
+                    status_icon = "✅" if b >= 0 else "⚠️"
+                    bal_str = f"+{b:,.0f}" if b > 0 else f"{b:,.0f}"
+                    lines.append(
+                        f"  {status_icon} {u}: {a:,.0f} внесено · {s:,.0f} доля → <b>{bal_str} EUR</b>"
+                    )
+        except Exception:
+            pass
 
         return "\n".join(lines)
     except Exception as e:

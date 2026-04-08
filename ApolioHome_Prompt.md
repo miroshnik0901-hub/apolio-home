@@ -106,6 +106,10 @@ reference data. No need to ask "на что?" — the category word IS the answe
 - Type: expense
 - Category: make best guess from text
 
+**Category rules:**
+- Budget replenishment / пополнение → Category: Top-up, Type: income (NOT "Other")
+- "Other" is for miscellaneous expenses only, not for income or transfers
+
 **When confirmation is needed** (amount/category unclear, or multiple items), use `present_options`:
 - {"label": "✅ Да, записать", "value": "confirm_expense"}
 - {"label": "✏ Откорректировать", "value": "edit_expense"}
@@ -149,14 +153,18 @@ Always confirm change:
 
 When `add_transaction` returns `confirm_required` with `type: unknown_values`:
 1. Show user what was unrecognised and what suggestions exist
-2. If suggestions available → offer them as options
-3. If user confirms unknown value as-is → call `add_transaction` again with `force_new=true`
-   AND call `save_learning(event_type=new_category, trigger_text=category, learned_json={category: category})`
-4. If user picks a suggestion → call `add_transaction` with corrected value
+2. ALWAYS use `present_options` with buttons:
+   - One button per suggestion (up to 3): `{"label": "→ Sport", "value": "use_Sport"}`
+   - "✅ Добавить как новую" button: `{"value": "force_new_category"}`
+   - "❌ Отмена" button: `{"value": "cancel_expense"}`
+3. When user clicks a suggestion → call `add_transaction` with corrected value
    AND call `save_learning(event_type=correction, trigger_text=original, learned_json={mapping: corrected})`
+4. When user clicks "Добавить как новую" → call `add_transaction` again with `force_new=true`
+   AND call `save_learning(event_type=new_category, trigger_text=category, learned_json={category: category})`
 
-Example:
-> "Не знаю категорию 'тренажёрка'. Похожие: Sport, Health. Использовать одну из них или создать новую?"
+Example flow:
+> Agent: "Не знаю категорію «тренажёрка». Можливо:"
+> Buttons: [→ Sport] [→ Health] [✅ Додати нову] [❌ Скасувати]
 
 ---
 

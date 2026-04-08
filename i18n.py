@@ -500,6 +500,7 @@ CAT_NAMES: dict[str, dict[str, str]] = {
     "Household":      {"ru": "Быт",           "uk": "Побут",          "it": "Domestico"},
     "Subscriptions":  {"ru": "Подписки",      "uk": "Підписки",       "it": "Abbonamenti"},
     "Income":         {"ru": "Доход",         "uk": "Дохід",          "it": "Entrate"},
+    "Top-up":         {"ru": "Пополнение",   "uk": "Поповнення",     "it": "Ricarica"},
 }
 
 
