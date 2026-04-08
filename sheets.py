@@ -192,6 +192,34 @@ class AdminSheets:
             details,
         ])
 
+    def get_account_types(self) -> list[dict]:
+        """Read account types from Admin Accounts tab.
+        Returns list of {"name": str, "type": str}.
+        Defaults to [Joint, Personal] if tab missing.
+        """
+        try:
+            ws = self._ws("Accounts")
+            records = ws.get_all_records()
+            result = []
+            for r in records:
+                name = r.get("Name", "").strip()
+                if not name:
+                    continue
+                active = str(r.get("Active", "TRUE")).upper()
+                if active == "FALSE":
+                    continue
+                acct_type = r.get("Type", name).strip()
+                result.append({"name": name, "type": acct_type})
+            if result:
+                return result
+        except Exception:
+            pass
+        # Default fallback
+        return [
+            {"name": "Joint",    "type": "Joint"},
+            {"name": "Personal", "type": "Personal"},
+        ]
+
 
 class EnvelopeSheets:
     """Reads/writes a single Envelope Google Sheets file."""
@@ -970,8 +998,8 @@ class SheetsClient:
         categories = sorted({r.get("Category", "") for r in cat_records if r.get("Category", "")})
         subcategories = sorted({r.get("Subcategory", "") for r in cat_records if r.get("Subcategory", "")})
 
-        # Accounts (T-087: include type info)
-        accounts_typed = env.get_accounts_with_types()
+        # Accounts — read from Admin (global, default: Joint + Personal)
+        accounts_typed = self._admin.get_account_types()
         accounts = [a["name"] for a in accounts_typed]
 
         # Users from Admin file
