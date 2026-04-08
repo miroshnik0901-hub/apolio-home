@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.5 | Updated: 2026-04-03
+# Version: 1.6 | Updated: 2026-04-08
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -222,12 +222,32 @@ Each envelope has its own `Config` tab (key-value). Keys:
 | `min_<user>` | `min_Mikhail=2500` | Monthly minimum contribution per user |
 | `split_<user>` | `split_Mikhail=50` | % share of overflow expenses per user |
 
-**Obligation formula (per-user model):**
+**Financial model (per-user, updated 2026-04-08):**
+
 ```
+# total_expenses = ALL expenses (joint account + all personal accounts)
 total_min_pool = sum(min_<user> for all users)
-overflow = max(0, total_expenses - total_min_pool)
-obligation_user = (expenses * user_min / total_min_pool) + overflow * split_user%
+
+if total_expenses <= total_min_pool:
+    obligation_user = total_expenses * (min_user / total_min_pool)
+else:
+    overflow = total_expenses - total_min_pool
+    obligation_user = min_user + overflow * split_user%
+
+# Assets = what user actually contributed / paid
+assets_user = deposits_to_joint_by_user + personal_account_expenses_by_user
+
+# Balance (positive = credit, negative = owes more)
+balance_user = assets_user - obligation_user
 ```
+
+Transaction classification:
+- Joint account expense (Account.Type=Joint): included in total_expenses, paid from joint pool
+- Personal account expense (Account.Type=Personal): included in total_expenses AND in assets_user
+- Deposit / income to Joint (Type=income, Account.Type=Joint): counted in assets_user (deposits_to_joint)
+
+NOTE: Old formula `(expenses * user_min / total_min_pool) + overflow * split_%` was WRONG —
+broke when overflow > 0 because it applied full `expenses` multiplier to the base term.
 
 **Auto-init:** `ensure_envelope_config(file_id)` writes missing keys on first use.
 It reads active users from Admin/Users and sets `min_<user>=0` (non-admin) or threshold (admin), `split_<user>=50/N`.
