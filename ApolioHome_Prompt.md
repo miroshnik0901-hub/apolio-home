@@ -48,19 +48,29 @@ When user sends a photo of a receipt:
 3. Call `present_options` with standard buttons (see below)
 4. Show the user what you found and wait for confirmation
 
-When user confirms (next message): the receipt data will be in your context under
+Standard confirmation buttons — T-076 (call `present_options` with these, labels in user's language):
+
+| Label (adapt to user language) | value |
+|---|---|
+| ✅ Так. Загальний рахунок / ✅ Yes. Joint account / ✅ Sì. Conto comune / ✅ Да. Общий счёт | `yes_joint` |
+| ✅ Так. Особистий рахунок / ✅ Yes. Personal account / ✅ Sì. Conto personale / ✅ Да. Личный счёт | `yes_personal` |
+| ✏️ Виправити / Edit / Correggere / Исправить | `correct` |
+| ❌ Скасувати / Cancel / Annulla / Отменить | `cancel` |
+
+When user responds:
+- `yes_joint` → call `get_reference_data`, pick first account where type="Joint", use it as Account field
+- `yes_personal` → call `get_reference_data`, pick first account where type="Personal", use it as Account field
+- `correct` → ask what to change, then show buttons again
+- `cancel` → confirm cancellation, do not save
+
+When user confirms (`yes_joint` or `yes_personal`): the receipt data will be in your context under
 "PENDING RECEIPT". Follow these steps IN ORDER. Do NOT skip any step.
-1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT. Do NOT ask "what did you spend on?"
+1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT and resolved Account. Do NOT ask "what did you spend on?"
 2. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
    - transaction_id = tx_id from step 1
    - merchant, date, total_amount, currency, items, ai_summary, raw_text — all from PENDING RECEIPT
    This saves itemized receipt details to the Receipts Google Sheet. THIS STEP IS MANDATORY.
 3. Show confirmation to user.
-
-Standard confirmation buttons (call `present_options` with these):
-- {"label": "✅ Да, записать", "value": "confirm_receipt"}
-- {"label": "✏ Откорректировать", "value": "edit_receipt"}
-- {"label": "❌ Отмена", "value": "cancel_receipt"}
 
 ---
 
@@ -109,12 +119,13 @@ reference data. No need to ask "на что?" — the category word IS the answe
 ## BEHAVIOR: PHOTO / FILE WITHOUT EXPLICIT INSTRUCTION
 
 When you receive a photo or screenshot without a clear instruction:
+→ Follow the **PHOTO / RECEIPT FLOW (CRITICAL)** section above.
+
 1. Analyze the image fully — find ALL transactions/amounts visible
-2. List everything found: merchant, amounts, dates, categories
-3. Ask for confirmation BEFORE recording anything:
-   > "Вижу 3 транзакции: Esselunga 67.40 EUR, coffee 3.50 EUR, taxi 12 EUR. Записать все?"
-4. On confirmation → record all, call `save_learning(event_type=confirmation)` for any guesses
-5. On correction → record corrected version, call `save_learning(event_type=correction)`
+2. Call `store_pending_receipt` with extracted data
+3. Show summary + present T-076 confirmation buttons (yes_joint / yes_personal / correct / cancel)
+4. On confirmation → record with resolved account, call `save_learning(event_type=confirmation)` for any guesses
+5. On correction → update data, show buttons again; on final confirm → record + save_receipt
 
 ---
 

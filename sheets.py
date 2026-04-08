@@ -283,16 +283,33 @@ class EnvelopeSheets:
         except Exception:
             return []
 
-    def get_accounts(self) -> list[str]:
-        """Read accounts from the Accounts tab, or derive from transactions."""
+    def get_accounts_with_types(self) -> list[dict]:
+        """Read accounts with type info from the Accounts tab.
+        Returns list of {"name": str, "type": "Joint"|"Personal"|""}.
+        T-087: supports Joint/Personal account classification.
+        """
         try:
             ws = self._ws("Accounts")
             records = ws.get_all_records()
             if records:
-                return [r.get("Account", r.get("Name", "")) for r in records if r.get("Account") or r.get("Name")]
+                result = []
+                for r in records:
+                    name = r.get("Account", r.get("Name", "")).strip()
+                    if not name:
+                        continue
+                    acct_type = str(r.get("Type", "")).strip()
+                    if acct_type.lower() in ("joint", "загальний", "общий"):
+                        acct_type = "Joint"
+                    elif acct_type.lower() in ("personal", "особистий", "личный"):
+                        acct_type = "Personal"
+                    else:
+                        acct_type = ""
+                    result.append({"name": name, "type": acct_type})
+                if result:
+                    return result
         except Exception:
             pass
-        # Fallback: derive from transactions
+        # Fallback: derive from transactions (no type info)
         try:
             ws = self._ws("Transactions")
             all_values = ws.get_all_values()
@@ -308,9 +325,13 @@ class EnvelopeSheets:
                 acc = padded[acc_idx].strip()
                 if acc:
                     accounts.add(acc)
-            return sorted(accounts)
+            return [{"name": a, "type": ""} for a in sorted(accounts)]
         except Exception:
             return []
+
+    def get_accounts(self) -> list[str]:
+        """Read account names from the Accounts tab (backward-compat wrapper)."""
+        return [a["name"] for a in self.get_accounts_with_types()]
 
     def get_transactions(self, filters: dict = None) -> list[dict]:
         ws = self._ws("Transactions")
@@ -949,8 +970,9 @@ class SheetsClient:
         categories = sorted({r.get("Category", "") for r in cat_records if r.get("Category", "")})
         subcategories = sorted({r.get("Subcategory", "") for r in cat_records if r.get("Subcategory", "")})
 
-        # Accounts
-        accounts = env.get_accounts()
+        # Accounts (T-087: include type info)
+        accounts_typed = env.get_accounts_with_types()
+        accounts = [a["name"] for a in accounts_typed]
 
         # Users from Admin file
         try:
@@ -984,7 +1006,8 @@ class SheetsClient:
         result = {
             "categories": categories,
             "subcategories": subcategories,
-            "accounts": accounts,
+            "accounts": accounts,            # list[str] — backward compat
+            "accounts_typed": accounts_typed, # list[{name, type}] — T-087
             "who": who_values,
             "currencies": currencies,
             "base_currency": base_currency,

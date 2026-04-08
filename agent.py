@@ -1190,6 +1190,7 @@ class ApolioAgent:
             "categories": ref.get("categories", []),
             "subcategories": ref.get("subcategories", []),
             "accounts": ref.get("accounts", []),
+            "accounts_typed": ref.get("accounts_typed", []),  # T-087: [{name, type}]
             "who": ref.get("who", []),
             "currencies": ref.get("currencies", []),
             "base_currency": ref.get("base_currency", "EUR"),

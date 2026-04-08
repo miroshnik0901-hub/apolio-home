@@ -248,13 +248,44 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         except Exception:
             known_who = []
 
-        # Contributions = income-type transactions this month
-        contributions: dict[str, float] = defaultdict(float)
-        for t in month_txns:
-            if t.get("Type") in ("income", "transfer") and _parse_amount(t) > 0:
+        # T-093: Read account types for asset calculation
+        account_type_map: dict[str, str] = {}
+        has_account_types = False
+        try:
+            env_sheets = sheets._env_sheets(file_id)
+            accounts_typed = env_sheets.get_accounts_with_types()
+            account_type_map = {a["name"]: a["type"] for a in accounts_typed if a["type"]}
+            has_account_types = bool(account_type_map)
+        except Exception:
+            pass
+
+        # T-093: Assets per user = deposits_to_joint + personal_account_expenses
+        # Fallback (no account types): income/transfer only (old behavior)
+        assets: dict[str, float] = defaultdict(float)
+        if has_account_types:
+            for t in month_txns:
                 who_raw = t.get("Who", "Unknown")
                 who = _normalize_who(who_raw, known_who) or who_raw
-                contributions[who] += _parse_amount(t)
+                amt = _parse_amount(t)
+                if amt <= 0:
+                    continue
+                txn_type = t.get("Type", "")
+                acct = t.get("Account", "")
+                acct_type = account_type_map.get(acct, "")
+                if txn_type in ("income", "transfer"):
+                    if acct_type == "Joint" or not acct_type:
+                        assets[who] += amt
+                elif txn_type == "expense":
+                    if acct_type == "Personal":
+                        assets[who] += amt
+        else:
+            for t in month_txns:
+                if t.get("Type") in ("income", "transfer") and _parse_amount(t) > 0:
+                    who_raw = t.get("Who", "Unknown")
+                    who = _normalize_who(who_raw, known_who) or who_raw
+                    assets[who] += _parse_amount(t)
+
+        contributions = assets  # kept as 'contributions' for output compatibility
 
         # Total expenses
         total_expenses = sum(
@@ -304,12 +335,12 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
                         share += covered_by_base
                     user_shares[u] = round(share, 2)
 
-        # Balance = contributed − share_owed
+        # T-093: Balance = Assets − Obligations (share_owed)
         balances: dict[str, float] = {}
         for u in split_users:
-            contributed = float(contributions.get(u, 0.0))
+            user_assets = float(assets.get(u, 0.0))
             owed = float(user_shares.get(u, 0.0))
-            balances[u] = round(contributed - owed, 2)
+            balances[u] = round(user_assets - owed, 2)
 
         return {
             "status": "ok",
@@ -320,7 +351,9 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             "base_contributor": base_contributor,
             "split_users": split_users,
             "total_expenses": round(total_expenses, 2),
-            "contributions": dict(contributions),
+            "contributions": dict(assets),          # backward compat key
+            "assets": dict(assets),                 # T-093: explicit assets key
+            "has_account_types": has_account_types, # T-093: flag for formatting
             "user_shares": user_shares,
             "balances": balances,
             "excess_amount": round(excess_amount, 2),
@@ -344,19 +377,21 @@ def format_contribution_for_prompt(snap: dict) -> str:
     month = snap["month"]
     threshold = snap["threshold"]
     total_exp = snap["total_expenses"]
-    contributions = snap["contributions"]
+    contributions = snap.get("assets", snap.get("contributions", {}))
     balances = snap["balances"]
     excess = snap["excess_amount"]
     excess_per = snap["excess_per_user"]
     split_users = snap["split_users"]
     base_c = snap["base_contributor"]
+    has_account_types = snap.get("has_account_types", False)
 
     lines = [f"## CONTRIBUTION & SPLIT STATUS ({month})"]
 
-    # Contributions
+    # Assets / Contributions
+    asset_label = "Assets" if has_account_types else "Contributions (no account types set)"
     contrib_parts = [f"{u}={contributions.get(u, 0):.2f} {cur}" for u in split_users]
     if contrib_parts:
-        lines.append(f"Contributions: {', '.join(contrib_parts)}")
+        lines.append(f"{asset_label}: {', '.join(contrib_parts)}")
 
     # Expenses
     lines.append(f"Total expenses: {total_exp:.2f} {cur}")
