@@ -2231,6 +2231,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
                 return
+            # Remove old inline keyboard before sending new message (T-095)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
             # Send as NEW message (not edit) — keeps chat history
             await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
             return
@@ -2283,6 +2288,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
              InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
         )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_report ──────────────────────────────────────────────────────────
@@ -2298,6 +2307,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
             *cat_rows, lang=lang,
         )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     elif data == "cb_report_last":
@@ -2312,6 +2325,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton(_month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
             *cat_rows, lang=lang,
         )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     elif data.startswith("cb_report_m:"):
@@ -2333,6 +2350,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cat_rows = await _report_cat_rows(session, period, lang)
 
         kb = _with_menu_btn(nav_btns, *cat_rows, lang=lang)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_cat_drill ───────────────────────────────────────────────────────
@@ -2353,6 +2374,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             callback_data=f"cb_report_m:{period}"
         )
         kb = _with_menu_btn([back_btn], lang=lang)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     # ── cb_transactions ────────────────────────────────────────────────────
@@ -2371,10 +2396,28 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tx_id = tx.get("ID", "")
                 cat = tx.get("Category", "?")
                 amt = tx.get("Amount_Orig", "?")
+                note = tx.get("Note", "")
+                date = tx.get("Date", "")
+                # T-097: include date + note to distinguish buttons with same category
+                date_short = date[-5:] if len(date) >= 5 else date  # "04-05"
+                note_short = note[:15] + "…" if len(note) > 15 else note
+                label_parts = [f"🗑 {i18n.t_cat(cat, lang)} · {amt}"]
+                if note_short:
+                    label_parts.append(note_short)
+                if date_short:
+                    label_parts.append(date_short)
+                # Telegram button text limit is 64 bytes; truncate if needed
+                btn_label = " · ".join(label_parts)
+                if len(btn_label.encode("utf-8")) > 60:
+                    btn_label = f"🗑 {i18n.t_cat(cat, lang)} · {amt} · {date_short}"
                 del_rows.append([InlineKeyboardButton(
-                    f"🗑 {i18n.t_cat(cat, lang)} · {amt} EUR", callback_data=f"cb_del_{tx_id}"
+                    btn_label, callback_data=f"cb_del_{tx_id}"
                 )])
             markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
             await query.message.reply_text(
                 html_body,
                 parse_mode=ParseMode.HTML,
@@ -2552,6 +2595,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
                 session.pending_receipt = None
 
+                # Remove old inline keyboard (T-095)
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=msg,
@@ -2569,6 +2617,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Pass chosen value back to agent as if the user sent it as text
         try:
+            # Remove old inline keyboard (T-095)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             response = await agent.run(chosen_value, session)
             pending_ch2 = getattr(session, "pending_choice", None)

@@ -449,6 +449,27 @@ def test_bot_strips_tool_lines():
     return True
 
 
+@test("2.9 T-095: inline keyboard removed after button press (reply_text paths)")
+def test_inline_keyboard_removed():
+    """Every path that sends query.message.reply_text must first remove the old keyboard."""
+    src = (ROOT / "bot.py").read_text()
+    # Key handlers that send new messages must have edit_message_reply_markup(reply_markup=None)
+    assert src.count("edit_message_reply_markup(reply_markup=None)") >= 8, \
+        "callback_handler must remove old inline keyboard before sending new messages (T-095)"
+    return True
+
+
+@test("2.10 T-097: transaction delete buttons include date/note for disambiguation")
+def test_txn_button_labels_disambiguation():
+    """Delete buttons in cb_transactions must show more than just category + amount."""
+    src = (ROOT / "bot.py").read_text()
+    # The button label construction must reference Note and Date fields
+    assert 'tx.get("Note"' in src and 'date_short' in src, \
+        "cb_transactions delete buttons must include date and note for disambiguation (T-097)"
+    return True
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)
 # ─────────────────────────────────────────────────────────────────────────────
