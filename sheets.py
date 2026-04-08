@@ -411,7 +411,8 @@ class EnvelopeSheets:
     def hard_delete_by_tx_id(self, tx_id: str) -> bool:
         """
         Physically remove the row matching tx_id from the Transactions sheet.
-        Returns True if a row was deleted, False if tx_id not found.
+        Returns True if row was found and deleted, False if tx_id not found.
+        Raises on Sheets API error.
         """
         ws = self._ws("Transactions")
         all_values = ws.get_all_values()
@@ -423,11 +424,14 @@ class EnvelopeSheets:
         except ValueError:
             return False
 
+        # Normalise tx_id: strip whitespace for comparison
+        tx_id_stripped = tx_id.strip()
+
         # Find the physical row number (1-based; row 1 = header)
         target_row = None
         for i, row in enumerate(all_values[1:], start=2):
             padded = row + [""] * max(0, len(headers) - len(row))
-            if padded[id_col] == tx_id:
+            if padded[id_col].strip() == tx_id_stripped:
                 target_row = i
                 break
 
@@ -435,6 +439,24 @@ class EnvelopeSheets:
             return False
 
         ws.delete_rows(target_row)
+
+        # Post-delete verification: confirm the row is actually gone
+        # (gspread delete_rows can fail silently on quota errors)
+        try:
+            check_values = ws.get_all_values()
+            for row in check_values[1:]:
+                padded = row + [""] * max(0, len(check_values[0]) - len(row))
+                if len(padded) > id_col and padded[id_col].strip() == tx_id_stripped:
+                    # Row is still there — deletion did not take effect
+                    raise RuntimeError(
+                        f"delete_rows called for row {target_row} but "
+                        f"tx_id {tx_id_stripped} is still present in sheet"
+                    )
+        except RuntimeError:
+            raise  # propagate verification failure
+        except Exception:
+            pass  # non-critical: if re-read fails, trust the original call
+
         return True
 
     def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:

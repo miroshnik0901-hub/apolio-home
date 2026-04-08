@@ -148,13 +148,15 @@ def test_prompt_has_t076_buttons():
     return True
 
 
-@test("1.9 ApolioHome_Prompt.md delete_transaction checks 'deleted': true")
+@test("1.9 ApolioHome_Prompt.md delete_transaction checks 'deleted': true + passes confirmed:true")
 def test_prompt_delete_check():
     src = (ROOT / "ApolioHome_Prompt.md").read_text()
     assert '"deleted": true' in src or "'deleted': true" in src or \
            "deleted.*true" in src or \
            "if result has" in src, \
         "Prompt must instruct agent to check 'deleted': true before confirming deletion"
+    assert "confirmed: true" in src or "confirmed=true" in src or "confirmed:true" in src, \
+        "Prompt must instruct agent to pass confirmed:true in the delete call"
     return True
 
 
@@ -305,6 +307,39 @@ async def test_delete_tx_error_prefix():
     assert "error" in result2, f"Expected error on failed delete, got: {result2}"
     assert "DELETION FAILED" in result2["error"], \
         f"Must use DELETION FAILED prefix, got: {result2['error']}"
+    return True
+
+
+@test("2.2b delete_transaction searches all envelopes if not in current")
+async def test_delete_searches_all_envelopes():
+    from tools.transactions import tool_delete_transaction
+
+    session = _make_session(envelope_id="MM_BUDGET")
+    if not session:
+        return True
+
+    mock_sheets = MagicMock()
+    mock_sheets.get_envelopes.return_value = [
+        {"ID": "MM_BUDGET", "file_id": "file_a"},
+        {"ID": "TEST", "file_id": "file_b"},
+    ]
+
+    # hard_delete_transaction returns False for MM_BUDGET (not found), True for TEST
+    def fake_hard_delete(file_id, tx_id):
+        if file_id == "file_b":
+            return True  # found in second envelope
+        return False
+
+    mock_sheets.hard_delete_transaction.side_effect = fake_hard_delete
+
+    mock_auth = MagicMock()
+    mock_auth.can_write.return_value = True
+
+    params = {"tx_id": "TX_1728460821_8c2c", "envelope_id": "MM_BUDGET", "confirmed": True}
+    result = await tool_delete_transaction(params, session, mock_sheets, mock_auth)
+
+    assert result.get("deleted") is True, f"Expected deleted=True, got: {result}"
+    assert result.get("envelope_id") == "TEST", f"Should report found in TEST, got: {result}"
     return True
 
 

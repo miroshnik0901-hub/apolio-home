@@ -318,19 +318,42 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
 
     envelope_id = params.get("envelope_id") or session.current_envelope_id
     envelopes = sheets.get_envelopes()
+
+    # Try the target envelope first; if not found, search ALL envelopes
+    # (handles cases where old transactions have a different format or were added
+    #  before the current session's envelope was set)
     matched_envelope = next((e for e in envelopes if e.get("ID") == envelope_id), None)
 
-    if not matched_envelope:
-        return {
-            "error": f"DELETION FAILED — envelope '{envelope_id}' not found. "
-                     f"Transaction was NOT deleted. Check envelope_id.",
-        }
+    deleted = False
+    found_in_envelope = None
 
-    deleted = sheets.hard_delete_transaction(matched_envelope["file_id"], tx_id)
+    if matched_envelope:
+        try:
+            deleted = sheets.hard_delete_transaction(matched_envelope["file_id"], tx_id)
+            if deleted:
+                found_in_envelope = envelope_id
+        except Exception as e:
+            return {"error": f"DELETION FAILED — Sheets error in envelope '{envelope_id}': {e}"}
+
     if not deleted:
+        # Fallback: try every other envelope
+        for env in envelopes:
+            if env.get("ID") == envelope_id:
+                continue  # already tried
+            try:
+                if sheets.hard_delete_transaction(env["file_id"], tx_id):
+                    deleted = True
+                    found_in_envelope = env["ID"]
+                    break
+            except Exception:
+                pass  # continue trying other envelopes
+
+    if not deleted:
+        searched = [e.get("ID", "?") for e in envelopes]
         return {
-            "error": f"DELETION FAILED — transaction '{tx_id}' not found in "
-                     f"envelope '{envelope_id}'. Row was NOT removed.",
+            "error": f"DELETION FAILED — transaction '{tx_id}' not found in any envelope "
+                     f"({', '.join(searched)}). Row was NOT removed. "
+                     f"Check that the tx_id is correct.",
         }
 
     # Clean up parsed_data in PostgreSQL
@@ -349,7 +372,8 @@ async def tool_delete_transaction(params: dict, session: SessionContext,
         "status": "ok",
         "deleted": True,
         "tx_id": tx_id,
-        "message": f"Transaction {tx_id} permanently deleted from Sheets and DB.",
+        "envelope_id": found_in_envelope,
+        "message": f"Transaction {tx_id} permanently deleted from envelope {found_in_envelope}.",
     }
 
 
