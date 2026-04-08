@@ -1236,6 +1236,41 @@ async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── /admin_support ─────────────────────────────────────────────────────────────
 
+async def cmd_dbstatus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/dbstatus — show PostgreSQL connection state and row counts (admin only)."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        return
+    if not auth.is_admin(session.user_id):
+        await update.message.reply_text("❌ Admin only")
+        return
+
+    lines = ["🗄 <b>PostgreSQL status</b>"]
+    lines.append(f"DB ready: <b>{'✅ YES' if _db_ready else '❌ NO'}</b>")
+
+    if _db_ready:
+        pool = await appdb.get_pool()
+        if pool:
+            tables = ["conversation_log", "parsed_data", "agent_learning",
+                      "user_context", "support_requests", "ideas", "user_goals"]
+            try:
+                async with pool.acquire() as conn:
+                    for t in tables:
+                        try:
+                            cnt = await conn.fetchval(f"SELECT COUNT(*) FROM {t}")
+                            lines.append(f"  {t}: <b>{cnt}</b> rows")
+                        except Exception as e:
+                            lines.append(f"  {t}: ❌ {e}")
+            except Exception as e:
+                lines.append(f"❌ pool error: {e}")
+        else:
+            lines.append("❌ pool is None")
+    else:
+        lines.append("DB not initialized — check Railway logs for [DB] PostgreSQL init failed")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 async def cmd_admin_support(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/admin_support [status] — list open support requests (admin only)."""
     tg_user, session = _require_user(update)
@@ -2721,8 +2756,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     envelope_id=session.current_envelope_id or "",
                     media_file_id=media_file_id if media_type == "photo" else "",
                 )
-        except Exception:
-            pass  # Conversation logging is not critical
+        except Exception as _e:
+            logger.warning(f"[bot] DB log_message(user) failed: {_e}")
         # Mirror to Google Sheets
         try:
             if conv_logger:
@@ -2754,8 +2789,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     session_id=session.session_id,
                     envelope_id=session.current_envelope_id or "",
                 )
-        except Exception:
-            pass  # Conversation logging is not critical
+        except Exception as _e:
+            logger.warning(f"[bot] DB log_message(bot) failed: {_e}")
         # Mirror to Google Sheets
         try:
             if conv_logger:
@@ -2899,6 +2934,7 @@ def main():
     app.add_handler(CommandHandler("log",           cmd_log))
     app.add_handler(CommandHandler("stats",        cmd_stats))
     app.add_handler(CommandHandler("admin_support", cmd_admin_support))
+    app.add_handler(CommandHandler("dbstatus",     cmd_dbstatus))
     app.add_handler(CommandHandler("idea",         cmd_idea))
     app.add_handler(CommandHandler("goal",         cmd_goal))
     app.add_handler(CallbackQueryHandler(callback_handler))

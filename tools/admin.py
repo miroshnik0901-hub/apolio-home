@@ -110,7 +110,7 @@ async def tool_get_stats(params: dict, session, sheets, auth) -> dict:
                           user_id,
                           COUNT(*) AS cnt
                    FROM conversation_log
-                   WHERE ts >= $1 AND role = 'user'
+                   WHERE ts >= $1 AND direction = 'user'
                    GROUP BY day, user_id
                    ORDER BY day DESC""",
                 since,
@@ -120,7 +120,7 @@ async def tool_get_stats(params: dict, session, sheets, auth) -> dict:
             by_intent = await conn.fetch(
                 """SELECT intent, COUNT(*) AS cnt
                    FROM conversation_log
-                   WHERE ts >= $1 AND role = 'user' AND intent IS NOT NULL AND intent != ''
+                   WHERE ts >= $1 AND direction = 'user' AND intent IS NOT NULL AND intent != ''
                    GROUP BY intent
                    ORDER BY cnt DESC
                    LIMIT 10""",
@@ -131,7 +131,7 @@ async def tool_get_stats(params: dict, session, sheets, auth) -> dict:
             unique_users = await conn.fetchval(
                 """SELECT COUNT(DISTINCT user_id)
                    FROM conversation_log
-                   WHERE ts >= $1 AND role = 'user'""",
+                   WHERE ts >= $1 AND direction = 'user'""",
                 since,
             )
 

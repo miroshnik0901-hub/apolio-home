@@ -214,6 +214,13 @@ def is_ready() -> bool:
     return _initialized and _pool is not None
 
 
+async def get_pool():
+    """Return the active connection pool, or None if not ready.
+    Used by tools/admin.py and internal helpers that need pool access.
+    """
+    return _pool if _initialized else None
+
+
 @asynccontextmanager
 async def acquire():
     """Acquire a connection from the pool."""
