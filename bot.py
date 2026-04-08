@@ -46,14 +46,14 @@ from sheets import SheetsClient
 from auth import AuthManager, get_session
 from agent import ApolioAgent
 from tools.conversation_log import ConversationLogger, make_session_id
-from tools.receipt_store import ReceiptStore
+# receipt_store.py removed from architecture — receipts stored in PostgreSQL only
 import db as appdb
 
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
 agent = ApolioAgent(sheets, auth)
-receipt_store: Optional[ReceiptStore] = None
+receipt_store = None  # deprecated — kept for backward compat, not used
 conv_logger: Optional[ConversationLogger] = None
 
 _PROD_ADMIN_ID = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
@@ -934,13 +934,7 @@ async def post_init(app: Application):
     except Exception as e:
         logger.warning(f"Could not initialize PostgreSQL: {e}")
 
-    # Initialize ReceiptStore
-    global receipt_store
-    try:
-        receipt_store = ReceiptStore(sheets._gc, _get_active_file_id())
-        logger.info("ReceiptStore initialized")
-    except Exception as e:
-        logger.warning(f"Could not initialize ReceiptStore: {e}")
+    # ReceiptStore removed — receipts stored in PostgreSQL parsed_data only
 
     # Initialize ConversationLogger (writes to Admin Sheets)
     global conv_logger

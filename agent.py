@@ -435,7 +435,7 @@ TOOLS = [
         "description": (
             "Save itemized receipt data after a photo transaction is confirmed and recorded. "
             "Call this after add_transaction succeeds for a photo/receipt message. "
-            "Stores merchant, items, and AI summary to the Receipts tab."
+            "Stores merchant, items, and AI summary to PostgreSQL parsed_data."
         ),
         "input_schema": {
             "type": "object",
@@ -455,6 +455,34 @@ TOOLS = [
                                    "description": "One-line summary, e.g. 'Esselunga weekly shop, 12 items'"},
                 "raw_text":       {"type": "string", "default": ""},
                 "tg_file_id":     {"type": "string", "default": ""},
+            },
+        },
+    },
+    {
+        "name": "get_receipt",
+        "description": (
+            "Retrieve itemized receipt data from PostgreSQL parsed_data. "
+            "Use when user asks for a detailed receipt/check: "
+            "'дай чек', 'покажи чек', 'детальный чек', 'що в чеку', 'receipt details'. "
+            "Can search by transaction_id or by merchant name. "
+            "Returns items, amounts, merchant, date, and AI summary."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "transaction_id": {
+                    "type": "string",
+                    "description": "Find receipt by transaction ID (exact match)",
+                },
+                "merchant": {
+                    "type": "string",
+                    "description": "Search by merchant name (substring match)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Max receipts to return",
+                },
             },
         },
     },
@@ -550,6 +578,7 @@ TOOLS = [
                 },
                 "ai_summary": {"type": "string"},
                 "raw_text": {"type": "string", "description": "Raw OCR text from receipt"},
+                "tg_file_id": {"type": "string", "description": "Telegram file_id of the receipt photo"},
             },
         },
     },
@@ -993,6 +1022,8 @@ class ApolioAgent:
             "save_learning":          self._tool_save_learning,
             # Receipt storage
             "save_receipt":           self._tool_save_receipt,
+            # Receipt retrieval from parsed_data
+            "get_receipt":            self._tool_get_receipt,
             # Learning summary → Google Sheets
             "refresh_learning_summary": self._tool_refresh_learning_summary,
             # Dashboard config management
@@ -1015,7 +1046,7 @@ class ApolioAgent:
                             "get_contribution_status", "refresh_dashboard",
                             "save_learning", "save_receipt", "get_reference_data",
                             "present_options", "store_pending_receipt",
-                            "update_dashboard_config"):
+                            "update_dashboard_config", "get_receipt"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -1264,7 +1295,11 @@ class ApolioAgent:
 
     async def _tool_save_receipt(self, params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager):
-        """Save itemized receipt data to Receipts tab (Sheets) + parsed_data (PostgreSQL)."""
+        """Save itemized receipt data to PostgreSQL parsed_data.
+
+        Note: Receipts Google Sheets tab was removed from architecture.
+        All receipt data is stored in PostgreSQL only.
+        """
         tx_id = params.get("transaction_id", "")
         merchant = params.get("merchant", "") or ""
         date = params.get("date", "") or ""
@@ -1275,34 +1310,6 @@ class ApolioAgent:
         raw_text = params.get("raw_text", "") or ""
         tg_file_id = params.get("tg_file_id", "") or ""
 
-        receipt_id = ""
-
-        # 1. Google Sheets (Receipts tab)
-        try:
-            import bot as _bot_module
-            rs = getattr(_bot_module, "receipt_store", None)
-            if rs is None:
-                from tools.receipt_store import ReceiptStore
-                file_id = _bot_module._get_active_file_id()
-                if file_id:
-                    rs = ReceiptStore(self.sheets._gc, file_id)
-                    _bot_module.receipt_store = rs
-            if rs:
-                receipt_id = rs.save_receipt(
-                    transaction_id=tx_id,
-                    date=date,
-                    merchant=merchant,
-                    total_amount=total_amount,
-                    currency=currency,
-                    items=items,
-                    ai_summary=ai_summary,
-                    raw_text=raw_text,
-                    tg_file_id=tg_file_id,
-                )
-        except Exception as e:
-            logger.warning(f"save_receipt Sheets write failed: {e}")
-
-        # 2. PostgreSQL parsed_data — primary store, queried on "дай чек"
         try:
             import db as _db
             if _db.is_ready() and tx_id:
@@ -1328,7 +1335,6 @@ class ApolioAgent:
                             "ai_summary": ai_summary,
                             "raw_text": raw_text,
                             "tg_file_id": tg_file_id,
-                            "receipt_id": receipt_id,
                         },
                         envelope_id=session.current_envelope_id or "",
                         transaction_id=tx_id,
@@ -1339,7 +1345,58 @@ class ApolioAgent:
         except Exception as e:
             logger.warning(f"save_receipt PostgreSQL write failed: {e}")
 
-        return {"status": "ok", "receipt_id": receipt_id}
+        return {"status": "ok", "transaction_id": tx_id}
+
+    async def _tool_get_receipt(self, params: dict, session: SessionContext,
+                                 sheets: SheetsClient, auth: AuthManager):
+        """Retrieve receipt details from PostgreSQL parsed_data."""
+        import db as _db
+        if not _db.is_ready():
+            return {"error": "PostgreSQL not connected — receipt history unavailable"}
+
+        tx_id = params.get("transaction_id", "")
+        merchant_q = params.get("merchant", "")
+        limit = params.get("limit", 5)
+
+        try:
+            rows = await _db.get_parsed_data(
+                user_id=session.user_id,
+                data_type="receipt",
+                limit=50,  # fetch more, then filter
+            )
+
+            if tx_id:
+                rows = [r for r in rows if r.get("transaction_id") == tx_id]
+            elif merchant_q:
+                merchant_lower = merchant_q.lower()
+                rows = [r for r in rows
+                        if merchant_lower in (r.get("payload", {}).get("merchant", "") or "").lower()]
+
+            rows = rows[-limit:]
+
+            if not rows:
+                return {"status": "ok", "count": 0, "receipts": [],
+                        "message": "No receipts found matching the query."}
+
+            # Format for Claude
+            receipts = []
+            for r in rows:
+                p = r.get("payload", {})
+                receipts.append({
+                    "transaction_id": r.get("transaction_id", ""),
+                    "date": p.get("date", ""),
+                    "merchant": p.get("merchant", ""),
+                    "total_amount": p.get("total_amount", 0),
+                    "currency": p.get("currency", "EUR"),
+                    "items": p.get("items", []),
+                    "ai_summary": p.get("ai_summary", ""),
+                    "saved_at": str(r.get("ts", "")),
+                })
+
+            return {"status": "ok", "count": len(receipts), "receipts": receipts}
+        except Exception as e:
+            logger.error(f"get_receipt failed: {e}", exc_info=True)
+            return {"error": str(e)}
 
     async def _tool_refresh_learning_summary(self, params: dict, session: SessionContext,
                                               sheets: SheetsClient, auth: AuthManager):
@@ -1443,6 +1500,7 @@ class ApolioAgent:
             "items": params.get("items", []),
             "ai_summary": params.get("ai_summary", ""),
             "raw_text": params.get("raw_text", ""),
+            "tg_file_id": params.get("tg_file_id", ""),
         }
         session.pending_receipt = receipt_data
         return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}

@@ -77,7 +77,7 @@ tools/
   wise.py           — Wise CSV import (DO NOT TOUCH without explicit instruction)
   envelope_tools.py — create_envelope, list_envelopes
   conversation_log.py — ConversationLogger (async, Queue, Google Sheets fallback)
-  receipt_store.py  — ReceiptStore (initialized in bot.py, save_receipt tool in agent.py)
+  receipt_store.py  — DEPRECATED, not used. Receipts stored in PostgreSQL parsed_data only.
   fx.py             — exchange rates (DO NOT TOUCH)
   config_tools.py   — bot config (DO NOT TOUCH)
 ```
@@ -185,12 +185,13 @@ Only `correct` and `cancel` buttons still route through the LLM via `agent.run()
 | 18 | `get_intelligence` | Trends, anomalies, forecast analysis |
 | 19 | `get_contribution_status` | Household split contribution status |
 | 20 | `refresh_dashboard` | Write Dashboard tab from budget snapshot + config |
-| 21 | `save_receipt` | Save receipt data to Receipts tab after photo transaction confirmed |
-| 22 | `save_learning` | Write learning event to agent_learning (PostgreSQL) |
-| 23 | `refresh_learning_summary` | Write agent_learning summary to Admin sheet Learning tab |
-| 24 | `get_reference_data` | Reference data: categories / accounts / users / currencies (TTL cache 60s) |
-| 25 | `update_dashboard_config` | Update DashboardConfig in Admin sheet (history months, mode, etc.) |
-| 26 | `present_options` | Store inline choice buttons to attach to next bot message |
+| 21 | `save_receipt` | Save receipt data to PostgreSQL parsed_data after photo transaction confirmed |
+| 22 | `get_receipt` | Retrieve receipt items from parsed_data by tx_id or merchant |
+| 23 | `save_learning` | Write learning event to agent_learning (PostgreSQL) |
+| 24 | `refresh_learning_summary` | Write agent_learning summary to Admin sheet Learning tab |
+| 25 | `get_reference_data` | Reference data: categories / accounts / users / currencies (TTL cache 60s) |
+| 26 | `update_dashboard_config` | Update DashboardConfig in Admin sheet (history months, mode, etc.) |
+| 27 | `present_options` | Store inline choice buttons to attach to next bot message |
 
 **Rule:** a new tool must be added to BOTH `TOOLS` schema AND `dispatch` dict.
 
