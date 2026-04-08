@@ -510,11 +510,22 @@ paste `apps_script/task_log_automation.js` → Save → Run `setupTriggers()` on
 
 ### Autonomous testing — the AI does this, not the user
 All testing is done by the AI without asking the user:
-- **L1–L3**: run `python3 tests/run_all.py` (static + unit + Sheets live) — always automated
-- **L4 bot behaviour**: call `ApolioAgent.run()` directly with a Mikhail session (360466156) — no Telegram needed
-- **L5 UI/UX**: read Railway logs after deploy — check error rate drops, `[AuthManager] Loaded N users` present
+- **After every change**: run `python test_regression.py` — 17 tests, must all pass
+- **Quick (no network)**: run `python test_regression.py --no-sheets` — static + unit only
+- **With Sheets**: run `python test_regression.py` — includes live roundtrip test
+- **Bot behavior**: call `ApolioAgent.run()` directly with a Mikhail session (360466156) — no Telegram needed
+- **UI/UX**: read Railway logs after deploy — check error rate drops, `[AuthManager] Loaded N users` present
 - **Railway logs**: read via Chrome MCP (javascript on the Railway logs page)
 - The user NEVER has to manually test or check logs — the AI does it all autonomously
+
+### MANDATORY: keep test files current
+**Every time a bug is fixed or feature is added**, update `test_regression.py`:
+1. Add a new test (section 1 static check OR section 2 unit test) that would have caught the bug
+2. Add the bug to the "Known bugs fixed" table in `QA_CHECKLIST.md`
+3. If a new tool is added → add a test for its error path (what happens if Sheets fails?)
+4. If a new prompt rule is added → add a static check that the rule is present in `ApolioHome_Prompt.md`
+
+This ensures regressions are caught immediately and the test suite grows with the product.
 
 ---
 

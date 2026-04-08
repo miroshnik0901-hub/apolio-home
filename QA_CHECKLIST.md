@@ -6,6 +6,18 @@ No exceptions. "It looks right" is not a test.
 
 ---
 
+## RULE: TEST FILES MUST STAY CURRENT
+
+Every bug fix or new feature → update `test_regression.py` BEFORE closing the task:
+- Fix a bug → add a test that would have caught it
+- Add a tool → add a test for its error path
+- Add a prompt rule → add a static check that the rule exists in Prompt.md
+- Add to Known Bugs table below
+
+If `test_regression.py` doesn't cover something that just broke — it's your fault, not bad luck.
+
+---
+
 ## 0. BEFORE ANY CHANGE
 
 - [ ] Read `CLAUDE_WORKING_GUIDE.md` — confirm current architecture
