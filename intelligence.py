@@ -260,30 +260,27 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             pass
 
         # T-093: Assets per user = deposits_to_joint + personal_account_expenses
-        # Fallback (no account types): income/transfer only (old behavior)
+        # Account field is "Joint" or "Personal" (new) or an account name (old → fallback via map)
         assets: dict[str, float] = defaultdict(float)
-        if has_account_types:
-            for t in month_txns:
-                who_raw = t.get("Who", "Unknown")
-                who = _normalize_who(who_raw, known_who) or who_raw
-                amt = _parse_amount(t)
-                if amt <= 0:
-                    continue
-                txn_type = t.get("Type", "")
-                acct = t.get("Account", "")
+        for t in month_txns:
+            who_raw = t.get("Who", "Unknown")
+            who = _normalize_who(who_raw, known_who) or who_raw
+            amt = _parse_amount(t)
+            if amt <= 0:
+                continue
+            txn_type = t.get("Type", "")
+            acct = t.get("Account", "")
+            # Resolve account type: direct value first, then map lookup for old transactions
+            if acct in ("Joint", "Personal"):
+                acct_type = acct
+            else:
                 acct_type = account_type_map.get(acct, "")
-                if txn_type in ("income", "transfer"):
-                    if acct_type == "Joint" or not acct_type:
-                        assets[who] += amt
-                elif txn_type == "expense":
-                    if acct_type == "Personal":
-                        assets[who] += amt
-        else:
-            for t in month_txns:
-                if t.get("Type") in ("income", "transfer") and _parse_amount(t) > 0:
-                    who_raw = t.get("Who", "Unknown")
-                    who = _normalize_who(who_raw, known_who) or who_raw
-                    assets[who] += _parse_amount(t)
+            if txn_type in ("income", "transfer"):
+                if acct_type == "Joint" or not acct_type:
+                    assets[who] += amt
+            elif txn_type == "expense":
+                if acct_type == "Personal":
+                    assets[who] += amt
 
         contributions = assets  # kept as 'contributions' for output compatibility
 

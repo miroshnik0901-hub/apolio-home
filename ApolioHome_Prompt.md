@@ -58,14 +58,14 @@ Standard confirmation buttons — T-076 (call `present_options` with these, labe
 | ❌ Скасувати / Cancel / Annulla / Отменить | `cancel` |
 
 When user responds:
-- `yes_joint` → call `get_reference_data`, pick first account where type="Joint", use it as Account field
-- `yes_personal` → call `get_reference_data`, pick first account where type="Personal", use it as Account field
+- `yes_joint` → use Account = "Joint" (literal string, do NOT look up account names)
+- `yes_personal` → use Account = "Personal" (literal string, do NOT look up account names)
 - `correct` → ask what to change, then show buttons again
 - `cancel` → confirm cancellation, do not save
 
 When user confirms (`yes_joint` or `yes_personal`): the receipt data will be in your context under
 "PENDING RECEIPT". Follow these steps IN ORDER. Do NOT skip any step.
-1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT and resolved Account. Do NOT ask "what did you spend on?"
+1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT and Account = "Joint" or "Personal". Do NOT ask "what did you spend on?"
 2. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
    - transaction_id = tx_id from step 1
    - merchant, date, total_amount, currency, items, ai_summary, raw_text — all from PENDING RECEIPT
