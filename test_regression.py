@@ -481,8 +481,13 @@ def test_admin_account_types():
         skip("3.4 Admin account types", "--no-sheets")
         return SKIP_SENTINEL
     from sheets import AdminSheets, get_sheets_client
+    import os
     gc = get_sheets_client()
-    admin = AdminSheets(gc, TEST_ADMIN_ID)
+    # AdminSheets reads ADMIN_SHEETS_ID from env; override for TEST
+    orig = os.environ.get("ADMIN_SHEETS_ID")
+    os.environ["ADMIN_SHEETS_ID"] = TEST_ADMIN_ID
+    admin = AdminSheets(gc)
+    os.environ["ADMIN_SHEETS_ID"] = orig or ""
     types = admin.get_account_types()
     assert isinstance(types, list), "Should return list"
     assert len(types) >= 1, "Should return at least 1 account type"
@@ -499,13 +504,20 @@ async def test_add_delete_roundtrip():
         skip("3.5 add/delete roundtrip", "--no-sheets")
         return SKIP_SENTINEL
 
-    from sheets import SheetsClient
-    from auth import AuthManager, AdminSheets, get_sheets_client
+    from sheets import SheetsClient, AdminSheets, get_sheets_client
+    from auth import AuthManager
+    import os
 
-    sc = SheetsClient()
-    gc = get_sheets_client()
-    admin = AdminSheets(gc, TEST_ADMIN_ID)
-    auth = AuthManager(admin)
+    # Override ADMIN_SHEETS_ID BEFORE creating SheetsClient so it reads TEST envelopes
+    orig = os.environ.get("ADMIN_SHEETS_ID")
+    os.environ["ADMIN_SHEETS_ID"] = TEST_ADMIN_ID
+    try:
+        sc = SheetsClient()  # now reads TEST admin → TEST file_ids
+        gc = get_sheets_client()
+        admin = AdminSheets(gc)
+        auth = AuthManager(admin)
+    finally:
+        os.environ["ADMIN_SHEETS_ID"] = orig or ""
 
     session = _make_session(envelope_id="MM_BUDGET")
     if not session:
@@ -513,6 +525,8 @@ async def test_add_delete_roundtrip():
         return SKIP_SENTINEL
 
     from tools.transactions import tool_add_transaction, tool_delete_transaction
+
+    time.sleep(5)  # Brief pause to avoid Sheets API quota (429) after section 3.1-3.4
 
     # Add a test transaction
     add_params = {
@@ -527,6 +541,9 @@ async def test_add_delete_roundtrip():
     }
 
     add_result = await tool_add_transaction(add_params, session, sc, auth)
+    if "error" in add_result and "429" in str(add_result["error"]):
+        skip("3.5 add/delete roundtrip", "Sheets API quota (429) — run again in 60s")
+        return SKIP_SENTINEL
     assert "error" not in add_result, f"add_transaction failed: {add_result}"
     assert add_result.get("status") == "ok", f"Expected ok, got: {add_result}"
 
@@ -540,8 +557,8 @@ async def test_add_delete_roundtrip():
     assert found, f"tx_id {tx_id} not found in Sheets after add"
     assert found[0].get("Note") == "QA_TEST_DELETE_ME", "Note mismatch"
 
-    # Delete it
-    del_params = {"tx_id": tx_id, "envelope_id": "MM_BUDGET"}
+    # Delete it — confirmed=True required (two-step flow)
+    del_params = {"tx_id": tx_id, "envelope_id": "MM_BUDGET", "confirmed": True}
     del_result = await tool_delete_transaction(del_params, session, sc, auth)
     assert del_result.get("deleted") is True, f"Delete failed: {del_result}"
 
