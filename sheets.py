@@ -566,52 +566,99 @@ class EnvelopeSheets:
 
             rows = []
 
-            # ── Section A: SNAPSHOT (key-value) ──────────────────────────
-            # T-127: Use actual numbers + formulas for derived values
+            # ── Helper: Transactions formula filters ─────────────────────
+            # Transactions columns: A=Date H=Amount_EUR I=Type J=Account G=Who P=Deleted
+            _R = "Transactions!$A$2:$A$1000"        # Date range
+            _H = "Transactions!$H$2:$H$1000"        # Amount_EUR
+            _I = "Transactions!$I$2:$I$1000"         # Type
+            _J = "Transactions!$J$2:$J$1000"         # Account
+            _G = "Transactions!$G$2:$G$1000"         # Who
+            _P = "Transactions!$P$2:$P$1000"         # Deleted
+            _D = "Transactions!$D$2:$D$1000"         # Category
+            _ND = f'({_P}<>"TRUE")'                  # not deleted
+            _CM = f'(LEFT({_R},7)=B2)'               # current month
+
+            # ── Section A: SNAPSHOT — all formulas ───────────────────────
             rows.append(["[SNAPSHOT]", "", "", "", ""])          # row 1
-            rows.append(["month", month, "", "", ""])            # row 2
-            rows.append(["budget", cap, "", "", ""])             # row 3 (number)
-            rows.append(["spent", spent, "", "", ""])            # row 4 (number)
-            rows.append(["remaining", "=B3-B4", "", "", ""])     # row 5 (formula)
-            rows.append(["pct_used", '=IF(B3>0,B4/B3*100,0)', "", "", ""])  # row 6 (formula)
-            rows.append(["pace", pace or "unknown", "", "", ""])  # row 7
-            rows.append(["currency", cur, "", "", ""])            # row 8
-            rows.append(["days_left", days_left, "", "", ""])     # row 9 (number)
-            rows.append(["daily_avg", daily_avg, "", "", ""])     # row 10 (number)
-            rows.append(["daily_budget", '=IF(B9>0,B5/B9,0)', "", "", ""])  # row 11 (formula)
+            rows.append(["month", '=TEXT(TODAY(),"YYYY-MM")', "", "", ""])  # row 2
+            rows.append(["budget", '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)', "", "", ""])  # row 3
+            rows.append(["spent",  f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_CM}*{_H})', "", "", ""])  # row 4
+            rows.append(["remaining", "=B3-B4", "", "", ""])     # row 5
+            rows.append(["pct_used", '=IF(B3>0,B4/B3*100,0)', "", "", ""])  # row 6
+            rows.append(["pace", '=IF(B6>(DAY(TODAY())/DAY(EOMONTH(TODAY(),0))*100),"over_pace","under_pace")', "", "", ""])  # row 7
+            rows.append(["currency", '=VLOOKUP("currency",Config!A:B,2,FALSE)', "", "", ""])  # row 8
+            rows.append(["days_left", '=EOMONTH(TODAY(),0)-TODAY()', "", "", ""])  # row 9
+            rows.append(["daily_avg", '=IF(DAY(TODAY())>1,B4/(DAY(TODAY())-1),B4)', "", "", ""])  # row 10
+            rows.append(["daily_budget", '=IF(B9>0,B5/B9,0)', "", "", ""])  # row 11
             rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section B: USER_BALANCE ──────────────────────────────────
-            rows.append(["[USER_BALANCE]", "", "", "", ""])
+            # ── Section B: USER_BALANCE — formulas per user ──────────────
+            rows.append(["[USER_BALANCE]", "", "", "", ""])      # row 14
             if contrib_snap and contrib_snap.get("status") == "ok":
-                rows.append(["split_rule", contrib_snap.get("split_rule", ""), "", "", ""])
-                rows.append(["threshold", round(float(contrib_snap.get('threshold', 0)), 2), "", "", ""])
-                rows.append(["User", "Contributed", "Share", "Balance", "Status"])
-                for u in contrib_snap.get("split_users", []):
-                    contributed = round(float(contrib_snap.get("contributions", {}).get(u, 0)), 2)
-                    share = round(float(contrib_snap.get("user_shares", {}).get(u, 0)), 2)
-                    balance = round(float(contrib_snap.get("balances", {}).get(u, 0)), 2)
-                    status = "surplus" if balance >= 0 else "deficit"
-                    rows.append([u, contributed, share, balance, status])
+                rows.append(["split_rule", '=VLOOKUP("split_rule",Config!A:B,2,FALSE)', "", "", ""])  # row 15
+                rows.append(["threshold", '=VLOOKUP("split_threshold",Config!A:B,2,FALSE)', "", "", ""])  # row 16
+                rows.append(["User", "Contributed", "Share", "Balance", "Status"])  # row 17
+                # Per-user formulas (row 18+)
+                split_users = contrib_snap.get("split_users", [])
+                for u in split_users:
+                    # Contributed = income_to_joint + personal_expenses
+                    f_income = (
+                        f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_CM}*{_H})'
+                    )
+                    f_personal_exp = (
+                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_CM}*{_H})'
+                    )
+                    f_contributed = f"={f_income}+{f_personal_exp}"
+
+                    # Share (obligation):
+                    # min_u / total_min_pool * MIN(total_expenses, total_min_pool)
+                    # + split_u/100 * MAX(0, total_expenses - total_min_pool)
+                    f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
+                    f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
+                    f_total_min = "+".join(
+                        f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in split_users
+                    )
+                    f_share = (
+                        f"=IF(({f_total_min})=0,"
+                        f"B4*{f_split_u}/100,"
+                        f"MIN(B4,{f_total_min})*{f_min_u}/({f_total_min})"
+                        f"+MAX(0,B4-({f_total_min}))*{f_split_u}/100)"
+                    )
+
+                    # Balance = Contributed - Share
+                    # row index for this user (18 for first user, 19 for second, etc.)
+                    u_idx = split_users.index(u)
+                    u_row = 18 + u_idx
+                    f_balance = f"=B{u_row}-C{u_row}"
+                    f_status = f'=IF(D{u_row}>=0,"surplus","deficit")'
+
+                    rows.append([u, f_contributed, f_share, f_balance, f_status])
             else:
                 rows.append(["(solo budget — no split)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section C: CATEGORIES ────────────────────────────────────
+            # ── Section C: CATEGORIES — formulas via SUMPRODUCT ──────────
             rows.append(["[CATEGORIES]", "", "", "", ""])
             top_cats = snap.get("top_categories", {})
             if top_cats:
-                total_cat = sum(top_cats.values()) or 1
                 rows.append(["Category", "Amount", "Pct", "Count", ""])
-                for cat, amt in top_cats.items():
-                    cat_pct = round(amt / total_cat * 100, 1)
-                    rows.append([cat, round(float(amt), 2), cat_pct, "", ""])
+                cat_start_row = len(rows) + 1  # next row number
+                for cat_idx, (cat, _) in enumerate(top_cats.items()):
+                    cr = cat_start_row + cat_idx
+                    f_cat_amt = (
+                        f'=SUMPRODUCT(({_D}=A{cr})*({_I}="expense")*{_ND}*{_CM}*{_H})'
+                    )
+                    f_cat_pct = f'=IF(B$4>0,B{cr}/B$4*100,0)'
+                    f_cat_cnt = (
+                        f'=SUMPRODUCT(({_D}=A{cr})*({_I}="expense")*{_ND}*{_CM}*1)'
+                    )
+                    rows.append([cat, f_cat_amt, f_cat_pct, f_cat_cnt, ""])
             else:
                 rows.append(["(no expenses this month)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section D: HISTORY ───────────────────────────────────────
+            # ── Section D: HISTORY — values (cross-month formulas impractical)
             rows.append(["[HISTORY]", "", "", "", ""])
             if contrib_history:
                 all_users: list = []
@@ -646,12 +693,22 @@ class EnvelopeSheets:
                         data_row += [c, s, b]
                     rows.append(data_row)
 
-                # YTD totals row
-                ytd_row = ["YTD", round(ytd_spent, 2), "", ""]
+                # YTD totals row — SUM formulas for history columns
+                hist_header_row = len(rows) - len(contrib_history)
+                ytd_row_cells: list = ["YTD"]
+                # Spent = SUM of spent column
+                first_data = hist_header_row + 1
+                last_data = first_data + len([h for h in contrib_history if h.get("status") == "ok"]) - 1
+                ytd_row_cells.append(f"=SUM(B{first_data}:B{last_data})")
+                ytd_row_cells.append("")
+                ytd_row_cells.append("")
+                col_offset = 4  # E, F, G for first user, H, I, J for second...
                 for u in all_users:
-                    ytd_bal = round(ytd_contrib[u] - ytd_share[u], 2)
-                    ytd_row += [round(ytd_contrib[u], 2), round(ytd_share[u], 2), ytd_bal]
-                rows.append(ytd_row)
+                    for ci in range(3):
+                        c_letter = chr(65 + col_offset + ci)
+                        ytd_row_cells.append(f"=SUM({c_letter}{first_data}:{c_letter}{last_data})")
+                    col_offset += 3
+                rows.append(ytd_row_cells)
             else:
                 rows.append(["(no history data)", "", "", "", ""])
 
