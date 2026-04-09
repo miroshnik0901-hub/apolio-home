@@ -1162,7 +1162,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Show welcome with persistent reply keyboard (stays in input bar)
     # Inline quick-access buttons below the text
     welcome_inline = InlineKeyboardMarkup([
-        [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="nav:report")],
+        [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr")],
         [InlineKeyboardButton(_menu_label(lang), callback_data="nav:__menu__")],
     ])
 
