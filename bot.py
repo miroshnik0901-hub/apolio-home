@@ -393,26 +393,26 @@ def _current_month_str() -> str:
     return dt.date.today().strftime("%Y-%m")
 
 
-def _quick_balance_line(session) -> str:
-    """T-128: Balance summary after add/delete. Credit model from xlsx formula."""
+def _quick_balance_line(session, lang: str = "ru") -> str:
+    """T-128: Balance summary after add/delete. Credit model from xlsx formula.
+    T-133: All strings via i18n."""
     try:
         from intelligence import compute_contribution_status
         snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
         if snap.get("status") != "ok":
             return ""
         spent = snap.get("total_expenses", 0)
-        cap = snap.get("threshold", 0) or spent  # fallback if no min_pool
         cur = snap.get("currency", "EUR")
-        parts = [f"💰 {spent:,.0f} {cur} расходы"]
+        parts = [f"💰 {spent:,.0f} {cur} {i18n.ts('bal_expenses', lang)}"]
         balances = snap.get("balances", {})
         split_users = snap.get("split_users", [])
         if len(split_users) > 1:
             for u in split_users:
                 credit = float(balances.get(u, 0))
                 if credit > 0:
-                    parts.append(f"✅ {u}: +{credit:,.0f} {cur} (переплата)")
+                    parts.append(f"✅ {u}: +{credit:,.0f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                 elif credit < 0:
-                    parts.append(f"⚠️ {u}: {credit:,.0f} {cur} (должен)")
+                    parts.append(f"⚠️ {u}: {credit:,.0f} {cur} ({i18n.ts('bal_owes', lang)})")
                 else:
                     parts.append(f"➖ {u}: 0 {cur}")
         return "\n".join(parts)
@@ -513,13 +513,13 @@ async def _build_status_html(session, lang: str = "ru") -> str:
                 cur = snap.get("currency", "EUR")
                 balances = snap.get("balances", {})
                 lines.append("")
-                lines.append("⚖️ Баланс:")
+                lines.append(i18n.ts("bal_header", lang))
                 for u in snap["split_users"]:
                     credit = float(balances.get(u, 0))
                     if credit > 0:
-                        lines.append(f"  ✅ {u}: +{credit:,.0f} {cur} (переплата)")
+                        lines.append(f"  ✅ {u}: +{credit:,.0f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                     elif credit < 0:
-                        lines.append(f"  ⚠️ {u}: {credit:,.0f} {cur} (должен)")
+                        lines.append(f"  ⚠️ {u}: {credit:,.0f} {cur} ({i18n.ts('bal_owes', lang)})")
                     else:
                         lines.append(f"  ➖ {u}: 0 {cur}")
         except Exception:
@@ -565,11 +565,10 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             env_id = session.current_envelope_id or "MM_BUDGET"
             env_list = sheets.get_envelopes()
             env_match = next((e for e in env_list if e.get("ID") == env_id), None)
-            # T-100: read monthly_cap from Budget Config (canonical), fallback to Admin Envelopes
+            # T-135: monthly_cap from envelope Config only (single source of truth)
             file_id_r = env_match.get("file_id", "") if env_match else ""
             env_cfg_r = sheets.read_envelope_config(file_id_r) if file_id_r else {}
-            cap = float(env_cfg_r.get("monthly_cap") or
-                        (env_match.get("Monthly_Cap") or env_match.get("monthly_cap") or 0) if env_match else 0)
+            cap = float(env_cfg_r.get("monthly_cap") or 0)
             env_label = env_match.get("Name", env_id) if env_match else env_id
         except Exception:
             cap = 0
@@ -767,16 +766,16 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
             credit = float(balances.get(u, 0))
             lines.append(f"👤 <b>{u}</b>")
             if tu > 0:
-                lines.append(f"  💳 Внёс на joint: {tu:,.0f} {cur}")
+                lines.append(f"  💳 {i18n.ts('bal_joint_topup', lang)}: {tu:,.0f} {cur}")
             if pe > 0:
-                lines.append(f"  🛒 Оплатил лично: {pe:,.0f} {cur}")
-            lines.append(f"  📊 Обязательство: {obl:,.0f} {cur}")
+                lines.append(f"  🛒 {i18n.ts('bal_personal_exp', lang)}: {pe:,.0f} {cur}")
+            lines.append(f"  📊 {i18n.ts('bal_obligation', lang)}: {obl:,.0f} {cur}")
             if credit > 0:
-                lines.append(f"  ✅ Кредит: <b>+{credit:,.0f} {cur}</b> (переплата)")
+                lines.append(f"  ✅ {i18n.ts('bal_credit', lang)}: <b>+{credit:,.0f} {cur}</b> ({i18n.ts('bal_overpaid', lang)})")
             elif credit < 0:
-                lines.append(f"  ⚠️ Долг: <b>{credit:,.0f} {cur}</b>")
+                lines.append(f"  ⚠️ {i18n.ts('bal_debt', lang)}: <b>{credit:,.0f} {cur}</b>")
             else:
-                lines.append(f"  ➖ Баланс: 0 {cur}")
+                lines.append(f"  ➖ {i18n.ts('bal_zero', lang)}: 0 {cur}")
             lines.append("")
 
         return "\n".join(lines)
@@ -1931,7 +1930,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             n_word = "строка" if count == 1 else "строки" if count in (2, 3, 4) else "строк"
             del_msg = f"✓ Удалено {count} {n_word} ({pd['start_row']}–{pd['end_row']})"
             # T-128: append balance summary after delete
-            bal_line = _quick_balance_line(session)
+            bal_line = _quick_balance_line(session, lang)
             if bal_line:
                 del_msg += f"\n\n{bal_line}"
             await query.edit_message_text(
@@ -2585,8 +2584,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             logger.debug(f"Could not save active_envelope: {e}")
 
         # Build confirmation with envelope info + sheet link button
-        cap = match.get("Monthly_Cap") or match.get("monthly_cap", 0)
-        cap_str = f"{float(cap):,.0f} {match.get('Currency', 'EUR')}" if cap else i18n.NO_LIMIT.get(lang, "no limit")
+        # T-135: read cap from envelope Config, not Admin Envelopes
+        file_id_sel = match.get("file_id", "")
+        env_cfg_sel = sheets.read_envelope_config(file_id_sel) if file_id_sel else {}
+        cap = float(env_cfg_sel.get("monthly_cap") or 0)
+        currency_sel = env_cfg_sel.get("currency") or match.get("Currency", "EUR")
+        cap_str = f"{cap:,.0f} {currency_sel}" if cap else i18n.NO_LIMIT.get(lang, "no limit")
         file_id_val = match.get("file_id", "")
         sheet_url = f"https://docs.google.com/spreadsheets/d/{file_id_val}" if file_id_val else ""
         extra_rows = []
@@ -2613,7 +2616,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             if isinstance(del_result, dict) and del_result.get("deleted"):
                 # T-130: Show result + balance, keep trace
-                bal_line = _quick_balance_line(session)
+                bal_line = _quick_balance_line(session, lang)
                 msg = f"✓ Видалено <code>{tx_id}</code>"
                 if bal_line:
                     msg += f"\n\n{bal_line}"
@@ -2720,7 +2723,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 session.pending_receipt = None
 
                 # T-128: append balance summary after add
-                bal_line = _quick_balance_line(session)
+                bal_line = _quick_balance_line(session, lang)
                 full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
 
                 # Remove old inline keyboard (T-095)
@@ -2766,7 +2769,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 if isinstance(del_result, dict) and del_result.get("deleted"):
                     msg = f"✓ Видалено: {tx_id}"
                     # T-128: append balance summary after delete
-                    bal_line = _quick_balance_line(session)
+                    bal_line = _quick_balance_line(session, lang)
                     if bal_line:
                         msg += f"\n\n{bal_line}"
                     await ctx.bot.send_message(

@@ -64,8 +64,10 @@ class IntelligenceEngine:
             if not file_id:
                 return {"error": "no_file_id"}
 
-            cap = float(env.get("Monthly_Cap") or env.get("monthly_cap") or 0)
-            currency = env.get("Currency", "EUR")
+            # T-135: read cap/currency from envelope Config (single source of truth)
+            env_cfg = self.sheets.read_envelope_config(file_id) if file_id else {}
+            cap = float(env_cfg.get("monthly_cap") or 0)
+            currency = env_cfg.get("currency") or env.get("Currency", "EUR")
 
             all_txns = self.sheets.get_transactions(file_id)
             month = _current_month()
@@ -315,8 +317,7 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # ── Legacy split_rule model ────────────────────────────────────────
         else:
             split_rule    = env_config.get("split_rule", "solo")
-            threshold     = float(env_config.get("split_threshold",
-                                                  env.get("Monthly_Cap", 0)) or 0)
+            threshold     = float(env_config.get("split_threshold", 0) or 0)
             if split_rule == "solo" or len(split_users) == 0:
                 user_shares   = {base_contributor: total_expenses}
                 excess_amount = 0.0

@@ -240,37 +240,42 @@ def rebuild_summary(gc, service):
 
     ws.clear()
 
-    CATEGORIES = ["Housing", "Food", "Transport", "Health", "Entertainment", "Personal", "Household", "Groceries", "Other"]
+    CATEGORIES = ["Housing", "Food", "Transport", "Health", "Entertainment",
+                   "Personal", "Household", "Groceries", "Other"]
 
-    headers = ["Month", "Total_Expenses", "Total_Income", "Balance"] + CATEGORIES
+    # T-132: Formulas use TEXT() for date matching (dates are serials, not strings)
+    # and <>"TRUE" for Deleted filter (empty cells are not "FALSE")
+    _R = "Transactions!$A$2:$A$1000"   # Date
+    _H = "Transactions!$H$2:$H$1000"   # Amount_EUR
+    _I = "Transactions!$I$2:$I$1000"   # Type
+    _P = "Transactions!$P$2:$P$1000"   # Deleted
+    _D = "Transactions!$D$2:$D$1000"   # Category
+
+    headers = (["Month", "Total_Expenses", "Total_Income", "Balance"]
+               + CATEGORIES + ["Cap", "Remaining", "Used_%"])
     rows = [headers]
 
     for month_num in range(1, 13):
         month_str = f"2026-{month_num:02d}"
-        # SUMPRODUCT with LEFT() for text-date matching
-        # Dates in Transactions are stored as text "YYYY-MM-DD", not DATE serials
-        # Columns: A=Date, H=Amount_EUR, I=Type, P=Deleted, D=Category
-        total_exp = (f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
-                     f'*(Transactions!$P$2:$P$1000="FALSE")'
-                     f'*(Transactions!$I$2:$I$1000="expense")'
-                     f'*Transactions!$H$2:$H$1000)')
-        total_inc = (f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
-                     f'*(Transactions!$P$2:$P$1000="FALSE")'
-                     f'*(Transactions!$I$2:$I$1000="income")'
-                     f'*Transactions!$H$2:$H$1000)')
-        balance = f"=C{len(rows)+1}-B{len(rows)+1}"
+        _M = f'(TEXT({_R},"yyyy-mm")=A{len(rows)+1})'
+        _ND = f'({_P}<>"TRUE")'
+        total_exp = f'=SUMPRODUCT({_M}*{_ND}*({_I}="expense")*{_H})'
+        total_inc = f'=SUMPRODUCT({_M}*{_ND}*({_I}="income")*{_H})'
+        r = len(rows) + 1
+        balance = f"=C{r}-B{r}"
 
         cat_cells = []
         for cat in CATEGORIES:
             cat_cells.append(
-                f'=SUMPRODUCT((LEFT(Transactions!$A$2:$A$1000,7)="{month_str}")'
-                f'*(Transactions!$D$2:$D$1000="{cat}")'
-                f'*(Transactions!$P$2:$P$1000="FALSE")'
-                f'*(Transactions!$I$2:$I$1000="expense")'
-                f'*Transactions!$H$2:$H$1000)'
+                f'=SUMPRODUCT({_M}*({_D}="{cat}")*{_ND}*({_I}="expense")*{_H})'
             )
 
-        rows.append([month_str, total_exp, total_inc, balance] + cat_cells)
+        cap_f = '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)'
+        remaining_f = f"=N{r}-B{r}"
+        used_pct_f = f'=IF(N{r}>0,ROUND(B{r}/N{r}*100,1),0)'
+
+        rows.append(["'" + month_str, total_exp, total_inc, balance]
+                    + cat_cells + [cap_f, remaining_f, used_pct_f])
 
     ws.update(rows, "A1", value_input_option="USER_ENTERED")
 

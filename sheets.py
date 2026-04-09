@@ -815,7 +815,11 @@ class SheetsClient:
         return result
 
     def list_envelopes_with_links(self) -> list[dict]:
-        """Return active envelopes with Google Sheets URLs included."""
+        """Return active envelopes with Google Sheets URLs included.
+
+        T-135: monthly_cap and split_rule are read from envelope Config tab
+        (single source of truth), NOT from Admin Envelopes columns.
+        """
         envelopes = self.get_envelopes()  # uses cache
         result = []
         for e in envelopes:
@@ -823,12 +827,19 @@ class SheetsClient:
                 continue
             file_id = e.get("file_id", "")
             url = f"https://docs.google.com/spreadsheets/d/{file_id}" if file_id else ""
+            # Read canonical values from envelope's own Config tab
+            env_cfg = {}
+            if file_id:
+                try:
+                    env_cfg = self.read_envelope_config(file_id)
+                except Exception:
+                    pass
             result.append({
                 "id": e.get("ID", ""),
                 "name": e.get("Name", ""),
-                "currency": e.get("Currency", "EUR"),
-                "monthly_cap": e.get("Monthly_Cap", 0),
-                "split_rule": e.get("Split_Rule", "solo"),
+                "currency": env_cfg.get("currency") or e.get("Currency", "EUR"),
+                "monthly_cap": float(env_cfg.get("monthly_cap") or 0),
+                "split_rule": env_cfg.get("split_rule") or "solo",
                 "file_id": file_id,
                 "url": url,
             })

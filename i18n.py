@@ -567,6 +567,37 @@ SYS: dict[str, dict[str, str]] = {
         "en": "✅ Language changed to English.",
         "it": "✅ Lingua cambiata in italiano.",
     },
+    # ── T-133: Balance / contribution i18n ────────────────────────────────
+    "bal_expenses": {
+        "ru": "расходы", "uk": "витрати", "en": "expenses", "it": "spese",
+    },
+    "bal_overpaid": {
+        "ru": "переплата", "uk": "переплата", "en": "overpaid", "it": "eccedenza",
+    },
+    "bal_owes": {
+        "ru": "должен", "uk": "борг", "en": "owes", "it": "deve",
+    },
+    "bal_header": {
+        "ru": "⚖️ Баланс:", "uk": "⚖️ Баланс:", "en": "⚖️ Balance:", "it": "⚖️ Bilancio:",
+    },
+    "bal_joint_topup": {
+        "ru": "Внёс на joint", "uk": "Вніс на joint", "en": "Joint top-up", "it": "Versamento joint",
+    },
+    "bal_personal_exp": {
+        "ru": "Оплатил лично", "uk": "Оплатив особисто", "en": "Paid personally", "it": "Pagato personalmente",
+    },
+    "bal_obligation": {
+        "ru": "Обязательство", "uk": "Зобов'язання", "en": "Obligation", "it": "Obbligo",
+    },
+    "bal_credit": {
+        "ru": "Кредит", "uk": "Кредит", "en": "Credit", "it": "Credito",
+    },
+    "bal_debt": {
+        "ru": "Долг", "uk": "Борг", "en": "Debt", "it": "Debito",
+    },
+    "bal_zero": {
+        "ru": "Баланс", "uk": "Баланс", "en": "Balance", "it": "Bilancio",
+    },
 }
 
 # ── Category translations (Sheets store English names) ────────────────────────
