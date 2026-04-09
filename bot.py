@@ -2541,25 +2541,29 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("cb_del_confirm_"):
         tx_id = data[15:]
         try:
-            envelopes = sheets.get_envelopes()
-            deleted = False
-            for e in envelopes:
-                if e.get("ID") == session.current_envelope_id:
-                    deleted = sheets.hard_delete_transaction(e["file_id"], tx_id)
-                    break
-            if deleted:
+            from tools.transactions import tool_delete_transaction
+            del_result = await tool_delete_transaction(
+                {"tx_id": tx_id, "confirmed": True},
+                session, sheets, auth,
+            )
+            if isinstance(del_result, dict) and del_result.get("deleted"):
                 await query.edit_message_text(
-                    f"🗑 Запись удалена из таблицы (<code>{tx_id}</code>)",
+                    f"🗑 Видалено з таблиці (<code>{tx_id}</code>)",
+                    parse_mode=ParseMode.HTML,
+                )
+            elif isinstance(del_result, dict) and "error" in del_result:
+                await query.edit_message_text(
+                    f"⚠️ {del_result['error']}",
                     parse_mode=ParseMode.HTML,
                 )
             else:
                 await query.edit_message_text(
-                    f"⚠️ Запись не найдена в таблице: <code>{tx_id}</code>",
+                    f"⚠️ Невідомий результат: {del_result}",
                     parse_mode=ParseMode.HTML,
                 )
             session.last_action = None
         except Exception as ex:
-            await query.edit_message_text(f"❌ Ошибка: {ex}")
+            await query.edit_message_text(f"❌ Помилка: {ex}")
 
     # ── cb_choice_<value> — agent choice buttons ───────────────────────────
     elif data.startswith("cb_choice_"):
@@ -2667,6 +2671,82 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             return
         # ── END T-076 FIX ─────────────────────────────────────────────────
+
+        # ── BUG-008 FIX: Deterministic delete confirmation ────────────────
+        # When user clicks confirm_delete, call delete_transaction directly
+        # instead of routing through LLM (which fabricates success text
+        # without calling the tool — same pattern as BUG-001).
+        if chosen_value == "confirm_delete" and getattr(session, "pending_delete_tx", None):
+            tx_id = session.pending_delete_tx
+            session.pending_delete_tx = None
+            try:
+                await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+                from tools.transactions import tool_delete_transaction
+                del_result = await tool_delete_transaction(
+                    {"tx_id": tx_id, "confirmed": True},
+                    session, sheets, auth,
+                )
+                # Remove old inline keyboard
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
+
+                if isinstance(del_result, dict) and del_result.get("deleted"):
+                    msg = f"✓ Видалено: {tx_id}"
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=msg,
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                elif isinstance(del_result, dict) and "error" in del_result:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⚠️ {del_result['error']}",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                else:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⚠️ Невідомий результат видалення: {del_result}",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+
+                # Log to conversation_log
+                try:
+                    await appdb.log_message(
+                        user_id=session.user_id,
+                        direction="bot",
+                        message_type="tool",
+                        raw_text=f"[tool:delete_transaction] tx_id={tx_id} result={del_result}",
+                        tool_called="delete_transaction",
+                        result_short=str(del_result)[:200],
+                        session_id=session.session_id,
+                        envelope_id=session.current_envelope_id or "",
+                    )
+                except Exception:
+                    pass
+
+                # Write audit log
+                try:
+                    import json as _json
+                    sheets.write_audit(
+                        session.user_id, session.user_name,
+                        "delete_transaction", session.current_envelope_id,
+                        f"tx_id={tx_id}",
+                    )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.error(f"Deterministic delete failed: {e}", exc_info=True)
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"❌ Помилка видалення: {e}",
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+            return
+        # ── END BUG-008 FIX ───────────────────────────────────────────────
 
         # Pass chosen value back to agent as if the user sent it as text
         try:

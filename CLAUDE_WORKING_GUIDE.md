@@ -362,6 +362,9 @@ For each open task, read ALL fields fully:
 > ⚠️ **"IN PROCESS" means work is actively happening, not planned.**
 > Never set Status = IN PROCESS without immediately doing the actual work in the same session.
 > If a task is IN PROCESS and code was not written — write it now before moving to the next task.
+> **MANDATORY: As soon as work is done and pushed to dev → set Status = DISCUSSION immediately.**
+> IN PROCESS is a TEMPORARY status. Never leave it after the session ends.
+> Workflow: OPEN → IN PROCESS (while working) → DISCUSSION (done, on staging) → CLOSED (Mikhail only)
 
 **Step 3 — Write updates via task_log.py API**
 ```python

@@ -550,7 +550,9 @@ TOOLS = [
             "Common use cases: confirming a transaction ('Записать?'), "
             "choosing between suggestions ('Какую категорию использовать?'), "
             "yes/no confirmations before deleting, etc. "
-            "Do NOT call for routine confirmations where no choice is needed."
+            "Do NOT call for routine confirmations where no choice is needed. "
+            "IMPORTANT for delete confirmation: pass tx_id parameter alongside choices "
+            "so the bot can execute deletion deterministically."
         ),
         "input_schema": {
             "type": "object",
@@ -567,6 +569,10 @@ TOOLS = [
                             "value": {"type": "string", "description": "Short value passed back, e.g. 'yes', 'no', 'cat_food'"},
                         },
                     },
+                },
+                "tx_id": {
+                    "type": "string",
+                    "description": "Transaction ID for delete confirmation (pass when choices include confirm_delete)",
                 },
             },
         },
@@ -1529,6 +1535,17 @@ class ApolioAgent:
             if not isinstance(c, dict) or "label" not in c or "value" not in c:
                 return {"error": "Each choice must have 'label' and 'value' keys"}
         session.pending_choice = choices
+
+        # BUG-008 FIX: If this is a delete confirmation, store the tx_id
+        # so cb_choice_ handler can execute deletion deterministically
+        # (prevents LLM from fabricating success without calling the tool).
+        has_confirm_delete = any(c.get("value") == "confirm_delete" for c in choices)
+        tx_id = params.get("tx_id", "")
+        if has_confirm_delete and tx_id:
+            session.pending_delete_tx = tx_id
+        elif has_confirm_delete and not tx_id:
+            logger.warning("present_options: confirm_delete button without tx_id param")
+
         return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}
 
     async def _tool_store_pending_receipt(self, params: dict, session: SessionContext,

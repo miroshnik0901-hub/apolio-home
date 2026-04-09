@@ -135,6 +135,9 @@ class SessionContext:
         #          "tg_file_id": str, "ai_summary": str, "raw_text": str}
         # Set by agent after photo analysis, consumed when user confirms.
         self.pending_receipt: Optional[dict] = None
+        # Pending delete: tx_id awaiting user confirmation via present_options.
+        # Set by agent when presenting delete confirmation, consumed in cb_choice_.
+        self.pending_delete_tx: Optional[str] = None
 
 
 # In-memory session store (keyed by user_id)

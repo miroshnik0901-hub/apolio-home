@@ -148,15 +148,13 @@ def test_prompt_has_t076_buttons():
     return True
 
 
-@test("1.9 ApolioHome_Prompt.md delete_transaction checks 'deleted': true + passes confirmed:true")
+@test("1.9 ApolioHome_Prompt.md delete_transaction uses deterministic flow (BUG-008)")
 def test_prompt_delete_check():
     src = (ROOT / "ApolioHome_Prompt.md").read_text()
-    assert '"deleted": true' in src or "'deleted': true" in src or \
-           "deleted.*true" in src or \
-           "if result has" in src, \
-        "Prompt must instruct agent to check 'deleted': true before confirming deletion"
-    assert "confirmed: true" in src or "confirmed=true" in src or "confirmed:true" in src, \
-        "Prompt must instruct agent to pass confirmed:true in the delete call"
+    assert "confirm_delete" in src, \
+        "Prompt must instruct agent to use confirm_delete button value"
+    assert "tx_id" in src and "present_options" in src, \
+        "Prompt must instruct agent to pass tx_id to present_options for delete"
     return True
 
 
@@ -512,6 +510,23 @@ def test_prompt_maryna_not_marina():
     assert "Maryna" in src, "Prompt should use canonical name 'Maryna'"
     who_section = src[:src.find("## CORE DECISION")]
     assert "Marina" not in who_section, "WHO YOU ARE section still says 'Marina' instead of 'Maryna'"
+    return True
+
+
+# ── 2.15b  BUG-008: Deterministic delete handler in bot.py ────────────────────
+@test("2.15b BUG-008: bot.py has deterministic delete handler (confirm_delete)")
+def test_deterministic_delete_handler():
+    src = (ROOT / "bot.py").read_text()
+    assert 'chosen_value == "confirm_delete"' in src, \
+        "bot.py must intercept confirm_delete deterministically"
+    assert "pending_delete_tx" in src, \
+        "bot.py must check session.pending_delete_tx before deletion"
+    assert "tool_delete_transaction" in src, \
+        "bot.py must call tool_delete_transaction directly for delete confirmation"
+    # Also verify present_options stores tx_id for delete
+    agent_src = (ROOT / "agent.py").read_text()
+    assert "pending_delete_tx" in agent_src, \
+        "agent.py _tool_present_options must store pending_delete_tx"
     return True
 
 
