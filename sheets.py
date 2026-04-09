@@ -580,7 +580,7 @@ class EnvelopeSheets:
 
             # ── Section A: SNAPSHOT — all formulas ───────────────────────
             rows.append(["[SNAPSHOT]", "", "", "", ""])          # row 1
-            rows.append(["month", '=TEXT(TODAY(),"YYYY-MM")', "", "", ""])  # row 2
+            rows.append(["month", '=TEXT(TODAY(),"yyyy-mm")', "", "", ""])  # row 2
             rows.append(["budget", '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)', "", "", ""])  # row 3
             rows.append(["spent",  f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_CM}*{_H})', "", "", ""])  # row 4
             rows.append(["remaining", "=B3-B4", "", "", ""])     # row 5
@@ -680,7 +680,9 @@ class EnvelopeSheets:
                     h_spent = h.get("total_expenses", 0)
                     h_pct = round(h_spent / h_threshold * 100, 1) if h_threshold else 0
                     ytd_spent += float(h_spent)
-                    data_row = [h.get("month", ""), round(float(h_spent), 2), round(float(h_threshold), 2), h_pct]
+                    # Prefix month with ' to prevent Google Sheets auto-date conversion
+                    h_month = "'" + h.get("month", "") if h.get("month") else ""
+                    data_row = [h_month, round(float(h_spent), 2), round(float(h_threshold), 2), h_pct]
                     for u in all_users:
                         obl = round(float(h.get("user_shares", {}).get(u, 0)), 2)
                         credit = round(float(h.get("balances", {}).get(u, 0)), 2)
