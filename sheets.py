@@ -593,47 +593,46 @@ class EnvelopeSheets:
             rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section B: USER_BALANCE — formulas per user ──────────────
+            # ── Section B: USER_BALANCE — xlsx formula model ─────────────
+            # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp
+            # credit = -obligation (positive = overpaid, negative = owes)
             rows.append(["[USER_BALANCE]", "", "", "", ""])      # row 14
             if contrib_snap and contrib_snap.get("status") == "ok":
                 rows.append(["split_rule", '=VLOOKUP("split_rule",Config!A:B,2,FALSE)', "", "", ""])  # row 15
                 rows.append(["threshold", '=VLOOKUP("split_threshold",Config!A:B,2,FALSE)', "", "", ""])  # row 16
-                rows.append(["User", "Contributed", "Share", "Balance", "Status"])  # row 17
+                rows.append(["User", "Obligation", "Credit", "", "Status"])  # row 17
                 # Per-user formulas (row 18+)
                 split_users = contrib_snap.get("split_users", [])
+                # total_min_pool formula
+                f_total_min = "+".join(
+                    f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in split_users
+                )
+                # split_base = total_expenses - total_min_pool (B4 = spent)
+                f_split_base = f"B4-({f_total_min})"
                 for u in split_users:
-                    # Contributed = income_to_joint + personal_expenses
-                    f_income = (
-                        f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_CM}*{_H})'
-                    )
-                    f_personal_exp = (
-                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_CM}*{_H})'
-                    )
-                    f_contributed = f"={f_income}+{f_personal_exp}"
-
-                    # Share (obligation):
-                    # min_u / total_min_pool * MIN(total_expenses, total_min_pool)
-                    # + split_u/100 * MAX(0, total_expenses - total_min_pool)
                     f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
                     f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
-                    f_total_min = "+".join(
-                        f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in split_users
+                    # top_up = income to joint by this user
+                    f_top_up = (
+                        f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_CM}*{_H})'
                     )
-                    f_share = (
-                        f"=IF(({f_total_min})=0,"
-                        f"B4*{f_split_u}/100,"
-                        f"MIN(B4,{f_total_min})*{f_min_u}/({f_total_min})"
-                        f"+MAX(0,B4-({f_total_min}))*{f_split_u}/100)"
+                    # personal_exp = expenses from Personal account by this user
+                    f_pers_exp = (
+                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_CM}*{_H})'
                     )
-
-                    # Balance = Contributed - Share
-                    # row index for this user (18 for first user, 19 for second, etc.)
+                    # obligation = (min - top_up) + max(0, split_base) * split%/100 - personal_exp
+                    f_obligation = (
+                        f"=({f_min_u}-{f_top_up})"
+                        f"+MAX(0,{f_split_base})*{f_split_u}/100"
+                        f"-{f_pers_exp}"
+                    )
                     u_idx = split_users.index(u)
                     u_row = 18 + u_idx
-                    f_balance = f"=B{u_row}-C{u_row}"
-                    f_status = f'=IF(D{u_row}>=0,"surplus","deficit")'
+                    # credit = -obligation
+                    f_credit = f"=-B{u_row}"
+                    f_status = f'=IF(C{u_row}>=0,"surplus","deficit")'
 
-                    rows.append([u, f_contributed, f_share, f_balance, f_status])
+                    rows.append([u, f_obligation, f_credit, "", f_status])
             else:
                 rows.append(["(solo budget — no split)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
@@ -669,11 +668,9 @@ class EnvelopeSheets:
 
                 h_row = ["Month", "Spent", "Budget", "Pct"]
                 for u in all_users:
-                    h_row += [f"{u}_contributed", f"{u}_share", f"{u}_balance"]
+                    h_row += [f"{u}_obligation", f"{u}_credit"]
                 rows.append(h_row)
 
-                ytd_contrib: dict[str, float] = {u: 0.0 for u in all_users}
-                ytd_share:   dict[str, float] = {u: 0.0 for u in all_users}
                 ytd_spent = 0.0
 
                 for h in contrib_history:
@@ -685,12 +682,9 @@ class EnvelopeSheets:
                     ytd_spent += float(h_spent)
                     data_row = [h.get("month", ""), round(float(h_spent), 2), round(float(h_threshold), 2), h_pct]
                     for u in all_users:
-                        c = round(float(h.get("contributions", {}).get(u, 0)), 2)
-                        s = round(float(h.get("user_shares", {}).get(u, 0)), 2)
-                        b = round(float(h.get("balances", {}).get(u, 0)), 2)
-                        ytd_contrib[u] += c
-                        ytd_share[u] += s
-                        data_row += [c, s, b]
+                        obl = round(float(h.get("user_shares", {}).get(u, 0)), 2)
+                        credit = round(float(h.get("balances", {}).get(u, 0)), 2)
+                        data_row += [obl, credit]
                     rows.append(data_row)
 
                 # YTD totals row — SUM formulas for history columns
@@ -702,12 +696,12 @@ class EnvelopeSheets:
                 ytd_row_cells.append(f"=SUM(B{first_data}:B{last_data})")
                 ytd_row_cells.append("")
                 ytd_row_cells.append("")
-                col_offset = 4  # E, F, G for first user, H, I, J for second...
+                col_offset = 4  # E, F for first user, G, H for second...
                 for u in all_users:
-                    for ci in range(3):
+                    for ci in range(2):  # obligation, credit
                         c_letter = chr(65 + col_offset + ci)
                         ytd_row_cells.append(f"=SUM({c_letter}{first_data}:{c_letter}{last_data})")
-                    col_offset += 3
+                    col_offset += 2
                 rows.append(ytd_row_cells)
             else:
                 rows.append(["(no history data)", "", "", "", ""])

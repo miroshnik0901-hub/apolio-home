@@ -394,27 +394,27 @@ def _current_month_str() -> str:
 
 
 def _quick_balance_line(session) -> str:
-    """T-128: Balance summary after add/delete. Shows contributed · share → balance per user."""
+    """T-128: Balance summary after add/delete. Credit model from xlsx formula."""
     try:
         from intelligence import compute_contribution_status
         snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
         if snap.get("status") != "ok":
             return ""
-        cap = snap.get("threshold", 0)
         spent = snap.get("total_expenses", 0)
+        cap = snap.get("threshold", 0) or spent  # fallback if no min_pool
         cur = snap.get("currency", "EUR")
-        parts = [f"💰 {spent:,.0f}/{cap:,.0f} {cur}"]
-        contributions = snap.get("contributions", {})
-        user_shares = snap.get("user_shares", {})
+        parts = [f"💰 {spent:,.0f} {cur} расходы"]
         balances = snap.get("balances", {})
         split_users = snap.get("split_users", [])
         if len(split_users) > 1:
             for u in split_users:
-                c = float(contributions.get(u, 0))
-                s = float(user_shares.get(u, 0))
-                b = float(balances.get(u, 0))
-                icon = "✅" if b >= 0 else "⚠️"
-                parts.append(f"{icon} {u}: {c:,.0f} внесено · {s:,.0f} доля → {b:+,.0f} {cur}")
+                credit = float(balances.get(u, 0))
+                if credit > 0:
+                    parts.append(f"✅ {u}: +{credit:,.0f} {cur} (переплата)")
+                elif credit < 0:
+                    parts.append(f"⚠️ {u}: {credit:,.0f} {cur} (должен)")
+                else:
+                    parts.append(f"➖ {u}: 0 {cur}")
         return "\n".join(parts)
     except Exception:
         return ""
@@ -505,23 +505,23 @@ async def _build_status_html(session, lang: str = "ru") -> str:
                 lines.append("")
                 lines.append(f"👥 {' · '.join(f'{w}: {a:,.0f}' for w, a in sorted(by_who.items(), key=lambda x: -x[1]))}")
 
-        # T-094: User balance (contributed − share)
+        # T-094: User balance — credit model (xlsx formula)
         try:
             from intelligence import compute_contribution_status
             snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
             if snap.get("status") == "ok" and len(snap.get("split_users", [])) > 1:
                 cur = snap.get("currency", "EUR")
-                contributions = snap.get("contributions", {})
-                user_shares = snap.get("user_shares", {})
                 balances = snap.get("balances", {})
                 lines.append("")
-                lines.append("⚖️ Баланс (внесено − доля):")
+                lines.append("⚖️ Баланс:")
                 for u in snap["split_users"]:
-                    c = float(contributions.get(u, 0))
-                    s = float(user_shares.get(u, 0))
-                    b = float(balances.get(u, 0))
-                    icon = "✅" if b >= 0 else "⚠️"
-                    lines.append(f"  {icon} {u}: {c:,.0f} внесено · {s:,.0f} доля → {b:+,.0f} {cur}")
+                    credit = float(balances.get(u, 0))
+                    if credit > 0:
+                        lines.append(f"  ✅ {u}: +{credit:,.0f} {cur} (переплата)")
+                    elif credit < 0:
+                        lines.append(f"  ⚠️ {u}: {credit:,.0f} {cur} (должен)")
+                    else:
+                        lines.append(f"  ➖ {u}: 0 {cur}")
         except Exception:
             pass
 
@@ -748,49 +748,36 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
         base_c = snap["base_contributor"]
         split_rule = snap["split_rule"]
 
+        top_up = snap.get("top_up_joint", {})
+        pers_exp = snap.get("personal_exp", {})
+
         lines = [i18n.tu("contrib_title", lang, label=label), ""]
 
-        # Contributions (who put in how much)
-        if contributions:
-            lines.append(i18n.tu("contrib_contributed", lang))
-            for u in split_users:
-                amt = float(contributions.get(u, 0))
-                lines.append(f"  👤 {u}: {amt:,.0f} {cur}")
-            lines.append("")
-
-        # Total expenses and split
+        # Total expenses
         lines.append(i18n.tu("contrib_total_exp", lang, total=total_exp, cur=cur))
-
-        if split_rule == "solo" or len(split_users) <= 1:
-            lines.append(i18n.tu("contrib_solo", lang, user=base_c))
-        else:
-            if total_exp <= threshold:
-                lines.append(i18n.tu("contrib_below_threshold", lang,
-                                     thr=threshold, cur=cur, user=base_c))
-            else:
-                lines.append(i18n.tu("contrib_excess", lang,
-                                     thr=threshold, cur=cur, excess=excess,
-                                     per=excess_per, user=base_c))
-
-        # Shares
-        if user_shares:
-            lines.append("")
-            lines.append(i18n.tu("contrib_shares", lang))
-            for u in split_users:
-                share = float(user_shares.get(u, 0))
-                lines.append(f"  👤 {u}: {share:,.0f} {cur}")
-
-        # Balances
+        if threshold > 0:
+            lines.append(f"📋 Min pool: {threshold:,.0f} {cur}")
         lines.append("")
-        lines.append(i18n.tu("contrib_balance", lang))
+
+        # Per-user breakdown: top_up, personal, obligation, credit
         for u in split_users:
-            b = float(balances.get(u, 0))
-            if b > 0:
-                lines.append(f"  👤 {u}: <b>+{b:,.0f} {cur}</b>  {i18n.tu('contrib_in_plus', lang)}")
-            elif b < 0:
-                lines.append(f"  👤 {u}: <b>{b:,.0f} {cur}</b>  {i18n.tu('contrib_owes', lang)}")
+            tu = float(top_up.get(u, 0))
+            pe = float(pers_exp.get(u, 0))
+            obl = float(user_shares.get(u, 0))
+            credit = float(balances.get(u, 0))
+            lines.append(f"👤 <b>{u}</b>")
+            if tu > 0:
+                lines.append(f"  💳 Внёс на joint: {tu:,.0f} {cur}")
+            if pe > 0:
+                lines.append(f"  🛒 Оплатил лично: {pe:,.0f} {cur}")
+            lines.append(f"  📊 Обязательство: {obl:,.0f} {cur}")
+            if credit > 0:
+                lines.append(f"  ✅ Кредит: <b>+{credit:,.0f} {cur}</b> (переплата)")
+            elif credit < 0:
+                lines.append(f"  ⚠️ Долг: <b>{credit:,.0f} {cur}</b>")
             else:
-                lines.append(f"  👤 {u}: 0 {cur}  {i18n.tu('contrib_even', lang)}")
+                lines.append(f"  ➖ Баланс: 0 {cur}")
+            lines.append("")
 
         return "\n".join(lines)
     except Exception as e:

@@ -259,9 +259,12 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         except Exception:
             pass
 
-        # T-093: Assets per user = deposits_to_joint + personal_account_expenses
-        # Account field is "Joint" or "Personal" (new) or an account name (old → fallback via map)
-        assets: dict[str, float] = defaultdict(float)
+        # ── Collect per-user data from transactions ─────────────────────────
+        # top_up_joint: income/transfer to Joint account (or no account = Joint)
+        # personal_exp: expenses from Personal account
+        # All used in the xlsx obligation formula.
+        top_up_joint: dict[str, float] = defaultdict(float)
+        personal_exp: dict[str, float] = defaultdict(float)
         for t in month_txns:
             who_raw = t.get("Who", "Unknown")
             who = _normalize_who(who_raw, known_who) or who_raw
@@ -270,46 +273,43 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
                 continue
             txn_type = t.get("Type", "")
             acct = t.get("Account", "")
-            # Resolve account type: direct value first, then map lookup for old transactions
+            # Resolve account type: direct value first, then map lookup
             if acct in ("Joint", "Personal"):
                 acct_type = acct
             else:
                 acct_type = account_type_map.get(acct, "")
             if txn_type in ("income", "transfer"):
                 if acct_type == "Joint" or not acct_type:
-                    assets[who] += amt
+                    top_up_joint[who] += amt
             elif txn_type == "expense":
                 if acct_type == "Personal":
-                    assets[who] += amt
+                    personal_exp[who] += amt
 
-        contributions = assets  # kept as 'contributions' for output compatibility
-
-        # Total expenses
+        # Total expenses (all expense transactions regardless of account)
         total_expenses = sum(
             _parse_amount(t) for t in month_txns if t.get("Type") == "expense"
         )
 
-        # ── New per-user model (min_<user> + split_<user> keys in Config) ─
+        # ── Per-user model (xlsx formula: ApolioHome_UserBalance_formula) ──
+        # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp
+        # credit = -obligation  (positive = overpaid, negative = owes)
         if _has_per_user_min and split_users:
             total_min_pool = sum(
                 float(env_config.get(f"min_{u}", 0) or 0) for u in split_users
             )
-            overflow = max(0.0, total_expenses - total_min_pool)
+            split_base = total_expenses - total_min_pool
             user_shares: dict[str, float] = {}
             for u in split_users:
                 u_min   = float(env_config.get(f"min_{u}", 0) or 0)
                 u_split = float(env_config.get(f"split_{u}", 0) or 0)
-                if total_min_pool == 0:
-                    obligation = total_expenses * u_split / 100
-                else:
-                    obligation = (
-                        min(total_expenses, total_min_pool) * (u_min / total_min_pool)
-                        + overflow * u_split / 100
-                    )
+                from_min = u_min - top_up_joint.get(u, 0.0)
+                from_split = max(0.0, split_base) * u_split / 100
+                from_personal = -personal_exp.get(u, 0.0)
+                obligation = from_min + from_split + from_personal
                 user_shares[u] = round(obligation, 2)
             threshold       = total_min_pool
-            excess_amount   = overflow
-            excess_per_user = overflow / len(split_users) if split_users else 0.0
+            excess_amount   = max(0.0, split_base)
+            excess_per_user = excess_amount / len(split_users) if split_users else 0.0
             split_rule      = "per_user"
 
         # ── Legacy split_rule model ────────────────────────────────────────
@@ -332,12 +332,15 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
                         share += covered_by_base
                     user_shares[u] = round(share, 2)
 
-        # T-093: Balance = Assets − Obligations (share_owed)
+        # Credit = -obligation (positive = overpaid / owed to you, negative = you owe)
         balances: dict[str, float] = {}
         for u in split_users:
-            user_assets = float(assets.get(u, 0.0))
-            owed = float(user_shares.get(u, 0.0))
-            balances[u] = round(user_assets - owed, 2)
+            balances[u] = round(-float(user_shares.get(u, 0.0)), 2)
+
+        # Build per-user top_up + personal for display
+        assets: dict[str, float] = {}
+        for u in split_users:
+            assets[u] = round(top_up_joint.get(u, 0.0) + personal_exp.get(u, 0.0), 2)
 
         return {
             "status": "ok",
@@ -348,11 +351,13 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             "base_contributor": base_contributor,
             "split_users": split_users,
             "total_expenses": round(total_expenses, 2),
-            "contributions": dict(assets),          # backward compat key
-            "assets": dict(assets),                 # T-093: explicit assets key
-            "has_account_types": has_account_types, # T-093: flag for formatting
-            "user_shares": user_shares,
-            "balances": balances,
+            "contributions": assets,                # backward compat key
+            "assets": assets,                       # top_up + personal per user
+            "top_up_joint": dict(top_up_joint),     # per-user top-up to joint
+            "personal_exp": dict(personal_exp),     # per-user personal expenses
+            "has_account_types": has_account_types,
+            "user_shares": user_shares,             # obligation per user
+            "balances": balances,                   # credit per user (-obligation)
             "excess_amount": round(excess_amount, 2),
             "excess_per_user": round(excess_per_user, 2),
         }
@@ -382,34 +387,26 @@ def format_contribution_for_prompt(snap: dict) -> str:
     base_c = snap["base_contributor"]
     has_account_types = snap.get("has_account_types", False)
 
+    top_up = snap.get("top_up_joint", {})
+    pers_exp = snap.get("personal_exp", {})
+    user_shares = snap.get("user_shares", {})
+
     lines = [f"## CONTRIBUTION & SPLIT STATUS ({month})"]
-
-    # Assets / Contributions
-    asset_label = "Assets" if has_account_types else "Contributions (no account types set)"
-    contrib_parts = [f"{u}={contributions.get(u, 0):.2f} {cur}" for u in split_users]
-    if contrib_parts:
-        lines.append(f"{asset_label}: {', '.join(contrib_parts)}")
-
-    # Expenses
     lines.append(f"Total expenses: {total_exp:.2f} {cur}")
+    if threshold > 0:
+        lines.append(f"Min pool: {threshold:.0f} {cur}, overflow: {excess:.2f} {cur}")
 
-    if total_exp <= threshold:
-        lines.append(
-            f"Split: below threshold ({threshold} {cur}) → all on {base_c}"
-        )
-    else:
-        lines.append(
-            f"Split: excess {excess:.2f} {cur} over threshold {threshold} {cur} "
-            f"→ {excess_per:.2f} {cur} each ({', '.join(split_users)})"
-        )
-
-    # Balances
-    bal_parts = []
+    # Per-user: obligation and credit
     for u in split_users:
-        b = balances.get(u, 0)
-        sign = "+" if b >= 0 else ""
-        bal_parts.append(f"{u}={sign}{b:.2f} {cur}")
-    lines.append(f"Balances: {', '.join(bal_parts)}")
+        tu = top_up.get(u, 0)
+        pe = pers_exp.get(u, 0)
+        obl = user_shares.get(u, 0)
+        credit = balances.get(u, 0)
+        sign = "+" if credit >= 0 else ""
+        lines.append(
+            f"{u}: top_up={tu:.0f}, personal={pe:.0f}, "
+            f"obligation={obl:.0f}, credit={sign}{credit:.0f} {cur}"
+        )
 
     return "\n".join(lines)
 
