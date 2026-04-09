@@ -98,17 +98,11 @@ DEFAULT_MENU: dict[str, dict] = {
         "type": "cmd", "command": "envelopes", "params": {},
         "order": 2, "roles": [],
     },
-    "set_undo": {
-        "label": "↩️ Отменить последнее", "parent": "settings",
-        "type": "cmd", "command": "undo", "params": {},
-        "order": 3, "roles": [],
-    },
-
     # ── Admin panel (only admin sees this) ───────────────────────────────
     "admin_panel": {
         "label": "🔧 Админ", "parent": "settings",
         "type": "submenu", "command": "", "params": {},
-        "order": 4, "roles": ["admin"],
+        "order": 3, "roles": ["admin"],
     },
     "set_config_view": {
         "label": "⚙️ Конфиг", "parent": "admin_panel",
@@ -126,19 +120,9 @@ DEFAULT_MENU: dict[str, dict] = {
         "order": 3, "roles": ["admin"],
     },
     "set_dashboard": {
-        "label": "🔄 Обновить панель", "parent": "admin_panel",
+        "label": "🔄 Обновить Dashboard", "parent": "admin_panel",
         "type": "cmd", "command": "dashboard_refresh", "params": {},
         "order": 4, "roles": ["admin"],
-    },
-    "set_mode": {
-        "label": "🧪 Режим", "parent": "admin_panel",
-        "type": "cmd", "command": "mode_toggle", "params": {},
-        "order": 5, "roles": ["admin"],
-    },
-    "set_refresh": {
-        "label": "🔄 Обновить меню", "parent": "admin_panel",
-        "type": "cmd", "command": "refresh", "params": {},
-        "order": 6, "roles": ["admin"],
     },
 }
 
@@ -158,15 +142,12 @@ _DEFAULT_ROWS = [
     ("set_lang_en",      "🇬🇧 English",              "set_lang",     "cmd",       "set_language", '{"lang":"en"}',      3, "TRUE", ""),
     ("set_lang_it",      "🇮🇹 Italiano",             "set_lang",     "cmd",       "set_language", '{"lang":"it"}',      4, "TRUE", ""),
     ("set_envelope",     "📁 Сменить конверт",      "settings",     "cmd",       "envelopes",    "",                   2, "TRUE", ""),
-    ("set_undo",         "↩️ Отменить последнее",   "settings",     "cmd",       "undo",         "",                   3, "TRUE", ""),
     # Admin panel (admin only)
-    ("admin_panel",      "🔧 Админ",                "settings",     "submenu",   "",             "",                   4, "TRUE", "admin"),
+    ("admin_panel",      "🔧 Админ",                "settings",     "submenu",   "",             "",                   3, "TRUE", "admin"),
     ("set_config_view",  "⚙️ Конфиг",               "admin_panel",  "cmd",       "config_view",  "",                   1, "TRUE", "admin"),
     ("set_users",        "👥 Юзеры",                "admin_panel",  "cmd",       "users_view",   "",                   2, "TRUE", "admin"),
     ("set_learning",     "🧠 База знаний",          "admin_panel",  "cmd",       "learning_summary", "",               3, "TRUE", "admin"),
-    ("set_dashboard",    "🔄 Обновить панель",      "admin_panel",  "cmd",       "dashboard_refresh", "",              4, "TRUE", "admin"),
-    ("set_mode",         "🧪 Режим",                "admin_panel",  "cmd",       "mode_toggle",  "",                   5, "TRUE", "admin"),
-    ("set_refresh",      "🔄 Обновить меню",        "admin_panel",  "cmd",       "refresh",      "",                   6, "TRUE", "admin"),
+    ("set_dashboard",    "🔄 Обновить Dashboard",   "admin_panel",  "cmd",       "dashboard_refresh", "",              4, "TRUE", "admin"),
 ]
 
 _HEADERS = ["ID", "Label", "Parent", "Type", "Command", "Params", "Order", "Visible", "Roles"]
