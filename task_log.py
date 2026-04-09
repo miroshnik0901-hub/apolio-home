@@ -81,8 +81,7 @@ STATUS_CLOSED = "CLOSED"
 VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_DISCUSSION, STATUS_BLOCKED, STATUS_CLOSED}
 VALID_TOPICS = {
     "Interface", "Features", "Data", "Infrastructure", "AI", "Docs", "Admin",
-    "Auth", "Bug Fix", "Google Sheets", "Process", "Research", "Telegram UI",
-    "Финансы", "agent", "architecture", "bug", "sheets",
+    "Bug Fix", "Process",
 }
 
 
