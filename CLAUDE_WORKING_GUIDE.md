@@ -521,11 +521,12 @@ paste `apps_script/task_log_automation.js` → Save → Run `setupTriggers()` on
 2. Push → check Railway logs (no import errors, no traceback)
 3. Update this file if architecture changed
 
-### Autonomous testing — the AI does this, not the user
-All testing is done by the AI without asking the user:
-- **After every change**: run `python test_regression.py` — 17 tests, must all pass
+### Autonomous testing — Claude is QA, never ask Mikhail to test
+All testing is done by Claude without asking the user:
+- **After every change**: run `python test_regression.py` — all tests must pass
 - **Quick (no network)**: run `python test_regression.py --no-sheets` — static + unit only
 - **With Sheets**: run `python test_regression.py` — includes live roundtrip test
+- **After every push to `dev`**: verify staging deploy — check Railway logs, query staging DB, test bot responses. Report results to Mikhail, never ask him to test.
 - **Bot behavior**: call `ApolioAgent.run()` directly with a Mikhail session (360466156) — no Telegram needed
 - **UI/UX**: read Railway logs after deploy — check error rate drops, `[AuthManager] Loaded N users` present
 - **Railway logs**: read via Chrome MCP (javascript on the Railway logs page)

@@ -14,6 +14,7 @@ Read CLAUDE_WORKING_GUIDE.md before any change.
 
 ## Testing
 
+- **Claude is QA. Never ask Mikhail to test.** After every push to `dev`, Claude must verify the staging bot works — check deploy logs, query staging DB, test bot responses.
 - All dev/testing happens on staging (@ApolioHomeTestBot, `dev` branch).
 - Test Budget file_id: `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788`
 - Staging DB: maglev.proxy.rlwy.net:17325
