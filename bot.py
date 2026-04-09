@@ -2092,7 +2092,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "undo":
                 la = session.last_action
                 if not la:
-                    await query.answer("Нет действий для отмены.", show_alert=True)
+                    await query.answer(i18n.ts("undo_nothing", lang), show_alert=True)
                     return
                 try:
                     if la.action == "add":
@@ -2104,15 +2104,17 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         if file_id:
                             sheets.soft_delete_transaction(file_id, la.tx_id)
                             snap = la.snapshot
-                            html = (f"↩ Отменено: {snap.get('category', '')} · "
+                            html = (f"{i18n.ts('undo_done', lang)}: {snap.get('category', '')} · "
                                     f"{snap.get('amount', '?')} {snap.get('currency', 'EUR')}")
                             session.last_action = None
                         else:
-                            html = "❌ Конверт не найден."
+                            html = i18n.ts("envelope_not_found", lang)
+                    elif la.action == "edit":
+                        html = i18n.ts("undo_edit_not_impl", lang)
                     else:
-                        html = "❌ Неизвестное действие."
+                        html = f"❌ {la.action}"
                 except Exception as e:
-                    html = f"❌ Ошибка: {e}"
+                    html = f"❌ {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "contribution":
                 html = await _build_contribution_html(session, lang)
@@ -2130,18 +2132,18 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             elif command == "dashboard_refresh":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     result = await agent._tool_refresh_dashboard({}, session, sheets, auth)
                     status_msg = result.get("status", "error")
-                    html = "🔄 <b>Дашборд обновлён</b>" if status_msg == "ok" else f"❌ {result.get('error', 'Ошибка')}"
+                    html = i18n.ts("dashboard_refreshed", lang) if status_msg == "ok" else f"❌ {result.get('error', '')}"
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "mode_toggle":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     cfg = sheets.get_dashboard_config()
@@ -2154,7 +2156,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 kb = _with_menu_btn(lang=lang)
             elif command == "config_view":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     # Auto-init missing keys on every config view
@@ -2178,22 +2180,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     env_config = sheets.read_envelope_config(env_file_id)
                     dash_cfg = sheets.get_dashboard_config()
 
-                    lines = [f"⚙️ <b>Конфигурация</b>", ""]
-                    lines.append(f"📁 <b>Активный файл:</b> {env_name}")
+                    lines = [i18n.ts("config_title", lang), ""]
+                    lines.append(f"{i18n.ts('config_active_file', lang)} {env_name}")
                     if env_url:
-                        lines.append(f"🔗 <a href=\"{env_url}\">Открыть в Google Sheets</a>")
+                        lines.append(f"🔗 <a href=\"{env_url}\">{i18n.ts('config_open_sheets', lang)}</a>")
                     lines.append(f"🆔 <code>{env_id}</code>")
                     lines.append("")
 
                     # Envelope-specific settings
                     if env_config:
-                        lines.append("<b>Настройки конверта:</b>")
+                        lines.append(i18n.ts("config_envelope_settings", lang))
                         for k in sorted(env_config):
                             lines.append(f"  <code>{k}</code> = {env_config[k]}")
                     else:
-                        lines.append("<b>Настройки конверта:</b> пусто")
-                        lines.append("  <i>Добавьте split_rule, split_threshold, split_users,</i>")
-                        lines.append("  <i>base_contributor в Config вкладку файла конверта</i>")
+                        lines.append(i18n.ts("config_envelope_settings", lang))
+                        lines.append(f"  <i>{i18n.ts('config_envelope_empty', lang)}</i>")
                     lines.append("")
 
                     # Global admin config (non-envelope keys only)
@@ -2201,7 +2202,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         env_id_check in k for env_id_check in ["_MM_", "_TEST_"]
                     )]
                     if global_keys:
-                        lines.append("<b>Admin Config (глобальные):</b>")
+                        lines.append(i18n.ts("config_admin_global", lang))
                         for k in sorted(global_keys):
                             lines.append(f"  <code>{k}</code> = {admin_cfg[k]}")
                         lines.append("")
@@ -2211,42 +2212,42 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         lines.append(f"  <code>{k}</code> = {v}")
                     html = "\n".join(lines)
                 except Exception as e:
-                    html = f"❌ Ошибка: {e}"
+                    html = f"❌ {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "init_config":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     env_id = session.current_envelope_id or "MM_BUDGET"
                     result = sheets.ensure_envelope_config(env_id)
                     if result.get("error"):
-                        html = f"❌ Ошибка: {result['error']}"
+                        html = f"❌ {result['error']}"
                     else:
                         written = result.get("written", [])
                         skipped = result.get("skipped", [])
-                        lines = [f"🔧 <b>Init Config: {env_id}</b>", ""]
+                        lines = [i18n.ts("config_init_title", lang).replace("{env_id}", env_id), ""]
                         if written:
-                            lines.append(f"✅ <b>Записано ({len(written)}):</b>")
+                            lines.append(i18n.ts("config_init_written", lang).replace("{count}", str(len(written))))
                             for k in written:
                                 lines.append(f"  <code>{k}</code>")
                         else:
-                            lines.append("✅ Все ключи уже присутствуют")
+                            lines.append(i18n.ts("config_init_all_present", lang))
                         if skipped:
-                            lines.append(f"⏭ <b>Пропущено (уже есть):</b> {', '.join(skipped)}")
+                            lines.append(f"{i18n.ts('config_init_skipped', lang)} {', '.join(skipped)}")
                         lines.append("")
-                        lines.append("Откройте Config вкладку конверта чтобы проверить.")
+                        lines.append(i18n.ts("config_init_check", lang))
                     html = "\n".join(lines)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "users_view":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     users = sheets._admin.get_users()
-                    lines = [f"👥 <b>Пользователи</b>  ({len(users)} чел.)", ""]
+                    lines = [i18n.ts("users_title", lang).replace("{count}", str(len(users))), ""]
                     for u in users:
                         name = u.get("name", "?")
                         role = u.get("role", "?")
@@ -2257,14 +2258,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         lines.append(f"{status_icon} <b>{name}</b>  [{role}]")
                         lines.append(f"   ID: <code>{tid}</code>")
                         if envelopes:
-                            lines.append(f"   Конверты: {envelopes}")
+                            lines.append(f"   {i18n.ts('users_envelopes', lang)}: {envelopes}")
                     html = "\n".join(lines)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "learning_summary":
                 if not auth.is_admin(session.user_id):
-                    await query.answer("Только для администратора.", show_alert=True)
+                    await query.answer(i18n.ts("admin_only", lang), show_alert=True)
                     return
                 try:
                     import db as appdb
@@ -2272,13 +2273,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         # Use refresh_learning_summary tool result as text
                         ctx_text = await appdb.get_learning_context_for_prompt(session.user_id)
                         if ctx_text.strip():
-                            html = f"🧠 <b>База знаний</b>\n\n<code>{ctx_text[:2000]}</code>"
+                            html = f"🧠 <b>{i18n.t_menu('set_learning', lang).replace('🧠 ', '')}</b>\n\n<code>{ctx_text[:2000]}</code>"
                         else:
-                            html = "🧠 <b>База знаний</b>\n\nДанных пока нет."
+                            html = i18n.ts("glossary_empty", lang)
                     else:
-                        html = "🧠 База знаний недоступна (БД не подключена)."
+                        html = i18n.ts("glossary_empty", lang)
                 except Exception as e:
-                    html = f"❌ Ошибка: {e}"
+                    html = f"❌ {e}"
                 kb = _with_menu_btn(lang=lang)
             else:
                 await query.answer(i18n.ts("cmd_not_supported", lang), show_alert=True)
