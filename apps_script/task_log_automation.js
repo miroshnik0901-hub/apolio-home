@@ -9,7 +9,7 @@
 //   5. The onEdit trigger activates automatically (no extra setup needed)
 
 const SHEET_NAME = 'task_log';
-const COL = { ID: 1, DATE: 2, TASK: 3, STATUS: 4, COMMENT: 5, BRANCH: 6, RESOLVED: 7, TOPIC: 8 };
+const COL = { ID: 1, DATE: 2, TASK: 3, STATUS: 4, COMMENT: 5, BRANCH: 6, RESOLVED: 7, TOPIC: 8, DEPLOY: 9, CONFIRM: 10 };
 
 // ─── onEdit trigger: fires when a user manually edits the sheet ───────────────
 // Note: does NOT fire when the Python bot writes via Sheets API
@@ -42,15 +42,21 @@ function onEdit(e) {
   if (col === COL.STATUS) {
     const val = String(e.value || '').toUpperCase();
     const resolvedCell = sheet.getRange(row, COL.RESOLVED);
-    if (val === 'CLOSED' || val === 'BLOCKED') {
+    if (val === 'CLOSED' || val === 'BLOCKED' || val === 'DISCUSSION') {
       if (!resolvedCell.getValue()) {
         resolvedCell.setValue(new Date());
         resolvedCell.setNumberFormat('yyyy-mm-dd');
       }
+      // T-117/T-129: auto-set Deploy=READY when moving to DISCUSSION (if empty)
+      if (val === 'DISCUSSION') {
+        const deployCell = sheet.getRange(row, COL.DEPLOY);
+        if (!deployCell.getValue()) {
+          deployCell.setValue('READY');
+        }
+      }
     } else if (val === 'OPEN' || val === 'IN PROCESS' || val === 'ON HOLD') {
       resolvedCell.clearContent();
     }
-    // DISCUSSION: leave Resolved At as-is (neither set nor clear)
   }
 }
 

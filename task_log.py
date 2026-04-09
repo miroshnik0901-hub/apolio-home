@@ -79,7 +79,11 @@ STATUS_BLOCKED = "BLOCKED"
 STATUS_CLOSED = "CLOSED"
 
 VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_DISCUSSION, STATUS_BLOCKED, STATUS_CLOSED}
-VALID_TOPICS = {"Interface", "Features", "Data", "Infrastructure", "AI", "Docs", "Admin"}
+VALID_TOPICS = {
+    "Interface", "Features", "Data", "Infrastructure", "AI", "Docs", "Admin",
+    "Auth", "Bug Fix", "Google Sheets", "Process", "Research", "Telegram UI",
+    "Финансы", "agent", "architecture", "bug", "sheets",
+}
 
 
 def _get_client() -> gspread.Client:
@@ -199,11 +203,13 @@ class TaskLog:
                 updates = {}
                 if status is not None:
                     updates[COL_STATUS] = status
-                    if status in {STATUS_CLOSED, STATUS_BLOCKED} and not row[COL_RESOLVED - 1]:
+                    if status in {STATUS_CLOSED, STATUS_BLOCKED, STATUS_DISCUSSION} and not row[COL_RESOLVED - 1]:
                         updates[COL_RESOLVED] = resolved_at or datetime.now().strftime("%Y-%m-%d %H:%M")
                     elif status in {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD}:
                         updates[COL_RESOLVED] = ""
-                    # DISCUSSION: leave Resolved At unchanged
+                    # T-117: auto-set Deploy=READY when moving to DISCUSSION (if empty)
+                    if status == STATUS_DISCUSSION and not row[COL_DEPLOY - 1].strip():
+                        updates[COL_DEPLOY] = DEPLOY_READY
                 if comment is not None:
                     updates[COL_COMMENT] = comment
                 if branch is not None:

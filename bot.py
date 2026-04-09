@@ -393,6 +393,31 @@ def _current_month_str() -> str:
     return dt.date.today().strftime("%Y-%m")
 
 
+def _quick_balance_line(session) -> str:
+    """T-128: Compact one-line balance after add/delete transaction."""
+    try:
+        from intelligence import compute_contribution_status
+        snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
+        if snap.get("status") != "ok":
+            return ""
+        cap = snap.get("threshold", 0)
+        spent = snap.get("total_expenses", 0)
+        remaining = cap - spent
+        cur = snap.get("currency", "EUR")
+        parts = [f"💰 {spent:,.0f}/{cap:,.0f} {cur}"]
+        bal = snap.get("balances", {})
+        split_users = snap.get("split_users", [])
+        if len(split_users) > 1 and bal:
+            bal_parts = []
+            for u in split_users:
+                b = float(bal.get(u, 0))
+                bal_parts.append(f"{u}: {b:+,.0f}")
+            parts.append(f"⚖️ {' · '.join(bal_parts)}")
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
 async def _build_status_html(session, lang: str = "ru") -> str:
     """Render budget status as HTML without going through the agent."""
     try:
@@ -1923,8 +1948,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             session.pending_delete = None
             n_word = "строка" if count == 1 else "строки" if count in (2, 3, 4) else "строк"
+            del_msg = f"✓ Удалено {count} {n_word} ({pd['start_row']}–{pd['end_row']})"
+            # T-128: append balance summary after delete
+            bal_line = _quick_balance_line(session)
+            if bal_line:
+                del_msg += f"\n\n{bal_line}"
             await query.edit_message_text(
-                f"✓ Удалено {count} {n_word} ({pd['start_row']}–{pd['end_row']})",
+                del_msg,
                 reply_markup=_with_menu_btn(lang=lang),
             )
         except Exception as e:
@@ -2652,6 +2682,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
                 session.pending_receipt = None
 
+                # T-128: append balance summary after add
+                bal_line = _quick_balance_line(session)
+                full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
+
                 # Remove old inline keyboard (T-095)
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
@@ -2659,7 +2693,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=msg,
+                    text=full_msg,
                     reply_markup=_with_menu_btn(lang=lang),
                 )
             except Exception as e:
@@ -2694,6 +2728,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
                 if isinstance(del_result, dict) and del_result.get("deleted"):
                     msg = f"✓ Видалено: {tx_id}"
+                    # T-128: append balance summary after delete
+                    bal_line = _quick_balance_line(session)
+                    if bal_line:
+                        msg += f"\n\n{bal_line}"
                     await ctx.bot.send_message(
                         chat_id=query.message.chat_id,
                         text=msg,

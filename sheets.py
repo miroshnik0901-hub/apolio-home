@@ -567,17 +567,18 @@ class EnvelopeSheets:
             rows = []
 
             # ── Section A: SNAPSHOT (key-value) ──────────────────────────
-            rows.append(["[SNAPSHOT]", "", "", "", ""])
-            rows.append(["month", month, "", "", ""])
-            rows.append(["budget", f"{cap:.2f}", "", "", ""])
-            rows.append(["spent", f"{spent:.2f}", "", "", ""])
-            rows.append(["remaining", f"{remaining:.2f}", "", "", ""])
-            rows.append(["pct_used", f"{pct:.1f}", "", "", ""])
-            rows.append(["pace", pace or "unknown", "", "", ""])
-            rows.append(["currency", cur, "", "", ""])
-            rows.append(["days_left", str(days_left), "", "", ""])
-            rows.append(["daily_avg", f"{daily_avg:.2f}", "", "", ""])
-            rows.append(["daily_budget", f"{daily_budget:.2f}", "", "", ""])
+            # T-127: Use actual numbers + formulas for derived values
+            rows.append(["[SNAPSHOT]", "", "", "", ""])          # row 1
+            rows.append(["month", month, "", "", ""])            # row 2
+            rows.append(["budget", cap, "", "", ""])             # row 3 (number)
+            rows.append(["spent", spent, "", "", ""])            # row 4 (number)
+            rows.append(["remaining", "=B3-B4", "", "", ""])     # row 5 (formula)
+            rows.append(["pct_used", '=IF(B3>0,B4/B3*100,0)', "", "", ""])  # row 6 (formula)
+            rows.append(["pace", pace or "unknown", "", "", ""])  # row 7
+            rows.append(["currency", cur, "", "", ""])            # row 8
+            rows.append(["days_left", days_left, "", "", ""])     # row 9 (number)
+            rows.append(["daily_avg", daily_avg, "", "", ""])     # row 10 (number)
+            rows.append(["daily_budget", '=IF(B9>0,B5/B9,0)', "", "", ""])  # row 11 (formula)
             rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
@@ -585,14 +586,14 @@ class EnvelopeSheets:
             rows.append(["[USER_BALANCE]", "", "", "", ""])
             if contrib_snap and contrib_snap.get("status") == "ok":
                 rows.append(["split_rule", contrib_snap.get("split_rule", ""), "", "", ""])
-                rows.append(["threshold", f"{contrib_snap.get('threshold', 0):.2f}", "", "", ""])
+                rows.append(["threshold", round(float(contrib_snap.get('threshold', 0)), 2), "", "", ""])
                 rows.append(["User", "Contributed", "Share", "Balance", "Status"])
                 for u in contrib_snap.get("split_users", []):
-                    contributed = float(contrib_snap.get("contributions", {}).get(u, 0))
-                    share = float(contrib_snap.get("user_shares", {}).get(u, 0))
-                    balance = float(contrib_snap.get("balances", {}).get(u, 0))
+                    contributed = round(float(contrib_snap.get("contributions", {}).get(u, 0)), 2)
+                    share = round(float(contrib_snap.get("user_shares", {}).get(u, 0)), 2)
+                    balance = round(float(contrib_snap.get("balances", {}).get(u, 0)), 2)
                     status = "surplus" if balance >= 0 else "deficit"
-                    rows.append([u, f"{contributed:.2f}", f"{share:.2f}", f"{balance:+.2f}", status])
+                    rows.append([u, contributed, share, balance, status])
             else:
                 rows.append(["(solo budget — no split)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
@@ -604,8 +605,8 @@ class EnvelopeSheets:
                 total_cat = sum(top_cats.values()) or 1
                 rows.append(["Category", "Amount", "Pct", "Count", ""])
                 for cat, amt in top_cats.items():
-                    cat_pct = amt / total_cat * 100
-                    rows.append([cat, f"{amt:.2f}", f"{cat_pct:.1f}", "", ""])
+                    cat_pct = round(amt / total_cat * 100, 1)
+                    rows.append([cat, round(float(amt), 2), cat_pct, "", ""])
             else:
                 rows.append(["(no expenses this month)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
@@ -633,23 +634,23 @@ class EnvelopeSheets:
                         continue
                     h_threshold = h.get("threshold", 0)
                     h_spent = h.get("total_expenses", 0)
-                    h_pct = f"{(h_spent / h_threshold * 100):.1f}" if h_threshold else "0"
+                    h_pct = round(h_spent / h_threshold * 100, 1) if h_threshold else 0
                     ytd_spent += float(h_spent)
-                    data_row = [h.get("month", ""), f"{h_spent:.2f}", f"{h_threshold:.2f}", h_pct]
+                    data_row = [h.get("month", ""), round(float(h_spent), 2), round(float(h_threshold), 2), h_pct]
                     for u in all_users:
-                        c = float(h.get("contributions", {}).get(u, 0))
-                        s = float(h.get("user_shares", {}).get(u, 0))
-                        b = float(h.get("balances", {}).get(u, 0))
+                        c = round(float(h.get("contributions", {}).get(u, 0)), 2)
+                        s = round(float(h.get("user_shares", {}).get(u, 0)), 2)
+                        b = round(float(h.get("balances", {}).get(u, 0)), 2)
                         ytd_contrib[u] += c
                         ytd_share[u] += s
-                        data_row += [f"{c:.2f}", f"{s:.2f}", f"{b:+.2f}"]
+                        data_row += [c, s, b]
                     rows.append(data_row)
 
                 # YTD totals row
-                ytd_row = ["YTD", f"{ytd_spent:.2f}", "", ""]
+                ytd_row = ["YTD", round(ytd_spent, 2), "", ""]
                 for u in all_users:
-                    ytd_bal = ytd_contrib[u] - ytd_share[u]
-                    ytd_row += [f"{ytd_contrib[u]:.2f}", f"{ytd_share[u]:.2f}", f"{ytd_bal:+.2f}"]
+                    ytd_bal = round(ytd_contrib[u] - ytd_share[u], 2)
+                    ytd_row += [round(ytd_contrib[u], 2), round(ytd_share[u], 2), ytd_bal]
                 rows.append(ytd_row)
             else:
                 rows.append(["(no history data)", "", "", "", ""])
