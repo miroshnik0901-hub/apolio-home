@@ -578,6 +578,18 @@ def test_anthropic_timeout():
     return True
 
 
+# ── 2.19  BUG-010: forced receipt buttons when LLM skips present_options ───
+@test("2.19 BUG-010: bot.py forces receipt buttons for photo messages")
+def test_forced_receipt_buttons():
+    src = (ROOT / "bot.py").read_text()
+    assert "BUG-010" in src, "Missing BUG-010 fallback for receipt buttons"
+    assert "pending_receipt" in src
+    assert "yes_joint" in src
+    assert "yes_personal" in src
+    # Must check media_type == "photo"
+    assert 'media_type == "photo"' in src, "BUG-010 must check for photo messages"
+    return True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)

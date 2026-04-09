@@ -3142,8 +3142,59 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+    # ── BUG-010: Force receipt buttons if LLM skipped present_options ────
+    # The LLM sometimes analyzes a photo receipt but doesn't call
+    # store_pending_receipt / present_options. Detect this and force buttons.
+    pending_ch = getattr(session, "pending_choice", None)
+    if (
+        media_type == "photo"
+        and not pending_ch
+        and response
+        and any(kw in response.lower() for kw in ("eur", "usd", "uah", "грн", "сума", "итого", "total", "загальна"))
+    ):
+        logger.warning("BUG-010: photo receipt detected but LLM skipped present_options — forcing buttons")
+        # If LLM also skipped store_pending_receipt, try to parse from response
+        if not getattr(session, "pending_receipt", None):
+            # Extract minimal receipt data from the response text
+            import re as _re_receipt
+            _amount_m = _re_receipt.search(r"(\d[\d\s,.]*\d)\s*(EUR|USD|UAH|€|\$|грн)", response, _re_receipt.IGNORECASE)
+            _merchant_m = _re_receipt.search(r"(?:Заклад|Merchant|Магазин)[:\s]*([^\n•*]+)", response, _re_receipt.IGNORECASE)
+            _date_m = _re_receipt.search(r"(\d{2,4}[-/.]\d{2}[-/.]\d{2,4})", response)
+            _amount_val = float(_amount_m.group(1).replace(" ", "").replace(",", ".")) if _amount_m else 0
+            _currency_val = (_amount_m.group(2) if _amount_m else "EUR").upper().replace("€", "EUR").replace("$", "USD")
+            _merchant_val = _merchant_m.group(1).strip().rstrip("*").strip() if _merchant_m else ""
+            _date_val = _date_m.group(1) if _date_m else ""
+            session.pending_receipt = {
+                "merchant": _merchant_val,
+                "date": _date_val,
+                "total_amount": _amount_val,
+                "currency": _currency_val,
+                "category": "Food",
+                "subcategory": "",
+                "who": session.user_name,
+                "items": [],
+                "tg_file_id": media_file_id or "",
+                "ai_summary": response[:500],
+                "raw_text": response[:1000],
+            }
+            logger.info(f"BUG-010: synthetic pending_receipt: {_amount_val} {_currency_val}, {_merchant_val}")
+        # Force the standard T-076 buttons
+        _t076_labels = {
+            "ru": ("✅ Да. Общий счёт", "✅ Да. Личный счёт", "✏️ Исправить", "❌ Отменить"),
+            "uk": ("✅ Так. Загальний рахунок", "✅ Так. Особистий рахунок", "✏️ Виправити", "❌ Скасувати"),
+            "en": ("✅ Yes. Joint account", "✅ Yes. Personal account", "✏️ Edit", "❌ Cancel"),
+            "it": ("✅ Sì. Conto comune", "✅ Sì. Conto personale", "✏️ Correggere", "❌ Annulla"),
+        }
+        _labels = _t076_labels.get(lang, _t076_labels["ru"])
+        pending_ch = [
+            {"label": _labels[0], "value": "yes_joint"},
+            {"label": _labels[1], "value": "yes_personal"},
+            {"label": _labels[2], "value": "correct"},
+            {"label": _labels[3], "value": "cancel"},
+        ]
+        session.pending_choice = pending_ch  # will be consumed below
+
     # ── Post-response inline buttons ──────────────────────────────────────
-    # Check pending_choice from agent's present_options tool call first
     pending_ch = getattr(session, "pending_choice", None)
     pd = getattr(session, "pending_delete", None)
     la = session.last_action
