@@ -824,9 +824,12 @@ async def get_parsed_data(
     user_id: int,
     data_type: Optional[str] = None,
     limit: int = 20,
+    envelope_id: Optional[str] = None,
 ) -> list[dict]:
     """
-    Retrieve recent parsed data rows for a user.
+    Retrieve recent parsed data rows.
+    T-137: If envelope_id is provided, returns all receipts in that envelope
+    (shared visibility for all participants). Otherwise filters by user_id.
     Optionally filter by data_type (receipt / voice / image / document).
     """
     pool = await get_pool()
@@ -835,7 +838,26 @@ async def get_parsed_data(
     try:
         import json as _json
         async with pool.acquire() as conn:
-            if data_type:
+            # T-137: envelope-scoped query for shared envelopes
+            if envelope_id and data_type:
+                rows = await conn.fetch(
+                    """SELECT id, ts, data_type, source_msg_id, envelope_id,
+                              payload_json, transaction_id
+                       FROM parsed_data
+                       WHERE envelope_id=$1 AND data_type=$2
+                       ORDER BY ts DESC LIMIT $3""",
+                    envelope_id, data_type, limit,
+                )
+            elif envelope_id:
+                rows = await conn.fetch(
+                    """SELECT id, ts, data_type, source_msg_id, envelope_id,
+                              payload_json, transaction_id
+                       FROM parsed_data
+                       WHERE envelope_id=$1
+                       ORDER BY ts DESC LIMIT $2""",
+                    envelope_id, limit,
+                )
+            elif data_type:
                 rows = await conn.fetch(
                     """SELECT id, ts, data_type, source_msg_id, envelope_id,
                               payload_json, transaction_id

@@ -507,8 +507,9 @@ TOOLS = [
             "Retrieve itemized receipt data from PostgreSQL parsed_data. "
             "Use when user asks for a detailed receipt/check: "
             "'дай чек', 'покажи чек', 'детальный чек', 'що в чеку', 'receipt details'. "
-            "Can search by transaction_id or by merchant name. "
-            "Returns items, amounts, merchant, date, and AI summary."
+            "Can search by transaction_id, merchant name, or date. "
+            "Returns items, amounts, merchant, date, and AI summary. "
+            "Receipts are shared within the envelope — all participants can see them."
         ),
         "input_schema": {
             "type": "object",
@@ -520,6 +521,10 @@ TOOLS = [
                 "merchant": {
                     "type": "string",
                     "description": "Search by merchant name (substring match)",
+                },
+                "date": {
+                    "type": "string",
+                    "description": "Filter by date (YYYY-MM-DD). Matches receipt date field.",
                 },
                 "limit": {
                     "type": "integer",
@@ -1435,21 +1440,27 @@ class ApolioAgent:
 
         tx_id = params.get("transaction_id", "")
         merchant_q = params.get("merchant", "")
+        date_q = params.get("date", "")
         limit = params.get("limit", 5)
 
         try:
+            # T-137: query by envelope_id so all participants see shared receipts
             rows = await _db.get_parsed_data(
                 user_id=session.user_id,
                 data_type="receipt",
                 limit=50,  # fetch more, then filter
+                envelope_id=session.current_envelope_id or "",
             )
 
             if tx_id:
                 rows = [r for r in rows if r.get("transaction_id") == tx_id]
-            elif merchant_q:
+            if merchant_q:
                 merchant_lower = merchant_q.lower()
                 rows = [r for r in rows
                         if merchant_lower in (r.get("payload", {}).get("merchant", "") or "").lower()]
+            if date_q:
+                rows = [r for r in rows
+                        if (r.get("payload", {}).get("date", "") or "").startswith(date_q)]
 
             rows = rows[-limit:]
 
