@@ -414,7 +414,7 @@ TOOLS = [
         "name": "get_contribution_status",
         "description": (
             "Show per-user contribution and expense split status for the current or given month. "
-            "Use when user asks: 'кто сколько внёс?', 'сколько должна Marina?', "
+            "Use when user asks: 'кто сколько внёс?', 'сколько должна Maryna?', "
             "'как распределились расходы?', 'покажи расчёт 50/50', 'contribution status', "
             "'settlement', 'кто в плюсе / минусе?'. "
             "Returns: total contributions per user, total expenses, threshold, "

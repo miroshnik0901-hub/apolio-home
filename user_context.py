@@ -55,7 +55,7 @@ class UserContextManager:
                 now = datetime.now(timezone.utc).isoformat()
                 defaults = [
                     ["360466156", KEY_PRIMARY_CURRENCY, "EUR", now],
-                    ["360466156", KEY_HOUSEHOLD, "Mikhail, Marina", now],
+                    ["360466156", KEY_HOUSEHOLD, "Mikhail, Maryna", now],
                     ["360466156", KEY_COUNTRIES, "IT, PL, UA", now],
                 ]
                 ws.append_rows(defaults)

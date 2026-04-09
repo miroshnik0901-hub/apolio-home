@@ -118,8 +118,8 @@ def test_fallback_checks_errors():
 @test("1.6 setup_sheets_v2.py has no invented account names")
 def test_no_invented_accounts():
     src = (ROOT / "setup_sheets_v2.py").read_text()
-    invented = ["Wise Mikhail", "Wise Family", "Wise Marina", "Cash Mikhail",
-                "Cash Marina", "Revolut", "Monobank"]
+    invented = ["Wise Mikhail", "Wise Family", "Wise Marina", "Wise Maryna",
+                "Cash Mikhail", "Cash Marina", "Cash Maryna", "Revolut", "Monobank"]
     found = [name for name in invented if name in src]
     assert not found, f"Invented account names found in setup script: {found}"
     return True
@@ -466,6 +466,70 @@ def test_txn_button_labels_disambiguation():
     # The button label construction must reference Note and Date fields
     assert 'tx.get("Note"' in src and 'date_short' in src, \
         "cb_transactions delete buttons must include date and note for disambiguation (T-097)"
+    return True
+
+
+# ── 2.11  _was_init not referenced across elif branches ──────────────────────
+@test("2.11 init_config does not reference _was_init from config_view")
+def test_init_config_no_was_init():
+    src = (ROOT / "bot.py").read_text()
+    idx = src.find('elif command == "init_config"')
+    assert idx > 0, "init_config block not found"
+    end_idx = src.find("elif command ==", idx + 10)
+    if end_idx == -1:
+        end_idx = len(src)
+    block = src[idx:end_idx]
+    assert "_was_init" not in block, "_was_init still referenced in init_config block"
+    return True
+
+
+# ── 2.12  Reply keyboard buttons bypass pending_prompt ───────────────────────
+@test("2.12 Reply keyboard buttons checked before pending_prompt")
+def test_kb_buttons_before_pending():
+    src = (ROOT / "bot.py").read_text()
+    kb_check_pos = src.find("KB_TEXT_TO_ACTION.get(text)")
+    pending_pos = src.find("pending = getattr(session, \"pending_prompt\"")
+    assert kb_check_pos > 0, "KB_TEXT_TO_ACTION check not found"
+    assert pending_pos > 0, "pending_prompt handler not found"
+    assert kb_check_pos < pending_pos, "KB button check must come BEFORE pending_prompt handler"
+    return True
+
+
+# ── 2.13  Anti-fabrication rules in prompt ───────────────────────────────────
+@test("2.13 Prompt has anti-fabrication rules (BUG-001)")
+def test_prompt_anti_fabrication():
+    src = (ROOT / "ApolioHome_Prompt.md").read_text()
+    assert "ANTI-FABRICATION" in src, "Missing ANTI-FABRICATION section in prompt"
+    assert "NEVER fabricate" in src, "Missing NEVER fabricate rule"
+    assert "NEVER invent file IDs" in src, "Missing NEVER invent file IDs rule"
+    return True
+
+
+# ── 2.14  Canonical name is Maryna, not Marina ──────────────────────────────
+@test("2.14 Prompt uses Maryna not Marina")
+def test_prompt_maryna_not_marina():
+    src = (ROOT / "ApolioHome_Prompt.md").read_text()
+    assert "Maryna" in src, "Prompt should use canonical name 'Maryna'"
+    who_section = src[:src.find("## CORE DECISION")]
+    assert "Marina" not in who_section, "WHO YOU ARE section still says 'Marina' instead of 'Maryna'"
+    return True
+
+
+# ── 2.15  Sheets caching for rate limit protection ──────────────────────────
+@test("2.15 SheetsClient caches admin reads (429 protection)")
+def test_sheets_caching():
+    src = (ROOT / "sheets.py").read_text()
+    # Find the SheetsClient class (the main client, not AdminSheets)
+    sc_start = src.find("class SheetsClient")
+    assert sc_start > 0, "SheetsClient class not found"
+    sc_src = src[sc_start:]
+    for method in ["get_envelopes", "get_users", "read_config", "get_dashboard_config"]:
+        method_start = sc_src.find(f"def {method}(self)")
+        assert method_start > 0, f"SheetsClient.{method} not found"
+        next_def = sc_src.find("\n    def ", method_start + 10)
+        block = sc_src[method_start:next_def] if next_def > 0 else sc_src[method_start:]
+        assert "_cache.get" in block, f"SheetsClient.{method} missing cache read"
+        assert "_cache.set" in block, f"SheetsClient.{method} missing cache write"
     return True
 
 

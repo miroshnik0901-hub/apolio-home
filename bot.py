@@ -1847,7 +1847,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "<b>Записать расход:</b>\n"
         "› кофе 3.50\n"
         "› продукты 85 EUR Esselunga\n"
-        "› Marina купила одежду 120\n"
+        "› Maryna купила одежду 120\n"
         "› oggi ho speso 45 euro\n\n"
         "<b>Доходы и переводы:</b>\n"
         "› получил зарплату 3000 EUR\n"
@@ -2236,8 +2236,6 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             lines.append(f"⏭ <b>Пропущено (уже есть):</b> {', '.join(skipped)}")
                         lines.append("")
                         lines.append("Откройте Config вкладку конверта чтобы проверить.")
-                        if _was_init:
-                            lines.insert(2, f"🔧 <i>Авто-инициализировано: {', '.join(_init_result['written'])}</i>")
                     html = "\n".join(lines)
                 except Exception as e:
                     html = f"❌ Ошибка: {e}"
@@ -2757,6 +2755,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if msg.text:
         text = msg.text.strip()
+
+        # ── Reply keyboard buttons ALWAYS take priority (even over pending prompts) ──
+        # This prevents "☰ Ще", "💰 Бюджет" etc. from being swallowed by pending_prompt
+        _is_kb_button = bool(i18n.KB_TEXT_TO_ACTION.get(text))
+        _is_menu_trigger = text.strip().lower() in {"☰ меню", "≡ меню", "☰ menu", "меню", "/menu"}
+        if _is_kb_button or _is_menu_trigger:
+            # Clear pending prompt — user switched context via keyboard
+            if getattr(session, "pending_prompt", None):
+                session.pending_prompt = None
+            # Fall through to keyboard shortcut / menu intercept blocks below
 
         # ── Pending free-text prompt handler ───────────────────────────────
         pending = getattr(session, "pending_prompt", None)

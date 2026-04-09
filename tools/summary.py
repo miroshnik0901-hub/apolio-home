@@ -39,7 +39,7 @@ async def tool_get_summary(params: dict, session: SessionContext,
                      if str(r.get("Date", "")).startswith(period)
                      and r.get("Type") == "expense"]
 
-    # Load known users for who-normalization (fixes "Maslo" → "Marina" etc.)
+    # Load known users for who-normalization (fixes "Maslo" → "Maryna" etc.)
     try:
         ref = sheets.get_reference_data(file_id)
         known_who = ref.get("who", [])

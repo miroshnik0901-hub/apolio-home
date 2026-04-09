@@ -126,7 +126,7 @@ DEFAULT_MENU: dict[str, dict] = {
         "label": "👤 По кому...", "parent": "transactions",
         "type": "free_text", "command": "",
         "params": {
-            "prompt": "Чьи расходы показать?\nВведите имя: Mikhail, Marina, …",
+            "prompt": "Чьи расходы показать?\nВведите имя: Mikhail, Maryna, …",
             "pending_key": "transactions:who",
         },
         "order": 6, "roles": [],
@@ -231,7 +231,7 @@ _DEFAULT_ROWS = [
     ("txn_month",     "📆 За этот месяц",         "transactions", "cmd",       "transactions",    '{"limit":50,"period":"current"}',                                                            3, "TRUE", ""),
     ("txn_search",    "🔍 Поиск...",              "transactions", "free_text", "",                '{"prompt":"Введите поисковой запрос:\\nПо категории, сумме или дате","pending_key":"transactions:search"}', 4, "TRUE", ""),
     ("txn_category",  "🏷 По категории...",       "transactions", "free_text", "",                '{"prompt":"Введите категорию:\\nНапример: Продукты, Ресторан, Транспорт","pending_key":"transactions:category"}', 5, "TRUE", ""),
-    ("txn_who",       "👤 По кому...",            "transactions", "free_text", "",                '{"prompt":"Чьи расходы?\\nВведите имя: Mikhail, Marina, ...","pending_key":"transactions:who"}',            6, "TRUE", ""),
+    ("txn_who",       "👤 По кому...",            "transactions", "free_text", "",                '{"prompt":"Чьи расходы?\\nВведите имя: Mikhail, Maryna, ...","pending_key":"transactions:who"}',            6, "TRUE", ""),
     # System submenu — user settings
     ("set_lang",         "🌍 Язык интерфейса",    "settings",     "submenu",   "",                "",                     1, "TRUE", ""),
     ("set_lang_ru",      "🇷🇺 Русский",            "set_lang",     "cmd",       "set_language",    '{"lang":"ru"}',        1, "TRUE", ""),

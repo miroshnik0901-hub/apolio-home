@@ -804,13 +804,18 @@ class SheetsClient:
         """Raw gspread Spreadsheet for the Admin file."""
         return self._admin._workbook()
 
-    # Admin pass-throughs
+    # Admin pass-throughs (with TTL cache to avoid 429 rate-limit errors)
     def get_envelopes(self) -> list:
-        return self._admin.get_envelopes()
+        cached = self._cache.get("admin_envelopes")
+        if cached is not None:
+            return cached
+        result = self._admin.get_envelopes()
+        self._cache.set("admin_envelopes", result)
+        return result
 
     def list_envelopes_with_links(self) -> list[dict]:
         """Return active envelopes with Google Sheets URLs included."""
-        envelopes = self._admin.get_envelopes()
+        envelopes = self.get_envelopes()  # uses cache
         result = []
         for e in envelopes:
             if str(e.get("Active", "TRUE")).upper() == "FALSE":
@@ -829,14 +834,25 @@ class SheetsClient:
         return result
 
     def get_users(self) -> list:
-        return self._admin.get_users()
+        cached = self._cache.get("admin_users")
+        if cached is not None:
+            return cached
+        result = self._admin.get_users()
+        self._cache.set("admin_users", result)
+        return result
 
     def read_config(self) -> dict:
         """Read global settings from Admin Config tab."""
-        return self._admin.read_config()
+        cached = self._cache.get("admin_config")
+        if cached is not None:
+            return cached
+        result = self._admin.read_config()
+        self._cache.set("admin_config", result)
+        return result
 
     def write_config(self, key: str, value: str):
         self._admin.write_config(key, value)
+        self._cache.invalidate("admin_config")
 
     def read_envelope_config(self, file_id: str) -> dict:
         """Read settings from the envelope's own Config tab.
@@ -847,8 +863,14 @@ class SheetsClient:
         """
         if not file_id:
             return {}
+        cache_key = f"env_config_{file_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
-            return self._env_sheets(file_id).read_config()
+            result = self._env_sheets(file_id).read_config()
+            self._cache.set(cache_key, result)
+            return result
         except Exception as e:
             import logging as _logging
             _logging.getLogger(__name__).warning(
@@ -922,6 +944,9 @@ class SheetsClient:
                     written.append(f"{key}={default_val}")
                     _log.info(f"[ensure_envelope_config] {envelope_id}: wrote {key}={default_val!r}")
 
+            # Invalidate envelope config cache if we wrote new keys
+            if written:
+                self._cache.invalidate(f"env_config_{file_id}")
             return {"written": written, "skipped": skipped, "error": None}
 
         except Exception as e:
@@ -929,10 +954,16 @@ class SheetsClient:
             return {"written": [], "skipped": [], "error": str(e)}
 
     def get_dashboard_config(self) -> dict:
-        return self._admin.get_dashboard_config()
+        cached = self._cache.get("admin_dashboard_config")
+        if cached is not None:
+            return cached
+        result = self._admin.get_dashboard_config()
+        self._cache.set("admin_dashboard_config", result)
+        return result
 
     def write_dashboard_config(self, key: str, value: str):
         self._admin.write_dashboard_config(key, value)
+        self._cache.invalidate("admin_dashboard_config")
 
     def register_envelope(self, envelope_id: str, name: str, file_id: str,
                           owner_id: int, settings: dict):
@@ -948,6 +979,7 @@ class SheetsClient:
             "Created_At": datetime.utcnow().isoformat(),
         }
         self._admin.register_envelope(data)
+        self._cache.invalidate("admin_envelopes")
 
     def write_audit(self, user_id: int, user_name: str, action: str,
                     envelope_id: str, details: str = ""):

@@ -186,7 +186,7 @@ def restructure_transactions(gc, service):
                       "startColumnIndex": 6, "endColumnIndex": 7},
             "rule": {
                 "condition": {"type": "ONE_OF_LIST",
-                              "values": [{"userEnteredValue": v} for v in ["Mikhail", "Marina", "Joint"]]},
+                              "values": [{"userEnteredValue": v} for v in ["Mikhail", "Maryna", "Joint"]]},
                 "showCustomUi": True,
                 "strict": False,
             },

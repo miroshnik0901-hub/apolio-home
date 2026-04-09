@@ -241,7 +241,7 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         all_txns = sheets.get_transactions(file_id)
         month_txns = [t for t in all_txns if str(t.get("Date", "")).startswith(month)]
 
-        # Load known users for who-normalization (fixes "Maslo" → "Marina" etc.)
+        # Load known users for who-normalization (fixes "Maslo" → "Maryna" etc.)
         try:
             ref = sheets.get_reference_data(file_id)
             known_who = ref.get("who", [])
