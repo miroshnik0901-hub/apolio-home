@@ -548,6 +548,37 @@ def test_sheets_caching():
     return True
 
 
+# ── 2.16  BUG-009: agent.run() crash does not leave bot silent ────────────
+@test("2.16 BUG-009: bot.py catches agent.run() exceptions")
+def test_agent_crash_handling():
+    src = (ROOT / "bot.py").read_text()
+    # Must have except clause around agent.run()
+    assert "except Exception as agent_exc" in src, "Missing except for agent.run() crash"
+    assert "agent.run() failed" in src, "Missing error log for agent crash"
+    return True
+
+
+# ── 2.17  nav:report replaced with cb_report in status inline buttons ─────
+@test("2.17 No broken nav:report callback in bot.py")
+def test_no_broken_nav_report():
+    src = (ROOT / "bot.py").read_text()
+    # nav:report should not exist — the menu tree has no "report" node ID
+    assert 'callback_data="nav:report"' not in src, \
+        'bot.py still has nav:report — should be cb_report'
+    assert 'callback_data="nav:transactions"' not in src, \
+        'bot.py still has nav:transactions — should be cb_transactions'
+    return True
+
+
+# ── 2.18  Anthropic client has timeout configured ─────────────────────────
+@test("2.18 Anthropic client timeout is set (not default 600s)")
+def test_anthropic_timeout():
+    src = (ROOT / "agent.py").read_text()
+    assert "timeout=" in src, "AsyncAnthropic missing timeout parameter"
+    return True
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Integration tests (live Sheets — skip with --no-sheets)
 # ─────────────────────────────────────────────────────────────────────────────

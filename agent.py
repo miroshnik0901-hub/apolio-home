@@ -709,7 +709,9 @@ class ApolioAgent:
     def __init__(self, sheets: SheetsClient, auth: AuthManager):
         self.sheets = sheets
         self.auth = auth
-        self.client = anthropic.AsyncAnthropic()
+        self.client = anthropic.AsyncAnthropic(
+            timeout=60.0,  # 60s per API call (default 600s is too long for Telegram)
+        )
 
     async def _build_context(self, session: SessionContext) -> dict:
         """

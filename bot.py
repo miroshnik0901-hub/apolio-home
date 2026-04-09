@@ -2013,8 +2013,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             elif command == "status":
                 html = await _build_status_html(session, lang)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="nav:report"),
-                     InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="nav:transactions")],
+                    [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="cb_report"),
+                     InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
                 )
             elif command == "report":
                 period = params.get("period", "current")
@@ -3123,6 +3123,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception:
             pass
+    except Exception as agent_exc:
+        # BUG-009: agent.run() crash (API timeout, network error, etc.)
+        # must not leave the user staring at "думаю..." forever.
+        logger.error(f"agent.run() failed: {agent_exc}", exc_info=True)
+        response = "⚠️ Щось пішло не так. Спробуй ще раз."
+        # If present_options was already called before the crash,
+        # pending_choice is set — we'll still show the buttons below.
     finally:
         typing_task.cancel()
         # Remove the thinking indicator
