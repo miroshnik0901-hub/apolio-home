@@ -152,6 +152,30 @@ TOOLS = [
         },
     },
     {
+        "name": "enrich_transaction",
+        "description": (
+            "Enrich an existing transaction with receipt data. "
+            "Use when a receipt photo matches a transaction that already exists "
+            "(duplicate detected by add_transaction). Instead of creating a new "
+            "transaction, update the existing one with receipt details (note/merchant, "
+            "category, subcategory, who, account). "
+            "Call save_receipt afterwards with this tx_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["tx_id"],
+            "properties": {
+                "tx_id":        {"type": "string", "description": "ID of existing transaction to enrich"},
+                "note":         {"type": "string", "description": "Merchant/note from receipt"},
+                "category":     {"type": "string"},
+                "subcategory":  {"type": "string"},
+                "who":          {"type": "string"},
+                "account":      {"type": "string"},
+                "envelope_id":  {"type": "string"},
+            },
+        },
+    },
+    {
         "name": "delete_transaction",
         "description": (
             "Soft-delete a single transaction by tx_id (marks Deleted=TRUE, row stays in sheet). "
@@ -1006,7 +1030,7 @@ class ApolioAgent:
                              session: SessionContext) -> Any:
         """Dispatch tool call to the appropriate handler."""
         from tools.transactions import (
-            tool_add_transaction, tool_edit_transaction,
+            tool_add_transaction, tool_edit_transaction, tool_enrich_transaction,
             tool_delete_transaction, tool_delete_transaction_rows,
             tool_sort_transactions, tool_find_transactions,
         )
@@ -1023,6 +1047,7 @@ class ApolioAgent:
             "list_envelopes":         tool_list_envelopes,
             "add_transaction":        tool_add_transaction,
             "edit_transaction":       tool_edit_transaction,
+            "enrich_transaction":    tool_enrich_transaction,
             "delete_transaction":     tool_delete_transaction,
             "delete_transaction_rows": tool_delete_transaction_rows,
             "sort_transactions":      tool_sort_transactions,

@@ -308,6 +308,65 @@ async def tool_edit_transaction(params: dict, session: SessionContext,
     return {"status": "ok", "message": f"✓ Updated {field} → {new_value} ({tx_id})"}
 
 
+async def tool_enrich_transaction(params: dict, session: SessionContext,
+                                   sheets: SheetsClient, auth: AuthManager) -> Any:
+    """T-134: Enrich an existing transaction with receipt data.
+    Updates multiple fields at once (note, category, subcategory, etc.)
+    without creating a duplicate transaction."""
+    if not auth.can_write(session.user_id):
+        return {"error": "Permission denied."}
+
+    tx_id = params.get("tx_id", "")
+    if not tx_id:
+        return {"error": "tx_id is required."}
+
+    envelope_id = params.get("envelope_id") or session.current_envelope_id
+    envelopes = sheets.get_envelopes()
+    file_id = None
+    for e in envelopes:
+        if e.get("ID") == envelope_id:
+            file_id = e["file_id"]
+            break
+    if not file_id:
+        return {"error": "Envelope not found."}
+
+    # Fields that can be enriched from receipt data
+    updatable = {
+        "note": params.get("note"),
+        "category": params.get("category"),
+        "subcategory": params.get("subcategory"),
+        "who": params.get("who"),
+        "account": params.get("account"),
+    }
+
+    updated = []
+    # Column name mapping: field → Transactions sheet column header
+    col_map = {
+        "note": "Note",
+        "category": "Category",
+        "subcategory": "Subcategory",
+        "who": "Who",
+        "account": "Account",
+    }
+
+    for field, value in updatable.items():
+        if value is not None and value != "":
+            try:
+                sheets.update_transaction_field(file_id, tx_id, col_map[field], value)
+                updated.append(f"{field}={value}")
+            except Exception as e:
+                logger.warning(f"enrich_transaction: failed to update {field}: {e}")
+
+    if not updated:
+        return {"error": "No fields to update."}
+
+    return {
+        "status": "ok",
+        "message": f"✓ Enriched {tx_id}: {', '.join(updated)}",
+        "tx_id": tx_id,
+    }
+
+
 async def tool_delete_transaction(params: dict, session: SessionContext,
                                    sheets: SheetsClient, auth: AuthManager) -> Any:
     import db as _db

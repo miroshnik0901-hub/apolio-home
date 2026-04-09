@@ -66,11 +66,17 @@ When user responds:
 When user confirms (`yes_joint` or `yes_personal`): the receipt data will be in your context under
 "PENDING RECEIPT". Follow these steps IN ORDER. Do NOT skip any step.
 1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT and Account = "Joint" or "Personal". Do NOT ask "what did you spend on?"
-2. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
+2. **If `add_transaction` returns `confirm_required` with `type: duplicate`:**
+   - This means a matching transaction already exists. Do NOT create a new one.
+   - Use `enrich_transaction` with the `existing_tx_id` from the duplicate response.
+   - Pass receipt details (note=merchant, category, subcategory, who, account) to enrich the existing transaction.
+   - Then call `save_receipt` with transaction_id = existing_tx_id.
+   - Show confirmation: "Enriched existing transaction" (in user's language).
+3. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
    - transaction_id = tx_id from step 1
    - merchant, date, total_amount, currency, items, ai_summary, raw_text — all from PENDING RECEIPT
    This saves itemized receipt details to the Receipts Google Sheet. THIS STEP IS MANDATORY.
-3. Show confirmation to user.
+4. Show confirmation to user.
 
 ---
 

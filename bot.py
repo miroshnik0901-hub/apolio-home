@@ -1028,14 +1028,17 @@ def _require_user(update: Update):
     # Load saved user preferences once per session (language + active envelope)
     if getattr(session, "_prefs_loaded", False):
         return tg_user, session
+
+    # T-134 fix: detect Telegram language once, use as fallback for all paths
+    tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
+
+    saved_lang = None
     try:
         from user_context import UserContextManager
         ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
 
-        # Language preference
+        # Language preference (saved by user explicitly)
         saved_lang = ctx_mgr.get(user.id, "language")
-        if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
-            session.lang = saved_lang
 
         # Active envelope preference
         saved_env = ctx_mgr.get(user.id, "active_envelope")
@@ -1047,18 +1050,17 @@ def _require_user(update: Update):
                     session.current_envelope_id = saved_env
             except Exception:
                 pass  # leave default
-
-        session._prefs_loaded = True
-        return tg_user, session
     except Exception as e:
         logger.debug(f"Could not load user prefs: {e}")
 
-    # Fallback: Language detection from Telegram
-    tg_lang = i18n.get_lang(getattr(user, "language_code", None) or "")
-    if tg_lang in ("uk", "it"):
+    # T-134: Language priority: saved preference > Telegram language_code > default
+    if saved_lang and saved_lang in i18n.SUPPORTED_LANGS:
+        session.lang = saved_lang
+    elif tg_lang in i18n.SUPPORTED_LANGS:
         session.lang = tg_lang
-    elif not getattr(session, "lang", "") or session.lang == "en":
-        session.lang = "ru"
+    # else: keep session default ("ru")
+
+    session._prefs_loaded = True
     return tg_user, session
 
 
@@ -2649,7 +2651,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
             try:
                 await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-                from tools.transactions import tool_add_transaction
+                from tools.transactions import tool_add_transaction, tool_enrich_transaction
                 add_params = {
                     "amount": receipt.get("total_amount", 0),
                     "currency": receipt.get("currency", "EUR"),
@@ -2660,9 +2662,32 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "note": receipt.get("merchant", ""),
                     "account": account,
                     "type": "expense",
-                    "force_add": True,  # skip duplicate check for confirmed receipts
+                    # T-134: first try WITHOUT force_add to detect duplicates
                 }
                 result = await tool_add_transaction(add_params, session, sheets, auth)
+
+                # T-134: if duplicate found, enrich existing transaction instead
+                if (isinstance(result, dict)
+                        and result.get("status") == "confirm_required"
+                        and result.get("type") == "duplicate"):
+                    existing_tx_id = result.get("existing_tx_id", "")
+                    if existing_tx_id:
+                        enrich_result = await tool_enrich_transaction(
+                            {
+                                "tx_id": existing_tx_id,
+                                "note": receipt.get("merchant", ""),
+                                "category": receipt.get("category", ""),
+                                "subcategory": receipt.get("subcategory", ""),
+                                "who": receipt.get("who", ""),
+                                "account": account,
+                            },
+                            session, sheets, auth,
+                        )
+                        result = enrich_result
+                    else:
+                        # No existing tx_id → force add
+                        add_params["force_add"] = True
+                        result = await tool_add_transaction(add_params, session, sheets, auth)
 
                 if isinstance(result, dict) and "error" in result:
                     await ctx.bot.send_message(
@@ -2721,6 +2746,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
 
                 session.pending_receipt = None
+
+                # T-134 fix: show Who and Account in confirmation
+                who_name = add_params.get("who", session.user_name)
+                account_label = i18n.ts("bal_joint_topup", lang) if account == "Joint" else i18n.ts("bal_personal_exp", lang)
+                confirm_line = f"👤 {who_name} · 📂 {account_label}"
+                msg = f"{msg}\n{confirm_line}" if msg else confirm_line
 
                 # T-128: append balance summary after add
                 bal_line = _quick_balance_line(session, lang)
