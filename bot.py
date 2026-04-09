@@ -1060,6 +1060,13 @@ def _require_user(update: Update):
         session.lang = tg_lang
     # else: keep session default ("ru")
 
+    # T-136: If current envelope isn't accessible to this user, fall back
+    # to the first envelope they're allowed to access.
+    if not auth.can_access_envelope(user.id, session.current_envelope_id):
+        allowed = tg_user.get("envelopes", [])
+        if allowed:
+            session.current_envelope_id = allowed[0]
+
     session._prefs_loaded = True
     return tg_user, session
 

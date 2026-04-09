@@ -66,6 +66,21 @@ class AuthManager:
     def _reload(self):
         try:
             users = self.sheets.get_users()
+
+            # T-136: Build name→ID mapping so Users sheet can store
+            # either envelope IDs or Names — both will resolve correctly.
+            name_to_id: dict[str, str] = {}
+            try:
+                for env in self.sheets.get_envelopes():
+                    eid = env.get("ID", "")
+                    ename = env.get("Name", "")
+                    if eid:
+                        name_to_id[eid.lower()] = eid          # ID→ID (already valid)
+                        if ename:
+                            name_to_id[ename.lower()] = eid     # Name→ID
+            except Exception:
+                pass  # envelope lookup is best-effort
+
             new_cache: dict[int, dict] = {}
             for u in users:
                 try:
@@ -81,7 +96,9 @@ class AuthManager:
                 # Skip suspended users
                 if u.get("status", "active").lower() == "suspended":
                     continue
-                envelopes = [e.strip() for e in str(u.get("envelopes", "")).split(",") if e.strip()]
+                # T-136: resolve envelope names/IDs to canonical IDs
+                raw_envs = [e.strip() for e in str(u.get("envelopes", "")).split(",") if e.strip()]
+                envelopes = [name_to_id.get(e.lower(), e) for e in raw_envs]
                 new_cache[tid] = {
                     "id": tid,
                     "name": u.get("name", ""),
