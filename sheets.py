@@ -78,12 +78,20 @@ class AdminSheets:
 
     def write_config(self, key: str, value: str):
         ws = self._ws("Config")
+        # T-120: write numeric values as numbers (not text with ' prefix)
+        write_val: str | int | float = value
+        if isinstance(value, str):
+            stripped = value.strip()
+            try:
+                write_val = int(stripped) if stripped.isdigit() or (stripped.startswith("-") and stripped[1:].isdigit()) else float(stripped) if "." in stripped else value
+            except (ValueError, IndexError):
+                write_val = value
         rows = ws.get_all_values()
         for i, row in enumerate(rows):
             if row and row[0] == key:
-                ws.update_cell(i + 1, 2, value)
+                ws.update_cell(i + 1, 2, write_val)
                 return
-        ws.append_row([key, value])
+        ws.append_row([key, write_val])
 
     # ── Dashboard config ──────────────────────────────────────────────────
 
@@ -850,7 +858,7 @@ class SheetsClient:
 
             DEFAULTS = {
                 "currency":    env.get("Currency", "EUR"),
-                "monthly_cap": str(env.get("Monthly_Cap", "0") or "0"),
+                "monthly_cap": str(int(float(env.get("Monthly_Cap", 0) or 0))),
                 "split_rule":  str(env.get("Split_Rule", "50_50") or "50_50"),
                 "split_users": split_users_default,
                 "base_contributor": active_users[0] if active_users else "",

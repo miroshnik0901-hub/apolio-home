@@ -148,13 +148,18 @@ def test_prompt_has_t076_buttons():
     return True
 
 
-@test("1.9 ApolioHome_Prompt.md delete_transaction uses deterministic flow (BUG-008)")
+@test("1.9 ApolioHome_Prompt.md delete_transaction uses deterministic flow (BUG-008/011)")
 def test_prompt_delete_check():
     src = (ROOT / "ApolioHome_Prompt.md").read_text()
     assert "confirm_delete" in src, \
         "Prompt must instruct agent to use confirm_delete button value"
     assert "tx_id" in src and "present_options" in src, \
         "Prompt must instruct agent to pass tx_id to present_options for delete"
+    # BUG-011: must require find_transactions before delete
+    assert "find_transactions" in src.split("delete_transaction")[1][:500], \
+        "Prompt must require find_transactions before delete (BUG-011)"
+    assert "NEVER use a tx_id from conversation history" in src, \
+        "Prompt must warn against using tx_id from conversation history"
     return True
 
 

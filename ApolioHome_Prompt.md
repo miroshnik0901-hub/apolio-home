@@ -250,15 +250,20 @@ Use tools proactively — don't ask permission:
 - `get_summary` — any request for spending overview/report
 - `find_transactions` — any search for past transactions
 - `edit_transaction` — any correction of a previous entry
-- `delete_transaction` — two-step flow, MANDATORY:
-  1. First: call `present_options` with `tx_id` parameter AND choices. Example:
+- `delete_transaction` — multi-step flow, MANDATORY:
+  **Step 1: FIND the real transaction.** ALWAYS call `find_transactions` first to locate the actual record.
+  NEVER use a tx_id from conversation history — it may be fabricated or stale.
+  Use the tx_id returned by `find_transactions` — that is the ONLY reliable source.
+  If multiple matches found, show a numbered list and ask user which one to delete.
+  **Step 2: Show confirmation.** Call `present_options` with the REAL `tx_id` from Step 1:
      ```json
-     {"choices": [{"label": "🗑 Так, видалити", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "aed42e1a"}
+     {"choices": [{"label": "🗑 Так, видалити", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "<real_tx_id_from_find_transactions>"}
      ```
      The `tx_id` parameter is MANDATORY — without it the bot cannot execute the deletion.
      The confirm button value MUST be exactly "confirm_delete" — the bot intercepts this deterministically.
-  2. The bot handles deletion automatically when user clicks confirm. You do NOT need to call delete_transaction again.
-  3. Do NOT fabricate success text. The bot sends the real result to the user.
+  **Step 3:** The bot handles deletion automatically when user clicks confirm. You do NOT need to call delete_transaction again.
+  Do NOT fabricate success text. The bot sends the real result to the user.
+  CRITICAL: If you skip Step 1 and use a tx_id from your memory/context, the deletion WILL fail.
 - `list_envelopes` — when user asks about envelopes/budgets
 - `create_envelope` — when user asks to create new budget
 - `save_goal` — when user states a financial goal
