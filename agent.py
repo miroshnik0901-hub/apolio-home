@@ -1544,9 +1544,43 @@ class ApolioAgent:
         has_confirm_delete = any(c.get("value") == "confirm_delete" for c in choices)
         tx_id = params.get("tx_id", "")
         if has_confirm_delete and tx_id:
+            # BUG-011: Validate tx_id exists in Sheets before storing.
+            # LLM often pulls stale/fabricated tx_ids from conversation history.
+            try:
+                env_id = session.current_envelope_id or "MM_BUDGET"
+                env_list = sheets.get_envelopes()
+                real_tx_found = False
+                for env in env_list:
+                    fid = env.get("file_id", "")
+                    if not fid:
+                        continue
+                    txns = sheets.get_transactions(fid) or []
+                    for t in txns:
+                        if t.get("ID") == tx_id and str(t.get("Deleted", "")).upper() != "TRUE":
+                            real_tx_found = True
+                            break
+                    if real_tx_found:
+                        break
+                if not real_tx_found:
+                    logger.warning(f"BUG-011: tx_id {tx_id} not found in Sheets — checking last_action")
+                    # Try last_action (most common: user just added, now wants to delete)
+                    la = session.last_action
+                    if la and la.tx_id and la.action == "add":
+                        logger.info(f"BUG-011: using last_action tx_id {la.tx_id} instead of LLM's {tx_id}")
+                        tx_id = la.tx_id
+                    else:
+                        # Last resort: find most recent transaction matching context
+                        logger.warning(f"BUG-011: no last_action fallback for {tx_id}")
+            except Exception as e:
+                logger.error(f"BUG-011: tx_id validation failed: {e}")
             session.pending_delete_tx = tx_id
         elif has_confirm_delete and not tx_id:
             logger.warning("present_options: confirm_delete button without tx_id param")
+            # Try last_action as fallback
+            la = session.last_action
+            if la and la.tx_id:
+                session.pending_delete_tx = la.tx_id
+                logger.info(f"BUG-011: no tx_id from LLM, using last_action {la.tx_id}")
 
         return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}
 

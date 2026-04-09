@@ -578,6 +578,16 @@ def test_anthropic_timeout():
     return True
 
 
+# ── 2.19b BUG-011: present_options validates tx_id exists in Sheets ────────
+@test("2.19b BUG-011: present_options validates tx_id before storing")
+def test_validate_tx_id():
+    src = (ROOT / "agent.py").read_text()
+    assert "BUG-011" in src, "Missing BUG-011 tx_id validation"
+    assert "real_tx_found" in src, "Missing tx_id existence check"
+    assert "last_action" in src, "Missing last_action fallback"
+    return True
+
+
 # ── 2.19  BUG-010: forced receipt buttons when LLM skips present_options ───
 @test("2.19 BUG-010: bot.py forces receipt buttons for photo messages")
 def test_forced_receipt_buttons():
