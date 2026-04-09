@@ -530,14 +530,14 @@ class EnvelopeSheets:
     def update_dashboard(self, snap: dict, contrib_snap: dict = None,
                           contrib_history: list = None) -> None:
         """
-        Overwrite the Dashboard tab with budget snapshot, current month contribution
-        table, and multi-month contribution history.
+        Dashboard v2 — structured key-value format.
+        Both humans (Google Sheets) and bot (get_dashboard_snapshot) can read it.
 
-        Args:
-            snap            = compute_snapshot() result from intelligence.py
-            contrib_snap    = compute_contribution_status() for current month (optional)
-            contrib_history = list of compute_contribution_status() snapshots,
-                              one per month, oldest first (from compute_contribution_history)
+        Layout:
+          Section A (rows 1-12):  SNAPSHOT — key-value pairs
+          Section B (rows 14+):   USER_BALANCE — table with headers
+          Section C (rows after): CATEGORIES — table with headers
+          Section D (rows after): HISTORY — monthly table
         """
         import logging as _logging
         _log = _logging.getLogger(__name__)
@@ -552,185 +552,107 @@ class EnvelopeSheets:
             pct = snap.get("pct_used", 0)
             cur = snap.get("currency", "EUR")
             pace = snap.get("pace_status", "")
-            pace_label = {
-                "on_track": "✅ В норме",
-                "over_pace": "⚠️ Превышает темп",
-                "under_pace": "📉 Ниже темпа",
-            }.get(pace, "")
+            days_left = snap.get("days_left", 0)
+            daily_avg = snap.get("daily_avg", 0)
+            daily_budget = remaining / days_left if days_left > 0 else 0
 
             rows = []
 
-            # ── Header ───────────────────────────────────────────────────
-            rows.append(["📊 APOLIO HOME — MM Budget", "", "", "", ""])
-            rows.append(["", "", "", "", ""])
-            rows.append([f"Дашборд за {month}", "", "", "", ""])
+            # ── Section A: SNAPSHOT (key-value) ──────────────────────────
+            rows.append(["[SNAPSHOT]", "", "", "", ""])
+            rows.append(["month", month, "", "", ""])
+            rows.append(["budget", f"{cap:.2f}", "", "", ""])
+            rows.append(["spent", f"{spent:.2f}", "", "", ""])
+            rows.append(["remaining", f"{remaining:.2f}", "", "", ""])
+            rows.append(["pct_used", f"{pct:.1f}", "", "", ""])
+            rows.append(["pace", pace or "unknown", "", "", ""])
+            rows.append(["currency", cur, "", "", ""])
+            rows.append(["days_left", str(days_left), "", "", ""])
+            rows.append(["daily_avg", f"{daily_avg:.2f}", "", "", ""])
+            rows.append(["daily_budget", f"{daily_budget:.2f}", "", "", ""])
+            rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Budget summary (current month) ───────────────────────────
-            rows.append(["Месяц:", month, "", "", ""])
-            rows.append(["Бюджет:", f"{cap:,.2f} {cur}", "", "", ""])
-            rows.append(["Расходы:", f"{spent:,.2f} {cur}", "", "", ""])
-            rows.append(["Остаток:", f"{remaining:,.2f} {cur}", "", "", ""])
-            rows.append(["Использовано:", f"{pct:.1f}%", "", "", ""])
-            if pace_label:
-                rows.append(["Темп:", pace_label, "", "", ""])
-            rows.append(["", "", "", "", ""])
-
-            # ── Current month contribution table ─────────────────────────
+            # ── Section B: USER_BALANCE ──────────────────────────────────
+            rows.append(["[USER_BALANCE]", "", "", "", ""])
             if contrib_snap and contrib_snap.get("status") == "ok":
-                rows.append(["━━━ Взносы — текущий месяц ━━━", "", "", "", ""])
-                rows.append([
-                    "Порог (базовый взнос):",
-                    f"{contrib_snap['threshold']:,.2f} {cur}",
-                    "", "", "",
-                ])
-                rows.append([
-                    "Правило сплита:",
-                    contrib_snap.get("split_rule", "50_50").replace("_", "/"),
-                    "", "", "",
-                ])
-                rows.append(["", "", "", "", ""])
-                rows.append(["Пользователь", "Взнос", "Доля расходов", "Баланс", "Статус"])
-
+                rows.append(["split_rule", contrib_snap.get("split_rule", ""), "", "", ""])
+                rows.append(["threshold", f"{contrib_snap.get('threshold', 0):.2f}", "", "", ""])
+                rows.append(["User", "Contributed", "Share", "Balance", "Status"])
                 for u in contrib_snap.get("split_users", []):
                     contributed = float(contrib_snap.get("contributions", {}).get(u, 0))
                     share = float(contrib_snap.get("user_shares", {}).get(u, 0))
                     balance = float(contrib_snap.get("balances", {}).get(u, 0))
-                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
-                    rows.append([
-                        u,
-                        f"{contributed:,.2f} {cur}",
-                        f"{share:,.2f} {cur}",
-                        f"{balance:+,.2f} {cur}",
-                        status,
-                    ])
+                    status = "surplus" if balance >= 0 else "deficit"
+                    rows.append([u, f"{contributed:.2f}", f"{share:.2f}", f"{balance:+.2f}", status])
+            else:
+                rows.append(["(solo budget — no split)", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
 
-                excess = contrib_snap.get("excess_amount", 0)
-                if excess > 0:
-                    rows.append(["", "", "", "", ""])
-                    rows.append([
-                        "Превышение порога:",
-                        f"{excess:,.2f} {cur}",
-                        f"→ по {contrib_snap.get('excess_per_user', 0):,.2f} {cur}/чел.",
-                        "", "",
-                    ])
-                rows.append(["", "", "", "", ""])
+            # ── Section C: CATEGORIES ────────────────────────────────────
+            rows.append(["[CATEGORIES]", "", "", "", ""])
+            top_cats = snap.get("top_categories", {})
+            if top_cats:
+                total_cat = sum(top_cats.values()) or 1
+                rows.append(["Category", "Amount", "Pct", "Count", ""])
+                for cat, amt in top_cats.items():
+                    cat_pct = amt / total_cat * 100
+                    rows.append([cat, f"{amt:.2f}", f"{cat_pct:.1f}", "", ""])
+            else:
+                rows.append(["(no expenses this month)", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
 
-            # ── Multi-month contribution history ─────────────────────────
+            # ── Section D: HISTORY ───────────────────────────────────────
+            rows.append(["[HISTORY]", "", "", "", ""])
             if contrib_history:
-                # Collect all users across all months
                 all_users: list = []
                 for h in contrib_history:
                     for u in h.get("split_users", []):
                         if u not in all_users:
                             all_users.append(u)
 
-                # Table: Month | Total expenses | [User: contributed, share, balance] per user
-                # Column layout (6 cols per user): user | contributed | share | balance | status | (spacer)
-                # Keep it readable: one row per month, separate sub-columns per user
-                rows.append(["━━━ История взносов по месяцам ━━━", "", "", "", ""])
-                rows.append(["", "", "", "", ""])
-
-                # Build a wide table — need more than 5 cols; use column G+ for extra users
-                # Row 1: header
-                h_row = ["Месяц", "Расходы EUR", "Бюджет EUR", "% бюджета", ""]
+                h_row = ["Month", "Spent", "Budget", "Pct"]
                 for u in all_users:
-                    h_row += [f"{u}: внёс", f"{u}: доля", f"{u}: баланс", ""]
+                    h_row += [f"{u}_contributed", f"{u}_share", f"{u}_balance"]
                 rows.append(h_row)
 
-                # Data rows
-                for h in contrib_history:
-                    if h.get("status") != "ok":
-                        continue
-                    h_cur = h.get("currency", "EUR")
-                    h_threshold = h.get("threshold", 0)
-                    h_spent = h.get("total_expenses", 0)
-                    h_pct = f"{(h_spent / h_threshold * 100):.1f}%" if h_threshold else "—"
-                    data_row = [
-                        h.get("month", ""),
-                        f"{h_spent:,.2f}",
-                        f"{h_threshold:,.2f}",
-                        h_pct,
-                        "",
-                    ]
-                    for u in all_users:
-                        contributed = float(h.get("contributions", {}).get(u, 0))
-                        share = float(h.get("user_shares", {}).get(u, 0))
-                        balance = float(h.get("balances", {}).get(u, 0))
-                        data_row += [
-                            f"{contributed:,.2f}",
-                            f"{share:,.2f}",
-                            f"{balance:+,.2f}",
-                            "",
-                        ]
-                    rows.append(data_row)
-
-                rows.append(["", "", "", "", ""])
-
-                # ── Running totals (YTD) ──────────────────────────────────
-                rows.append(["━━━ Итого за период (YTD) ━━━", "", "", "", ""])
                 ytd_contrib: dict[str, float] = {u: 0.0 for u in all_users}
                 ytd_share:   dict[str, float] = {u: 0.0 for u in all_users}
                 ytd_spent = 0.0
+
                 for h in contrib_history:
                     if h.get("status") != "ok":
                         continue
-                    ytd_spent += float(h.get("total_expenses", 0))
+                    h_threshold = h.get("threshold", 0)
+                    h_spent = h.get("total_expenses", 0)
+                    h_pct = f"{(h_spent / h_threshold * 100):.1f}" if h_threshold else "0"
+                    ytd_spent += float(h_spent)
+                    data_row = [h.get("month", ""), f"{h_spent:.2f}", f"{h_threshold:.2f}", h_pct]
                     for u in all_users:
-                        ytd_contrib[u] += float(h.get("contributions", {}).get(u, 0))
-                        ytd_share[u]   += float(h.get("user_shares", {}).get(u, 0))
+                        c = float(h.get("contributions", {}).get(u, 0))
+                        s = float(h.get("user_shares", {}).get(u, 0))
+                        b = float(h.get("balances", {}).get(u, 0))
+                        ytd_contrib[u] += c
+                        ytd_share[u] += s
+                        data_row += [f"{c:.2f}", f"{s:.2f}", f"{b:+.2f}"]
+                    rows.append(data_row)
 
-                rows.append(["Итого расходов:", f"{ytd_spent:,.2f} {cur}", "", "", ""])
+                # YTD totals row
+                ytd_row = ["YTD", f"{ytd_spent:.2f}", "", ""]
                 for u in all_users:
-                    balance = ytd_contrib[u] - ytd_share[u]
-                    status = "🟢 в плюсе" if balance >= 0 else "🔴 нужно покрыть"
-                    rows.append([
-                        f"{u} — взнос:",
-                        f"{ytd_contrib[u]:,.2f} {cur}",
-                        f"доля: {ytd_share[u]:,.2f} {cur}",
-                        f"баланс: {balance:+,.2f} {cur}",
-                        status,
-                    ])
-                rows.append(["", "", "", "", ""])
+                    ytd_bal = ytd_contrib[u] - ytd_share[u]
+                    ytd_row += [f"{ytd_contrib[u]:.2f}", f"{ytd_share[u]:.2f}", f"{ytd_bal:+.2f}"]
+                rows.append(ytd_row)
+            else:
+                rows.append(["(no history data)", "", "", "", ""])
 
-            # ── Category breakdown ───────────────────────────────────────
-            top_cats = snap.get("top_categories", {})
-            if top_cats:
-                rows.append(["━━━ По категориям (текущий месяц) ━━━", "", "", "", ""])
-                for cat, amt in top_cats.items():
-                    rows.append([f"  {cat}:", f"{amt:,.2f} {cur}", "", "", ""])
-                rows.append(["", "", "", "", ""])
-
-            # ── Recent transactions ──────────────────────────────────────
-            txs = self.get_transactions({"date_from": f"{month}-01"})
-            active_txs = [t for t in txs if t.get("Type") == "expense"][-10:]
-            if active_txs:
-                rows.append(["━━━ Последние 10 транзакций ━━━", "", "", "", ""])
-                rows.append(["Дата", "Сумма EUR", "Категория", "Заметка", "Кто"])
-                for t in reversed(active_txs):
-                    rows.append([
-                        t.get("Date", ""),
-                        f"{float(t.get('Amount_EUR') or t.get('Amount_Orig') or 0):,.2f}",
-                        t.get("Category", ""),
-                        t.get("Note", "")[:40],
-                        t.get("Who", ""),
-                    ])
-
-            rows.append(["", "", "", "", ""])
-            rows.append([
-                f"Обновлено: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
-                "", "", "", "",
-            ])
-
-            # Determine actual column width needed
+            # ── Write to sheet ───────────────────────────────────────────
             max_cols = max(len(r) for r in rows) if rows else 5
-            # Pad all rows to same width
             for r in rows:
                 while len(r) < max_cols:
                     r.append("")
 
             def _col_letter(n: int) -> str:
-                """Convert 1-based column number to letter(s): 1→A, 26→Z, 27→AA…"""
                 result = ""
                 while n > 0:
                     n, rem = divmod(n - 1, 26)
@@ -744,6 +666,7 @@ class EnvelopeSheets:
         except Exception as e:
             import logging as _logging2
             _logging2.getLogger(__name__).warning(f"update_dashboard failed: {e}")
+
 
 
 def get_credentials() -> Credentials:
@@ -1106,6 +1029,35 @@ class SheetsClient:
                                 contrib_history: list = None) -> None:
         """Write computed budget + contribution data to the Dashboard tab."""
         self._env_sheets(sheet_id).update_dashboard(snap, contrib_snap, contrib_history)
+
+    def read_dashboard_snapshot(self, sheet_id: str) -> dict:
+        """Read the [SNAPSHOT] section from Dashboard tab as a key-value dict.
+        Bot uses this for instant budget answers without recalculating all transactions."""
+        cache_key = f"dashboard_snap_{sheet_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            ws = self._env_sheets(sheet_id)._ws("Dashboard")
+            data = ws.get_all_values()
+            result = {}
+            in_section = False
+            for row in data:
+                if not row or not row[0]:
+                    if in_section:
+                        break  # empty row = end of section
+                    continue
+                if row[0] == "[SNAPSHOT]":
+                    in_section = True
+                    continue
+                if row[0].startswith("["):
+                    break  # next section
+                if in_section:
+                    result[row[0]] = row[1] if len(row) > 1 else ""
+            self._cache.set(cache_key, result)
+            return result
+        except Exception:
+            return {}
 
     def create_spreadsheet_as_owner(self, title: str) -> str:
         """Create a new Google Sheets file using Mikhail's OAuth credentials.

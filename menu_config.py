@@ -25,230 +25,148 @@ logger = logging.getLogger(__name__)
 # ── Default menu (used when BotMenu sheet is absent) ──────────────────────────
 
 DEFAULT_MENU: dict[str, dict] = {
-    # ── Top level ──────────────────────────────────────────────────────────
-    # NOTE: "status" (Бюджет) is NOT in inline menu — it's the primary
-    # reply keyboard button. Inline menu starts from "report".
-    "report": {
-        "label": "📋 Аналитика", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 1,
-        "roles": [],
-    },
-    "transactions": {
-        "label": "📝 Записи", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 2,
-        "roles": [],
-    },
-    "envelopes_top": {
-        "label": "📁 Конверты", "parent": "",
-        "type": "cmd", "command": "envelopes", "params": {}, "order": 3,
-        "roles": [],
-    },
-    "settings": {
-        "label": "⚙️ Система", "parent": "",
-        "type": "submenu", "command": "", "params": {}, "order": 4,
-        "roles": [],
-    },
-    "help_top": {
-        "label": "❓ Помощь", "parent": "",
-        "type": "cmd", "command": "help", "params": {}, "order": 5,
-        "roles": [],
-    },
-    # ── Analytics submenu ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # MENU v2 — flat root, max 2 taps to any action
+    # "💰 Бюджет" and "➕ Добавить" live on the reply keyboard, NOT here.
+    # This inline menu opens from "☰ Меню" reply button.
+    # ══════════════════════════════════════════════════════════════════════
+
+    # ── Root level: 6 buttons in 3 rows ──────────────────────────────────
     "rep_curr": {
-        "label": "▶ Этот месяц", "parent": "report",
-        "type": "cmd", "command": "report", "params": {"period": "current"}, "order": 1,
-        "roles": [],
+        "label": "📋 Отчёт · этот месяц", "parent": "",
+        "type": "cmd", "command": "report", "params": {"period": "current"},
+        "order": 1, "roles": [],
     },
     "rep_last": {
-        "label": "◀ Прошлый месяц", "parent": "report",
-        "type": "cmd", "command": "report", "params": {"period": "last"}, "order": 2,
-        "roles": [],
+        "label": "◀ Прошлый месяц", "parent": "",
+        "type": "cmd", "command": "report", "params": {"period": "last"},
+        "order": 2, "roles": [],
     },
-    "rep_week": {
-        "label": "📅 Эта неделя", "parent": "report",
-        "type": "cmd", "command": "week", "params": {}, "order": 3,
-        "roles": [],
-    },
-    "rep_contribution": {
-        "label": "💸 Взносы & Расчёты", "parent": "report",
-        "type": "cmd", "command": "contribution", "params": {}, "order": 4,
-        "roles": [],
-    },
-    "rep_trends": {
-        "label": "📈 Тренды & Аномалии", "parent": "report",
-        "type": "cmd", "command": "trends", "params": {}, "order": 5,
-        "roles": [],
-    },
-    "rep_custom": {
-        "label": "🗓 Другой период...", "parent": "report",
-        "type": "free_text", "command": "",
-        "params": {
-            "prompt": "Введите период отчёта:\n• Месяц: <code>2026-03</code>\n• Диапазон: <code>2026-01:2026-03</code>\n• Слово: <code>февраль</code>",
-            "pending_key": "report:custom_period",
-        },
-        "order": 6, "roles": [],
-    },
-    # ── Transactions / Records submenu ─────────────────────────────────────
     "txn_recent": {
-        "label": "📋 Последние 10", "parent": "transactions",
-        "type": "cmd", "command": "transactions", "params": {"limit": 10}, "order": 1,
-        "roles": [],
-    },
-    "txn_week": {
-        "label": "📅 За неделю", "parent": "transactions",
-        "type": "cmd", "command": "week", "params": {}, "order": 2,
-        "roles": [],
-    },
-    "txn_month": {
-        "label": "📆 За этот месяц", "parent": "transactions",
-        "type": "cmd", "command": "transactions", "params": {"limit": 50, "period": "current"}, "order": 3,
-        "roles": [],
+        "label": "📝 Последние записи", "parent": "",
+        "type": "cmd", "command": "transactions", "params": {"limit": 10},
+        "order": 3, "roles": [],
     },
     "txn_search": {
-        "label": "🔍 Поиск...", "parent": "transactions",
+        "label": "🔍 Найти...", "parent": "",
         "type": "free_text", "command": "",
         "params": {
-            "prompt": "Введите поисковой запрос:\nПо названию, категории, сумме или дате\nНапример: Esselunga, кофе, > 50, 2026-03-15",
+            "prompt": "Введите запрос:\nПо названию, категории, сумме или дате\nНапример: Esselunga, кофе, > 50, 2026-03-15",
             "pending_key": "transactions:search",
         },
         "order": 4, "roles": [],
     },
-    "txn_category": {
-        "label": "🏷 По категории...", "parent": "transactions",
-        "type": "free_text", "command": "",
-        "params": {
-            "prompt": "Введите категорию:\nНапример: Продукты, Ресторан, Транспорт, Здоровье",
-            "pending_key": "transactions:category",
-        },
+    "rep_contribution": {
+        "label": "⚖️ Баланс (кто кому)", "parent": "",
+        "type": "cmd", "command": "contribution", "params": {},
         "order": 5, "roles": [],
     },
-    "txn_who": {
-        "label": "👤 По кому...", "parent": "transactions",
-        "type": "free_text", "command": "",
-        "params": {
-            "prompt": "Чьи расходы показать?\nВведите имя: Mikhail, Maryna, …",
-            "pending_key": "transactions:who",
-        },
+    "settings": {
+        "label": "⚙️ Настройки", "parent": "",
+        "type": "submenu", "command": "", "params": {},
         "order": 6, "roles": [],
     },
-    # ── System submenu — пользовательские настройки ──────────────────────────
+
+    # ── Settings submenu ─────────────────────────────────────────────────
     "set_lang": {
-        "label": "🌍 Язык интерфейса", "parent": "settings",
-        "type": "submenu", "command": "", "params": {}, "order": 1,
-        "roles": [],
+        "label": "🌍 Язык", "parent": "settings",
+        "type": "submenu", "command": "", "params": {},
+        "order": 1, "roles": [],
     },
     "set_lang_ru": {
         "label": "🇷🇺 Русский", "parent": "set_lang",
-        "type": "cmd", "command": "set_language", "params": {"lang": "ru"}, "order": 1,
-        "roles": [],
+        "type": "cmd", "command": "set_language", "params": {"lang": "ru"},
+        "order": 1, "roles": [],
     },
     "set_lang_uk": {
         "label": "🇺🇦 Українська", "parent": "set_lang",
-        "type": "cmd", "command": "set_language", "params": {"lang": "uk"}, "order": 2,
-        "roles": [],
+        "type": "cmd", "command": "set_language", "params": {"lang": "uk"},
+        "order": 2, "roles": [],
     },
     "set_lang_en": {
         "label": "🇬🇧 English", "parent": "set_lang",
-        "type": "cmd", "command": "set_language", "params": {"lang": "en"}, "order": 3,
-        "roles": [],
+        "type": "cmd", "command": "set_language", "params": {"lang": "en"},
+        "order": 3, "roles": [],
     },
     "set_lang_it": {
         "label": "🇮🇹 Italiano", "parent": "set_lang",
-        "type": "cmd", "command": "set_language", "params": {"lang": "it"}, "order": 4,
-        "roles": [],
+        "type": "cmd", "command": "set_language", "params": {"lang": "it"},
+        "order": 4, "roles": [],
     },
     "set_envelope": {
         "label": "📁 Сменить конверт", "parent": "settings",
-        "type": "cmd", "command": "envelopes", "params": {}, "order": 2,
-        "roles": [],
+        "type": "cmd", "command": "envelopes", "params": {},
+        "order": 2, "roles": [],
     },
     "set_undo": {
         "label": "↩️ Отменить последнее", "parent": "settings",
-        "type": "cmd", "command": "undo", "params": {}, "order": 3,
-        "roles": [],
+        "type": "cmd", "command": "undo", "params": {},
+        "order": 3, "roles": [],
     },
-    # ── Admin panel submenu (скрыто от не-admin) ──────────────────────────────
+
+    # ── Admin panel (only admin sees this) ───────────────────────────────
     "admin_panel": {
-        "label": "🔧 Управление", "parent": "settings",
-        "type": "submenu", "command": "", "params": {}, "order": 4,
-        "roles": ["admin"],
-    },
-    "set_dashboard": {
-        "label": "🔄 Обновить панель", "parent": "admin_panel",
-        "type": "cmd", "command": "dashboard_refresh", "params": {}, "order": 1,
-        "roles": ["admin"],
-    },
-    "set_mode": {
-        "label": "🧪 Режим работы", "parent": "admin_panel",
-        "type": "cmd", "command": "mode_toggle", "params": {}, "order": 2,
-        "roles": ["admin"],
+        "label": "🔧 Админ", "parent": "settings",
+        "type": "submenu", "command": "", "params": {},
+        "order": 4, "roles": ["admin"],
     },
     "set_config_view": {
-        "label": "⚙️ Настройки конверта", "parent": "admin_panel",
-        "type": "cmd", "command": "config_view", "params": {}, "order": 3,
-        "roles": ["admin"],
-    },
-    "set_init_config": {
-        "label": "🔧 Создать настройки", "parent": "admin_panel",
-        "type": "cmd", "command": "init_config", "params": {}, "order": 4,
-        "roles": ["admin"],
+        "label": "⚙️ Конфиг", "parent": "admin_panel",
+        "type": "cmd", "command": "config_view", "params": {},
+        "order": 1, "roles": ["admin"],
     },
     "set_users": {
-        "label": "👥 Пользователи", "parent": "admin_panel",
-        "type": "cmd", "command": "users_view", "params": {}, "order": 5,
-        "roles": ["admin"],
+        "label": "👥 Юзеры", "parent": "admin_panel",
+        "type": "cmd", "command": "users_view", "params": {},
+        "order": 2, "roles": ["admin"],
     },
     "set_learning": {
         "label": "🧠 База знаний", "parent": "admin_panel",
-        "type": "cmd", "command": "learning_summary", "params": {}, "order": 6,
-        "roles": ["admin"],
+        "type": "cmd", "command": "learning_summary", "params": {},
+        "order": 3, "roles": ["admin"],
+    },
+    "set_dashboard": {
+        "label": "🔄 Обновить панель", "parent": "admin_panel",
+        "type": "cmd", "command": "dashboard_refresh", "params": {},
+        "order": 4, "roles": ["admin"],
+    },
+    "set_mode": {
+        "label": "🧪 Режим", "parent": "admin_panel",
+        "type": "cmd", "command": "mode_toggle", "params": {},
+        "order": 5, "roles": ["admin"],
     },
     "set_refresh": {
-        "label": "🔄 Обновить меню", "parent": "settings",
-        "type": "cmd", "command": "refresh", "params": {}, "order": 9,
-        "roles": ["admin"],
+        "label": "🔄 Обновить меню", "parent": "admin_panel",
+        "type": "cmd", "command": "refresh", "params": {},
+        "order": 6, "roles": ["admin"],
     },
 }
 
-# Rows for auto-creating / re-creating the BotMenu sheet
+# Rows for auto-creating / re-creating the BotMenu sheet (v2 — flat root)
 _DEFAULT_ROWS = [
-    # Top level (no "status" — it's the reply keyboard "Бюджет" button)
-    ("report",        "📋 Аналитика",      "",             "submenu", "",             "",                     1, "TRUE", ""),
-    ("transactions",  "📝 Записи",         "",             "submenu", "",             "",                     2, "TRUE", ""),
-    ("envelopes_top", "📁 Конверты",       "",             "cmd",     "envelopes",    "",                     3, "TRUE", ""),
-    ("settings",      "⚙️ Система",        "",             "submenu", "",             "",                     4, "TRUE", ""),
-    ("help_top",      "❓ Помощь",         "",             "cmd",     "help",         "",                     5, "TRUE", ""),
-    # Analytics submenu
-    ("rep_curr",         "▶ Этот месяц",         "report",       "cmd",       "report",          '{"period":"current"}',                                                                       1, "TRUE", ""),
-    ("rep_last",         "◀ Прошлый месяц",      "report",       "cmd",       "report",          '{"period":"last"}',                                                                          2, "TRUE", ""),
-    ("rep_week",         "📅 Эта неделя",         "report",       "cmd",       "week",            "",                                                                                           3, "TRUE", ""),
-    ("rep_contribution", "💸 Взносы & Расчёты",   "report",       "cmd",       "contribution",    "",                                                                                           4, "TRUE", ""),
-    ("rep_trends",       "📈 Тренды & Аномалии",  "report",       "cmd",       "trends",          "",                                                                                           5, "TRUE", ""),
-    ("rep_custom",       "🗓 Другой период...",   "report",       "free_text", "",                '{"prompt":"Введите период:\\n• Месяц: 2026-03\\n• Диапазон: 2026-01:2026-03","pending_key":"report:custom_period"}', 6, "TRUE", ""),
-    # Records submenu
-    ("txn_recent",    "📋 Последние 10",          "transactions", "cmd",       "transactions",    '{"limit":10}',                                                                               1, "TRUE", ""),
-    ("txn_week",      "📅 За неделю",             "transactions", "cmd",       "week",            "",                                                                                           2, "TRUE", ""),
-    ("txn_month",     "📆 За этот месяц",         "transactions", "cmd",       "transactions",    '{"limit":50,"period":"current"}',                                                            3, "TRUE", ""),
-    ("txn_search",    "🔍 Поиск...",              "transactions", "free_text", "",                '{"prompt":"Введите поисковой запрос:\\nПо категории, сумме или дате","pending_key":"transactions:search"}', 4, "TRUE", ""),
-    ("txn_category",  "🏷 По категории...",       "transactions", "free_text", "",                '{"prompt":"Введите категорию:\\nНапример: Продукты, Ресторан, Транспорт","pending_key":"transactions:category"}', 5, "TRUE", ""),
-    ("txn_who",       "👤 По кому...",            "transactions", "free_text", "",                '{"prompt":"Чьи расходы?\\nВведите имя: Mikhail, Maryna, ...","pending_key":"transactions:who"}',            6, "TRUE", ""),
-    # System submenu — user settings
-    ("set_lang",         "🌍 Язык интерфейса",    "settings",     "submenu",   "",                "",                     1, "TRUE", ""),
-    ("set_lang_ru",      "🇷🇺 Русский",            "set_lang",     "cmd",       "set_language",    '{"lang":"ru"}',        1, "TRUE", ""),
-    ("set_lang_uk",      "🇺🇦 Українська",         "set_lang",     "cmd",       "set_language",    '{"lang":"uk"}',        2, "TRUE", ""),
-    ("set_lang_en",      "🇬🇧 English",            "set_lang",     "cmd",       "set_language",    '{"lang":"en"}',        3, "TRUE", ""),
-    ("set_lang_it",      "🇮🇹 Italiano",           "set_lang",     "cmd",       "set_language",    '{"lang":"it"}',        4, "TRUE", ""),
-    ("set_envelope",     "📁 Сменить конверт",    "settings",     "cmd",       "envelopes",       "",                     2, "TRUE", ""),
-    ("set_undo",         "↩️ Отменить последнее", "settings",     "cmd",       "undo",            "",                     3, "TRUE", ""),
-    # Admin panel submenu
-    ("admin_panel",      "🔧 Управление",         "settings",     "submenu",   "",                "",                     4, "TRUE", "admin"),
-    ("set_dashboard",    "🔄 Обновить панель",     "admin_panel",  "cmd",       "dashboard_refresh","",                    1, "TRUE", "admin"),
-    ("set_mode",         "🧪 Режим работы",        "admin_panel",  "cmd",       "mode_toggle",     "",                     2, "TRUE", "admin"),
-    ("set_config_view",  "⚙️ Настройки конверта",  "admin_panel",  "cmd",       "config_view",     "",                     3, "TRUE", "admin"),
-    ("set_init_config",  "🔧 Создать настройки",   "admin_panel",  "cmd",       "init_config",     "",                     4, "TRUE", "admin"),
-    ("set_users",        "👥 Пользователи",        "admin_panel",  "cmd",       "users_view",      "",                     5, "TRUE", "admin"),
-    ("set_learning",     "🧠 База знаний",         "admin_panel",  "cmd",       "learning_summary","",                    6, "TRUE", "admin"),
-    ("set_refresh",      "🔄 Обновить меню",       "admin_panel",  "cmd",       "refresh",         "",                     7, "TRUE", "admin"),
+    # Root level — 6 buttons in 3 rows, max 2 taps to any action
+    ("rep_curr",         "📋 Отчёт · этот месяц",  "",        "cmd",       "report",       '{"period":"current"}',   1, "TRUE", ""),
+    ("rep_last",         "◀ Прошлый месяц",         "",        "cmd",       "report",       '{"period":"last"}',      2, "TRUE", ""),
+    ("txn_recent",       "📝 Последние записи",     "",        "cmd",       "transactions", '{"limit":10}',           3, "TRUE", ""),
+    ("txn_search",       "🔍 Найти...",             "",        "free_text", "",             '{"prompt":"Введите запрос:\\nПо названию, категории, сумме или дате","pending_key":"transactions:search"}', 4, "TRUE", ""),
+    ("rep_contribution", "⚖️ Баланс (кто кому)",    "",        "cmd",       "contribution", "",                       5, "TRUE", ""),
+    ("settings",         "⚙️ Настройки",            "",        "submenu",   "",             "",                       6, "TRUE", ""),
+    # Settings submenu
+    ("set_lang",         "🌍 Язык",                 "settings",     "submenu",   "",             "",                   1, "TRUE", ""),
+    ("set_lang_ru",      "🇷🇺 Русский",              "set_lang",     "cmd",       "set_language", '{"lang":"ru"}',      1, "TRUE", ""),
+    ("set_lang_uk",      "🇺🇦 Українська",           "set_lang",     "cmd",       "set_language", '{"lang":"uk"}',      2, "TRUE", ""),
+    ("set_lang_en",      "🇬🇧 English",              "set_lang",     "cmd",       "set_language", '{"lang":"en"}',      3, "TRUE", ""),
+    ("set_lang_it",      "🇮🇹 Italiano",             "set_lang",     "cmd",       "set_language", '{"lang":"it"}',      4, "TRUE", ""),
+    ("set_envelope",     "📁 Сменить конверт",      "settings",     "cmd",       "envelopes",    "",                   2, "TRUE", ""),
+    ("set_undo",         "↩️ Отменить последнее",   "settings",     "cmd",       "undo",         "",                   3, "TRUE", ""),
+    # Admin panel (admin only)
+    ("admin_panel",      "🔧 Админ",                "settings",     "submenu",   "",             "",                   4, "TRUE", "admin"),
+    ("set_config_view",  "⚙️ Конфиг",               "admin_panel",  "cmd",       "config_view",  "",                   1, "TRUE", "admin"),
+    ("set_users",        "👥 Юзеры",                "admin_panel",  "cmd",       "users_view",   "",                   2, "TRUE", "admin"),
+    ("set_learning",     "🧠 База знаний",          "admin_panel",  "cmd",       "learning_summary", "",               3, "TRUE", "admin"),
+    ("set_dashboard",    "🔄 Обновить панель",      "admin_panel",  "cmd",       "dashboard_refresh", "",              4, "TRUE", "admin"),
+    ("set_mode",         "🧪 Режим",                "admin_panel",  "cmd",       "mode_toggle",  "",                   5, "TRUE", "admin"),
+    ("set_refresh",      "🔄 Обновить меню",        "admin_panel",  "cmd",       "refresh",      "",                   6, "TRUE", "admin"),
 ]
 
 _HEADERS = ["ID", "Label", "Parent", "Type", "Command", "Params", "Order", "Visible", "Roles"]
