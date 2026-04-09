@@ -552,6 +552,20 @@ class EnvelopeSheets:
         try:
             ws = self._ws("Dashboard")
             ws.clear()
+            # Remove any leftover merged cells — merges survive clear()
+            # and block writes to non-anchor cells (e.g. B2 in a merged A2:B2)
+            sheet_id = ws.id
+            wb = ws.spreadsheet
+            meta = wb.fetch_sheet_metadata()
+            for s in meta.get("sheets", []):
+                if s["properties"]["sheetId"] == sheet_id:
+                    merges = s.get("merges", [])
+                    if merges:
+                        requests = [
+                            {"unmergeCells": {"range": m}} for m in merges
+                        ]
+                        wb.batch_update({"requests": requests})
+                    break
 
             month = snap.get("month", datetime.utcnow().strftime("%Y-%m"))
             cap = snap.get("cap", 0)
@@ -576,12 +590,12 @@ class EnvelopeSheets:
             _P = "Transactions!$P$2:$P$1000"         # Deleted
             _D = "Transactions!$D$2:$D$1000"         # Category
             _ND = f'({_P}<>"TRUE")'                  # not deleted
-            _CM = f'(LEFT({_R},7)=B2)'               # current month
+            _CM = f'(TEXT({_R},"yyyy-mm")=B2)'        # current month (dates are serials)
 
             # ── Section A: SNAPSHOT — all formulas ───────────────────────
             rows.append(["[SNAPSHOT]", "", "", "", ""])          # row 1
-            # Static month string — TEXT() formula fails in gspread batch writes
-            current_month = datetime.utcnow().strftime("%Y-%m")
+            # Prefix with ' to force text — USER_ENTERED interprets "2026-04" as date serial
+            current_month = "'" + datetime.utcnow().strftime("%Y-%m")
             rows.append(["month", current_month, "", "", ""])  # row 2
             rows.append(["budget", '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)', "", "", ""])  # row 3
             rows.append(["spent",  f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_CM}*{_H})', "", "", ""])  # row 4
