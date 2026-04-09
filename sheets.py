@@ -580,7 +580,9 @@ class EnvelopeSheets:
 
             # ── Section A: SNAPSHOT — all formulas ───────────────────────
             rows.append(["[SNAPSHOT]", "", "", "", ""])          # row 1
-            rows.append(["month", '=TEXT(TODAY(),"yyyy-mm")', "", "", ""])  # row 2
+            # Static month string — TEXT() formula fails in gspread batch writes
+            current_month = datetime.utcnow().strftime("%Y-%m")
+            rows.append(["month", current_month, "", "", ""])  # row 2
             rows.append(["budget", '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)', "", "", ""])  # row 3
             rows.append(["spent",  f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_CM}*{_H})', "", "", ""])  # row 4
             rows.append(["remaining", "=B3-B4", "", "", ""])     # row 5
