@@ -394,7 +394,7 @@ def _current_month_str() -> str:
 
 
 def _quick_balance_line(session) -> str:
-    """T-128: Compact one-line balance after add/delete transaction."""
+    """T-128: Balance summary after add/delete. Shows contributed · share → balance per user."""
     try:
         from intelligence import compute_contribution_status
         snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
@@ -402,17 +402,19 @@ def _quick_balance_line(session) -> str:
             return ""
         cap = snap.get("threshold", 0)
         spent = snap.get("total_expenses", 0)
-        remaining = cap - spent
         cur = snap.get("currency", "EUR")
         parts = [f"💰 {spent:,.0f}/{cap:,.0f} {cur}"]
-        bal = snap.get("balances", {})
+        contributions = snap.get("contributions", {})
+        user_shares = snap.get("user_shares", {})
+        balances = snap.get("balances", {})
         split_users = snap.get("split_users", [])
-        if len(split_users) > 1 and bal:
-            bal_parts = []
+        if len(split_users) > 1:
             for u in split_users:
-                b = float(bal.get(u, 0))
-                bal_parts.append(f"{u}: {b:+,.0f}")
-            parts.append(f"⚖️ {' · '.join(bal_parts)}")
+                c = float(contributions.get(u, 0))
+                s = float(user_shares.get(u, 0))
+                b = float(balances.get(u, 0))
+                icon = "✅" if b >= 0 else "⚠️"
+                parts.append(f"{icon} {u}: {c:,.0f} внесено · {s:,.0f} доля → {b:+,.0f} {cur}")
         return "\n".join(parts)
     except Exception:
         return ""
@@ -503,24 +505,23 @@ async def _build_status_html(session, lang: str = "ru") -> str:
                 lines.append("")
                 lines.append(f"👥 {' · '.join(f'{w}: {a:,.0f}' for w, a in sorted(by_who.items(), key=lambda x: -x[1]))}")
 
-        # T-094: User balance (obligations / credits)
+        # T-094: User balance (contributed − share)
         try:
             from intelligence import compute_contribution_status
             snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
             if snap.get("status") == "ok" and len(snap.get("split_users", [])) > 1:
+                cur = snap.get("currency", "EUR")
+                contributions = snap.get("contributions", {})
+                user_shares = snap.get("user_shares", {})
                 balances = snap.get("balances", {})
-                bal_parts = []
+                lines.append("")
+                lines.append("⚖️ Баланс (внесено − доля):")
                 for u in snap["split_users"]:
+                    c = float(contributions.get(u, 0))
+                    s = float(user_shares.get(u, 0))
                     b = float(balances.get(u, 0))
-                    if b > 0:
-                        bal_parts.append(f"{u}: +{b:,.0f}")
-                    elif b < 0:
-                        bal_parts.append(f"{u}: {b:,.0f}")
-                    else:
-                        bal_parts.append(f"{u}: 0")
-                if bal_parts:
-                    lines.append("")
-                    lines.append(f"⚖️ {' · '.join(bal_parts)} EUR")
+                    icon = "✅" if b >= 0 else "⚠️"
+                    lines.append(f"  {icon} {u}: {c:,.0f} внесено · {s:,.0f} доля → {b:+,.0f} {cur}")
         except Exception:
             pass
 
