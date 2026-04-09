@@ -1794,19 +1794,12 @@ async def cmd_transactions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         html_body = _format_txn_list(txs, lang)
 
-        # Inline delete buttons for last 5 transactions (1 per row)
-        recent = list(reversed(txs))[:5]
-        del_rows = []
-        for tx in recent:
-            tx_id = tx.get("ID", "")
-            cat = tx.get("Category", "?")
-            amt = tx.get("Amount_Orig", "?")
-            date = tx.get("Date", "")[-5:]  # MM-DD
-            del_rows.append([InlineKeyboardButton(
-                f"🗑 {i18n.t_cat(cat, lang)} · {amt} EUR · {date}", callback_data=f"cb_del_{tx_id}"
-            )])
-
-        markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
+        # T-130: Clean list first, action buttons separate
+        action_row = [
+            InlineKeyboardButton("🗑 Удалить", callback_data="cb_txn_delete_pick"),
+            InlineKeyboardButton("✏️ Изменить", callback_data="cb_txn_edit_pick"),
+        ]
+        markup = _with_menu_btn(action_row, lang=lang)
         await update.message.reply_text(
             html_body,
             parse_mode=ParseMode.HTML,
@@ -2473,30 +2466,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(i18n.ts("no_transactions", lang), reply_markup=_with_menu_btn(lang=lang))
                 return
             html_body = _format_txn_list(txs, lang)
-            del_rows = []
-            recent = list(reversed(txs))[:4]
-            for tx in recent:
-                tx_id = tx.get("ID", "")
-                cat = tx.get("Category", "?")
-                amt = tx.get("Amount_Orig", "?")
-                note = tx.get("Note", "")
-                date = tx.get("Date", "")
-                # T-097: include date + note to distinguish buttons with same category
-                date_short = date[-5:] if len(date) >= 5 else date  # "04-05"
-                note_short = note[:15] + "…" if len(note) > 15 else note
-                label_parts = [f"🗑 {i18n.t_cat(cat, lang)} · {amt}"]
-                if note_short:
-                    label_parts.append(note_short)
-                if date_short:
-                    label_parts.append(date_short)
-                # Telegram button text limit is 64 bytes; truncate if needed
-                btn_label = " · ".join(label_parts)
-                if len(btn_label.encode("utf-8")) > 60:
-                    btn_label = f"🗑 {i18n.t_cat(cat, lang)} · {amt} · {date_short}"
-                del_rows.append([InlineKeyboardButton(
-                    btn_label, callback_data=f"cb_del_{tx_id}"
-                )])
-            markup = _with_menu_btn(*del_rows, lang=lang) if del_rows else _with_menu_btn(lang=lang)
+            # T-130: Clean list + action buttons (not per-tx delete buttons)
+            action_row = [
+                InlineKeyboardButton("🗑 Удалить", callback_data="cb_txn_delete_pick"),
+                InlineKeyboardButton("✏️ Изменить", callback_data="cb_txn_edit_pick"),
+            ]
+            markup = _with_menu_btn(action_row, lang=lang)
             try:
                 await query.edit_message_reply_markup(reply_markup=None)
             except BadRequest:
@@ -2523,6 +2498,78 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         except BadRequest:
             pass
+
+    # ── cb_txn_delete_pick — show per-transaction delete buttons ────────
+    elif data == "cb_txn_delete_pick":
+        try:
+            from tools.transactions import tool_find_transactions
+            result = await tool_find_transactions({"limit": 6}, session, sheets, auth)
+            txs = result.get("transactions", [])
+            if not txs:
+                await query.answer("Нет записей")
+                return
+            del_rows = []
+            for tx in reversed(txs):
+                tx_id = tx.get("ID", "")
+                cat = tx.get("Category", "?")
+                amt = tx.get("Amount_Orig", "?")
+                note = tx.get("Note", "")
+                date = tx.get("Date", "")
+                date_short = date[-5:] if len(date) >= 5 else date
+                note_short = (note[:15] + "…") if len(note) > 15 else note
+                parts = [f"🗑 {cat} · {amt}"]
+                if note_short:
+                    parts.append(note_short)
+                if date_short:
+                    parts.append(date_short)
+                btn_label = " · ".join(parts)
+                if len(btn_label.encode("utf-8")) > 60:
+                    btn_label = f"🗑 {cat} · {amt} · {date_short}"
+                del_rows.append([InlineKeyboardButton(btn_label, callback_data=f"cb_del_{tx_id}")])
+            markup = _with_menu_btn(*del_rows, lang=lang)
+            await query.edit_message_text(
+                "🗑 <b>Выберите запись для удаления:</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except Exception as e:
+            await query.answer(f"Ошибка: {e}", show_alert=True)
+
+    # ── cb_txn_edit_pick — show per-transaction edit buttons ─────────────
+    elif data == "cb_txn_edit_pick":
+        try:
+            from tools.transactions import tool_find_transactions
+            result = await tool_find_transactions({"limit": 6}, session, sheets, auth)
+            txs = result.get("transactions", [])
+            if not txs:
+                await query.answer("Нет записей")
+                return
+            edit_rows = []
+            for tx in reversed(txs):
+                tx_id = tx.get("ID", "")
+                cat = tx.get("Category", "?")
+                amt = tx.get("Amount_Orig", "?")
+                note = tx.get("Note", "")
+                date = tx.get("Date", "")
+                date_short = date[-5:] if len(date) >= 5 else date
+                note_short = (note[:15] + "…") if len(note) > 15 else note
+                parts = [f"✏️ {cat} · {amt}"]
+                if note_short:
+                    parts.append(note_short)
+                if date_short:
+                    parts.append(date_short)
+                btn_label = " · ".join(parts)
+                if len(btn_label.encode("utf-8")) > 60:
+                    btn_label = f"✏️ {cat} · {amt} · {date_short}"
+                edit_rows.append([InlineKeyboardButton(btn_label, callback_data=f"cb_edit_{tx_id}")])
+            markup = _with_menu_btn(*edit_rows, lang=lang)
+            await query.edit_message_text(
+                "✏️ <b>Выберите запись для изменения:</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except Exception as e:
+            await query.answer(f"Ошибка: {e}", show_alert=True)
 
     # ── cb_env_<ID> — select active envelope ──────────────────────────────
     elif data.startswith("cb_env_"):
@@ -2577,10 +2624,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 session, sheets, auth,
             )
             if isinstance(del_result, dict) and del_result.get("deleted"):
-                await query.edit_message_text(
-                    f"🗑 Видалено з таблиці (<code>{tx_id}</code>)",
-                    parse_mode=ParseMode.HTML,
-                )
+                # T-130: Show result + balance, keep trace
+                bal_line = _quick_balance_line(session)
+                msg = f"✓ Видалено <code>{tx_id}</code>"
+                if bal_line:
+                    msg += f"\n\n{bal_line}"
+                await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
             elif isinstance(del_result, dict) and "error" in del_result:
                 await query.edit_message_text(
                     f"⚠️ {del_result['error']}",
@@ -2820,11 +2869,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("cb_del_"):
         tx_id = data[7:]
         try:
-            await query.edit_message_reply_markup(
+            # T-130: Show what's being deleted, keep trace
+            await query.edit_message_text(
+                f"⚠️ <b>Удалить запись</b> <code>{tx_id}</code>?",
+                parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton(i18n.tu("btn_yes_delete", lang), callback_data=f"cb_del_confirm_{tx_id}"),
                     InlineKeyboardButton(i18n.tu("btn_cancel", lang), callback_data="cb_cancel"),
-                ]])
+                ]]),
             )
         except BadRequest:
             pass
