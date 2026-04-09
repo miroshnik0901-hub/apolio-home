@@ -2600,7 +2600,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
                 msg = result.get("message", "") if isinstance(result, dict) else str(result)
 
-                # Save receipt details (Sheets Receipts tab + PostgreSQL parsed_data)
+                # Save receipt details to PostgreSQL parsed_data (Sheets Receipts tab removed)
                 try:
                     await agent._tool_save_receipt(
                         {

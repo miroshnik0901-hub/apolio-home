@@ -856,7 +856,7 @@ class ApolioAgent:
         import db as _db
         try:
             history_messages = await _db.get_recent_messages_for_api(
-                session.user_id, n_turns=6, telegram_bot=telegram_bot
+                session.user_id, n_turns=12, telegram_bot=telegram_bot
             ) if _db.is_ready() else []
         except Exception:
             history_messages = []

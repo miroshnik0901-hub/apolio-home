@@ -145,15 +145,15 @@ def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
     """Return existing session or create a new one for the given user."""
     if user_id not in _sessions:
         session = SessionContext(user_id, user_name, role)
-        # Auto-set default envelope for admin/contributor so /status works after restart
-        if role in ("admin", "contributor"):
-            session.current_envelope_id = DEFAULT_ENVELOPE
+        # Auto-set default envelope for ALL roles (not just admin/contributor).
+        # T-104: readonly users need an envelope too, otherwise they see nothing.
+        session.current_envelope_id = DEFAULT_ENVELOPE
         _sessions[user_id] = session
     else:
         # Refresh name and role on each call
         _sessions[user_id].user_name = user_name
         _sessions[user_id].role = role
-        # Restore default if envelope was lost (e.g. process restart via shared state)
-        if not _sessions[user_id].current_envelope_id and role in ("admin", "contributor"):
+        # Restore default if envelope was lost (e.g. process restart)
+        if not _sessions[user_id].current_envelope_id:
             _sessions[user_id].current_envelope_id = DEFAULT_ENVELOPE
     return _sessions[user_id]
