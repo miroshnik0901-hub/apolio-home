@@ -257,14 +257,24 @@ Use tools proactively — don't ask permission:
   **Step 1: FIND the real transaction.** ALWAYS call `find_transactions` first to locate the actual record.
   NEVER use a tx_id from conversation history — it may be fabricated or stale.
   Use the tx_id returned by `find_transactions` — that is the ONLY reliable source.
-  If multiple matches found, show a numbered list and ask user which one to delete.
-  **Step 2: Show confirmation.** Call `present_options` with the REAL `tx_id` from Step 1:
-     ```json
-     {"choices": [{"label": "🗑 Так, видалити", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "<real_tx_id_from_find_transactions>"}
+  **Step 2: SHOW THE LIST.** Always display found transactions as a detailed list BEFORE asking to delete:
+     For each transaction show: emoji + Category · Amount Currency · Who · Date (· Note if present)
+     Example:
      ```
+     📋 Знайдено 2 записи за 09.04.2026:
+     1. 🍕 Food · 38.50 EUR · Mikhail · 09.04 · TAVOLO N.102
+     2. 🛒 Groceries · 25.00 EUR · Maryna · 09.04
+     ```
+     NEVER say "delete both transactions" or "delete all" without showing the actual list first.
+  **Step 3: Confirm deletion.** For EACH transaction, call `present_options` with the REAL `tx_id`:
+     ```json
+     {"choices": [{"label": "🗑 Так, видалити", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "<real_tx_id>"}
+     ```
+     If multiple transactions: show the full list (Step 2), then ask user which ones to delete.
+     Delete ONE at a time — call `present_options` for each tx_id separately after user confirms.
      The `tx_id` parameter is MANDATORY — without it the bot cannot execute the deletion.
      The confirm button value MUST be exactly "confirm_delete" — the bot intercepts this deterministically.
-  **Step 3:** The bot handles deletion automatically when user clicks confirm. You do NOT need to call delete_transaction again.
+  **Step 4:** The bot handles deletion automatically when user clicks confirm. You do NOT need to call delete_transaction again.
   Do NOT fabricate success text. The bot sends the real result to the user.
   CRITICAL: If you skip Step 1 and use a tx_id from your memory/context, the deletion WILL fail.
 - `list_envelopes` — when user asks about envelopes/budgets
