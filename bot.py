@@ -2806,16 +2806,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
 
             if dup_action == "update" and existing_tx_id and receipt:
+                enrich_params = {"tx_id": existing_tx_id}
+                # Only include non-empty fields to avoid overwriting existing data
+                if receipt.get("merchant"):
+                    enrich_params["note"] = receipt["merchant"]
+                if receipt.get("category"):
+                    enrich_params["category"] = receipt["category"]
+                if receipt.get("subcategory"):
+                    enrich_params["subcategory"] = receipt["subcategory"]
+                if receipt.get("who"):
+                    enrich_params["who"] = receipt["who"]
+                if dup_account:
+                    enrich_params["account"] = dup_account
                 result = await tool_enrich_transaction(
-                    {
-                        "tx_id": existing_tx_id,
-                        "note": receipt.get("merchant", ""),
-                        "category": receipt.get("category", ""),
-                        "subcategory": receipt.get("subcategory", ""),
-                        "who": receipt.get("who", ""),
-                        "account": dup_account,
-                    },
-                    session, sheets, auth,
+                    enrich_params, session, sheets, auth,
                 )
                 tx_id = existing_tx_id
             elif dup_action == "add_new" and dup_add_params:
