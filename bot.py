@@ -3376,7 +3376,41 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "Mostrami tutto ciò che hai trovato e chiedi cosa fare."
             ),
         }
-        text = msg.caption or _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
+        # If there's already a pending_receipt, use a SHORT enrichment prompt
+        # instead of the full analysis prompt — prevents duplicate responses.
+        _has_pending = bool(getattr(session, "pending_receipt", None))
+        if msg.caption:
+            text = msg.caption
+        elif _has_pending:
+            _photo_enrich = {
+                "ru": (
+                    "Это ещё одно фото того же чека/платежа. "
+                    "Извлеки ТОЛЬКО новые детали (позиции, НДС, адрес и т.д.) "
+                    "и вызови store_pending_receipt для дополнения. "
+                    "НЕ показывай кнопки. Ответь кратко: что нового нашёл."
+                ),
+                "uk": (
+                    "Це ще одне фото того ж чека/платежу. "
+                    "Витягни ТІЛЬКИ нові деталі (позиції, ПДВ, адреса тощо) "
+                    "і виклич store_pending_receipt для доповнення. "
+                    "НЕ показуй кнопки. Відповідай коротко: що нового знайшов."
+                ),
+                "en": (
+                    "This is another photo of the SAME receipt/payment. "
+                    "Extract ONLY new details (items, VAT, address, etc.) "
+                    "and call store_pending_receipt to enrich. "
+                    "Do NOT show buttons. Reply briefly: what new info was found."
+                ),
+                "it": (
+                    "Questa è un'altra foto dello STESSO scontrino/pagamento. "
+                    "Estrai SOLO i nuovi dettagli (voci, IVA, indirizzo, ecc.) "
+                    "e chiama store_pending_receipt per arricchire. "
+                    "NON mostrare pulsanti. Rispondi brevemente: cosa hai trovato di nuovo."
+                ),
+            }
+            text = _photo_enrich.get(lang, _photo_enrich["en"])
+        else:
+            text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
         media_type = "photo"
 
     elif msg.document and msg.document.mime_type in ("text/csv", "application/csv"):
