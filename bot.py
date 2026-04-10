@@ -3491,7 +3491,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # BUG-009: agent.run() crash (API timeout, network error, etc.)
         # must not leave the user staring at "думаю..." forever.
         logger.error(f"agent.run() failed: {agent_exc}", exc_info=True)
-        response = "⚠️ Щось пішло не так. Спробуй ще раз."
+        response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
         # If present_options was already called before the crash,
         # pending_choice is set — we'll still show the buttons below.
     finally:

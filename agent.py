@@ -1576,6 +1576,16 @@ class ApolioAgent:
         for c in choices:
             if not isinstance(c, dict) or "label" not in c or "value" not in c:
                 return {"error": "Each choice must have 'label' and 'value' keys"}
+
+        # Guard: if receipt buttons are already pending, don't overwrite with duplicate
+        has_receipt_btn = any(c.get("value") in ("yes_joint", "yes_personal") for c in choices)
+        existing_ch = getattr(session, "pending_choice", None)
+        if has_receipt_btn and existing_ch:
+            existing_receipt = any(c.get("value") in ("yes_joint", "yes_personal") for c in existing_ch)
+            if existing_receipt:
+                logger.info("present_options: receipt buttons already queued — skipping duplicate")
+                return {"status": "ok", "message": "Receipt buttons already active. Do NOT show new buttons."}
+
         session.pending_choice = choices
 
         # BUG-008 FIX: If this is a delete confirmation, store the tx_id
@@ -1628,11 +1638,29 @@ class ApolioAgent:
                                            sheets: SheetsClient, auth: AuthManager):
         """Store parsed receipt data in session for cross-message persistence.
         This ensures the agent remembers receipt details when user confirms in next message."""
+        new_amount = float(params.get("total_amount", 0))
+        new_currency = params.get("currency", "EUR")
+
+        # Guard: if pending_receipt already exists with same amount+currency,
+        # this is a duplicate photo of the same receipt — enrich, don't replace
+        existing = getattr(session, "pending_receipt", None)
+        if existing and existing.get("total_amount") == new_amount and existing.get("currency") == new_currency:
+            # Enrich existing receipt with new details (merchant, date, etc.)
+            for field in ("merchant", "date", "category", "subcategory"):
+                new_val = params.get(field, "")
+                old_val = existing.get(field, "")
+                if new_val and (not old_val or old_val == "?" or old_val == "Food"):
+                    existing[field] = new_val
+            if params.get("tg_file_id"):
+                existing["tg_file_id"] = params["tg_file_id"]
+            logger.info(f"store_pending_receipt: enriched existing receipt ({new_amount} {new_currency}), not replaced")
+            return {"status": "ok", "message": "Receipt already pending — enriched with new details. Do NOT call present_options again."}
+
         receipt_data = {
             "merchant": params.get("merchant", ""),
             "date": params.get("date", ""),
-            "total_amount": float(params.get("total_amount", 0)),
-            "currency": params.get("currency", "EUR"),
+            "total_amount": new_amount,
+            "currency": new_currency,
             "category": params.get("category", ""),
             "subcategory": params.get("subcategory", ""),
             "who": params.get("who", session.user_name or ""),

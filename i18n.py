@@ -630,6 +630,12 @@ SYS: dict[str, dict[str, str]] = {
         "ru": "Ошибка: {err}", "uk": "Помилка: {err}",
         "en": "Error: {err}", "it": "Errore: {err}",
     },
+    "error_something_wrong": {
+        "ru": "Что-то пошло не так. Попробуй ещё раз.",
+        "uk": "Щось пішло не так. Спробуй ще раз.",
+        "en": "Something went wrong. Please try again.",
+        "it": "Qualcosa è andato storto. Riprova.",
+    },
     "bal_obligation": {
         "ru": "Обязательство", "uk": "Зобов'язання", "en": "Obligation", "it": "Obbligo",
     },
