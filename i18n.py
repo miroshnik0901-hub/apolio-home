@@ -601,7 +601,34 @@ SYS: dict[str, dict[str, str]] = {
     },
     # ── T-143: Bulk delete ──
     "del_bulk": {
-        "ru": "🗑️ Удалить все ({n})", "uk": "🗑️ Видалити всі ({n})", "en": "🗑️ Delete all ({n})", "it": "🗑️ Elimina tutti ({n})",
+        "ru": "Удалить все ({n})", "uk": "Видалити всі ({n})", "en": "Delete all ({n})", "it": "Elimina tutti ({n})",
+    },
+    "del_bulk_result": {
+        "ru": "Удалено: {deleted} из {total}", "uk": "Видалено: {deleted} із {total}",
+        "en": "Deleted: {deleted} of {total}", "it": "Eliminati: {deleted} di {total}",
+    },
+    "del_bulk_errors": {
+        "ru": "Ошибки:", "uk": "Помилки:", "en": "Errors:", "it": "Errori:",
+    },
+    "del_single_result": {
+        "ru": "Удалено: {tx_id}", "uk": "Видалено: {tx_id}",
+        "en": "Deleted: {tx_id}", "it": "Eliminato: {tx_id}",
+    },
+    "del_session_expired": {
+        "ru": "Сессия обновилась. Повторите удаление.",
+        "uk": "Сесія оновилася. Повторіть видалення.",
+        "en": "Session expired. Please retry the deletion.",
+        "it": "Sessione scaduta. Ripetere l'eliminazione.",
+    },
+    "del_unknown_result": {
+        "ru": "Неизвестный результат: {result}",
+        "uk": "Невідомий результат: {result}",
+        "en": "Unknown result: {result}",
+        "it": "Risultato sconosciuto: {result}",
+    },
+    "error_generic": {
+        "ru": "Ошибка: {err}", "uk": "Помилка: {err}",
+        "en": "Error: {err}", "it": "Errore: {err}",
     },
     "bal_obligation": {
         "ru": "Обязательство", "uk": "Зобов'язання", "en": "Obligation", "it": "Obbligo",

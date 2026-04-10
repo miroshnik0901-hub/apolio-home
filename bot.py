@@ -2626,7 +2626,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not tx_ids:
             await ctx.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="⚠️ Сесія оновилася. Повторіть видалення.",
+                text=f"⚠️ {i18n.ts('del_session_expired', lang)}",
                 reply_markup=_with_menu_btn(lang=lang),
             )
             return
@@ -2656,11 +2656,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         lines = []
         if deleted:
-            lines.append(f"✅ Видалено: {len(deleted)} із {n}")
+            lines.append(f"✅ {i18n.ts('del_bulk_result', lang).format(deleted=len(deleted), total=n)}")
             for d in deleted:
                 lines.append(f"  • {d}")
         if failed:
-            lines.append(f"⚠️ Помилки:")
+            lines.append(f"⚠️ {i18n.ts('del_bulk_errors', lang)}")
             for f_line in failed:
                 lines.append(f"  • {f_line}")
         bal_line = _quick_balance_line(session, lang)
@@ -2708,7 +2708,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             if isinstance(del_result, dict) and del_result.get("deleted"):
                 bal_line = _quick_balance_line(session, lang)
-                msg = f"✅ Видалено: {tx_id}"
+                msg = f"✅ {i18n.ts('del_single_result', lang).format(tx_id=tx_id)}"
                 if bal_line:
                     msg += f"\n\n{bal_line}"
                 await ctx.bot.send_message(
@@ -2725,14 +2725,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             else:
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=f"⚠️ Невідомий результат: {del_result}",
+                    text=f"⚠️ {i18n.ts('del_unknown_result', lang).format(result=del_result)}",
                     reply_markup=_with_menu_btn(lang=lang),
                 )
             session.last_action = None
         except Exception as ex:
             await ctx.bot.send_message(
                 chat_id=query.message.chat_id,
-                text=f"❌ Помилка: {ex}",
+                text=f"❌ {i18n.ts('error_generic', lang).format(err=ex)}",
                 reply_markup=_with_menu_btn(lang=lang),
             )
 
@@ -3020,7 +3020,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text="⚠️ Сесія оновилася. Повторіть видалення заново.",
+                    text=f"⚠️ {i18n.ts('del_session_expired', lang)}",
                     reply_markup=_with_menu_btn(lang=lang),
                 )
                 return
@@ -3041,7 +3041,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
 
                 if isinstance(del_result, dict) and del_result.get("deleted"):
-                    msg = f"✓ Видалено: {tx_id}"
+                    msg = f"✅ {i18n.ts('del_single_result', lang).format(tx_id=tx_id)}"
                     # T-128: append balance summary after delete
                     bal_line = _quick_balance_line(session, lang)
                     if bal_line:
@@ -3060,7 +3060,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     await ctx.bot.send_message(
                         chat_id=query.message.chat_id,
-                        text=f"⚠️ Невідомий результат видалення: {del_result}",
+                        text=f"⚠️ {i18n.ts('del_unknown_result', lang).format(result=del_result)}",
                         reply_markup=_with_menu_btn(lang=lang),
                     )
 
@@ -3094,7 +3094,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Deterministic delete failed: {e}", exc_info=True)
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=f"❌ Помилка видалення: {e}",
+                    text=f"❌ {i18n.ts('error_generic', lang).format(err=e)}",
                     reply_markup=_with_menu_btn(lang=lang),
                 )
             return
@@ -3576,7 +3576,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if pending_del_tx and "," in str(pending_del_tx):
             tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
             n = len(tx_ids)
-            bulk_label = i18n.ts("del_bulk", lang).format(n=n)
+            bulk_label = f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}"
             # Store bulk list in session for the handler
             session._bulk_delete_ids = tx_ids
             choice_rows.append([InlineKeyboardButton(
