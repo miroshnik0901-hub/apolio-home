@@ -809,6 +809,45 @@ class ApolioAgent:
             "learning_context": learning_text,
         }
 
+    @staticmethod
+    def _detect_msg_lang(text: str) -> str | None:
+        """Detect language of user message by character ranges. Returns lang code or None."""
+        if not text or len(text.strip()) < 3:
+            return None
+        # Count character types (ignore digits, punctuation, spaces)
+        cyr = lat = 0
+        for ch in text:
+            if '\u0400' <= ch <= '\u04FF' or '\u0500' <= ch <= '\u052F':
+                cyr += 1
+            elif ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'):
+                lat += 1
+        total = cyr + lat
+        if total < 2:
+            return None
+        if cyr / total > 0.5:
+            # Distinguish RU vs UK by Ukrainian-specific chars
+            uk_chars = set('іїєґІЇЄҐ')
+            uk_count = sum(1 for ch in text if ch in uk_chars)
+            return "uk" if uk_count >= 1 else "ru"
+        if lat / total > 0.5:
+            # Distinguish EN vs IT by common Italian markers
+            it_markers = ('è', 'é', 'ò', 'à', 'ù', 'ì')
+            if any(m in text.lower() for m in it_markers):
+                return "it"
+            return "en"
+        return None
+
+    @staticmethod
+    def _photo_fallback(lang: str) -> str:
+        """Fallback text when user sends photo without caption — in user's language."""
+        _texts = {
+            "ru": "Проанализируй это изображение и извлеки данные о транзакции.",
+            "uk": "Проаналізуй це зображення та витягни дані про транзакцію.",
+            "en": "Analyze this image and extract transaction data.",
+            "it": "Analizza questa immagine ed estrai i dati della transazione.",
+        }
+        return _texts.get(lang, _texts["ru"])
+
     async def run(self, message: str, session: SessionContext,
                   media_type: str = "text",
                   media_data: bytes | None = None,
@@ -844,12 +883,18 @@ class ApolioAgent:
         )
 
         # T-066: Inject strict language directive so agent never switches language
+        # Priority: language of last user message > language setting (fallback)
+        _msg_lang = self._detect_msg_lang(message) if message else None
+        _response_lang = _msg_lang or user_lang
+        _response_lang_name = _lang_names.get(_response_lang, lang_name)
         system += (
             f"\n\n---\n\n## MANDATORY LANGUAGE\n"
-            f"The user's language is **{lang_name}** (code: {user_lang}). "
-            f"You MUST respond in {lang_name}. Do NOT switch to another language "
-            f"under any circumstances, even if the input looks like a callback value "
-            f"or a single English word. Always {lang_name}."
+            f"The user's configured language is {lang_name} (code: {user_lang}). "
+            f"However, the user's CURRENT message is in **{_response_lang_name}**. "
+            f"You MUST respond in **{_response_lang_name}**. "
+            f"Do NOT switch to another language under any circumstances, "
+            f"even if the input looks like a callback value or a single English word. "
+            f"Always {_response_lang_name}."
         )
 
         # T-065/T-067: Inject pending receipt context so agent remembers photo analysis
@@ -888,7 +933,7 @@ class ApolioAgent:
                         "data": base64.b64encode(media_data).decode(),
                     },
                 },
-                {"type": "text", "text": message or "Extract transaction data from this receipt."},
+                {"type": "text", "text": message or self._photo_fallback(user_lang)},
             ]
         else:
             user_content = message
