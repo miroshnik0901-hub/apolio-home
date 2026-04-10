@@ -586,6 +586,19 @@ SYS: dict[str, dict[str, str]] = {
     "bal_personal_exp": {
         "ru": "Оплатил лично", "uk": "Оплатив особисто", "en": "Paid personally", "it": "Pagato personalmente",
     },
+    # ── T-139: Duplicate transaction options ──
+    "dup_update": {
+        "ru": "📝 Обновить существующую", "uk": "📝 Оновити існуючу", "en": "📝 Update existing", "it": "📝 Aggiorna esistente",
+    },
+    "dup_add_new": {
+        "ru": "➕ Добавить как новую", "uk": "➕ Додати як нову", "en": "➕ Add as new", "it": "➕ Aggiungi come nuova",
+    },
+    "dup_cancel": {
+        "ru": "❌ Отмена", "uk": "❌ Скасувати", "en": "❌ Cancel", "it": "❌ Annulla",
+    },
+    "dup_cancelled": {
+        "ru": "Операция отменена.", "uk": "Операцію скасовано.", "en": "Operation cancelled.", "it": "Operazione annullata.",
+    },
     "bal_obligation": {
         "ru": "Обязательство", "uk": "Зобов'язання", "en": "Obligation", "it": "Obbligo",
     },

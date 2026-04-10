@@ -2644,6 +2644,123 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as ex:
             await query.edit_message_text(f"❌ Помилка: {ex}")
 
+    # ── T-139: cb_dup_<action> — duplicate transaction decision ─────────
+    elif data.startswith("cb_dup_"):
+        dup_action = data[7:]  # "update", "add_new", "cancel"
+        await query.answer()
+        try:
+            # Echo user choice as visible message
+            choice_labels = {
+                "update": i18n.ts("dup_update", lang),
+                "add_new": i18n.ts("dup_add_new", lang),
+                "cancel": i18n.ts("dup_cancel", lang),
+            }
+            echo_text = f"✅ {choice_labels.get(dup_action, dup_action)}"
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+            await ctx.bot.send_message(chat_id=query.message.chat_id, text=echo_text)
+
+            receipt = getattr(session, "_dup_receipt", None)
+            existing_tx_id = getattr(session, "_dup_existing_tx_id", "")
+            dup_account = getattr(session, "_dup_account", "")
+            dup_add_params = getattr(session, "_dup_add_params", {})
+            # Clear duplicate context immediately
+            session._dup_receipt = None
+            session._dup_existing_tx_id = None
+            session._dup_account = None
+            session._dup_add_params = None
+
+            if dup_action == "cancel":
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=i18n.ts("dup_cancelled", lang),
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+                return
+
+            from tools.transactions import tool_add_transaction, tool_enrich_transaction
+            await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+
+            if dup_action == "update" and existing_tx_id and receipt:
+                result = await tool_enrich_transaction(
+                    {
+                        "tx_id": existing_tx_id,
+                        "note": receipt.get("merchant", ""),
+                        "category": receipt.get("category", ""),
+                        "subcategory": receipt.get("subcategory", ""),
+                        "who": receipt.get("who", ""),
+                        "account": dup_account,
+                    },
+                    session, sheets, auth,
+                )
+                tx_id = existing_tx_id
+            elif dup_action == "add_new" and dup_add_params:
+                dup_add_params["force_add"] = True
+                result = await tool_add_transaction(dup_add_params, session, sheets, auth)
+                tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
+            else:
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="⚠️ Context lost — try again.",
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+                return
+
+            msg = result.get("message", "") if isinstance(result, dict) else str(result)
+
+            # Save receipt to PostgreSQL
+            if receipt:
+                try:
+                    await agent._tool_save_receipt(
+                        {
+                            "transaction_id": tx_id,
+                            "merchant": receipt.get("merchant", ""),
+                            "date": receipt.get("date", ""),
+                            "total_amount": receipt.get("total_amount", 0),
+                            "currency": receipt.get("currency", "EUR"),
+                            "items": receipt.get("items", []),
+                            "ai_summary": receipt.get("ai_summary", ""),
+                            "raw_text": receipt.get("raw_text", ""),
+                            "tg_file_id": receipt.get("tg_file_id", ""),
+                        },
+                        session, sheets, auth,
+                    )
+                except Exception:
+                    pass
+
+            # Log
+            try:
+                action_name = "enrich_transaction" if dup_action == "update" else "add_transaction"
+                await appdb.log_message(
+                    user_id=session.user_id, direction="bot",
+                    message_type="tool",
+                    raw_text=f"[tool:{action_name}] {msg}",
+                    tool_called=action_name,
+                    result_short=msg[:200] if msg else "",
+                    session_id=session.session_id,
+                    envelope_id=session.current_envelope_id or "",
+                )
+            except Exception:
+                pass
+
+            bal_line = _quick_balance_line(session, lang)
+            full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
+
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=full_msg,
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+        except Exception as e:
+            logger.error(f"Duplicate decision handler failed: {e}", exc_info=True)
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ {e}",
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+
     # ── cb_choice_<value> — agent choice buttons ───────────────────────────
     elif data.startswith("cb_choice_"):
         chosen_value = data[10:]
@@ -2655,15 +2772,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # without actually calling the tool).
         if chosen_value in ("yes_joint", "yes_personal") and getattr(session, "pending_receipt", None):
             receipt = session.pending_receipt
-            # T-138: immediately clear pending_receipt to prevent double-press duplicates
+            # T-138: immediately clear pending_receipt to prevent duplicate paths
             session.pending_receipt = None
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
             try:
-                # T-138: remove buttons immediately so user sees the press was registered
+                # T-139: echo user choice as visible message + remove buttons from feed
+                account_label = i18n.ts("bal_joint_topup", lang) if account == "Joint" else i18n.ts("bal_personal_exp", lang)
+                echo_text = f"✅ {account_label}"
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except BadRequest:
                     pass
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=echo_text,
+                )
                 await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
                 from tools.transactions import tool_add_transaction, tool_enrich_transaction
                 add_params = {
@@ -2676,32 +2799,40 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "note": receipt.get("merchant", ""),
                     "account": account,
                     "type": "expense",
-                    # T-134: first try WITHOUT force_add to detect duplicates
                 }
                 result = await tool_add_transaction(add_params, session, sheets, auth)
 
-                # T-134: if duplicate found, enrich existing transaction instead
+                # T-139: smart duplicate handling — present options to user
                 if (isinstance(result, dict)
                         and result.get("status") == "confirm_required"
                         and result.get("type") == "duplicate"):
                     existing_tx_id = result.get("existing_tx_id", "")
-                    if existing_tx_id:
-                        enrich_result = await tool_enrich_transaction(
-                            {
-                                "tx_id": existing_tx_id,
-                                "note": receipt.get("merchant", ""),
-                                "category": receipt.get("category", ""),
-                                "subcategory": receipt.get("subcategory", ""),
-                                "who": receipt.get("who", ""),
-                                "account": account,
-                            },
-                            session, sheets, auth,
-                        )
-                        result = enrich_result
-                    else:
-                        # No existing tx_id → force add
-                        add_params["force_add"] = True
-                        result = await tool_add_transaction(add_params, session, sheets, auth)
+                    dup_msg = result.get("message", "")
+                    # Store duplicate context for user decision
+                    session._dup_receipt = receipt
+                    session._dup_account = account
+                    session._dup_existing_tx_id = existing_tx_id
+                    session._dup_add_params = add_params
+                    dup_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            i18n.ts("dup_update", lang),
+                            callback_data="cb_dup_update",
+                        )],
+                        [InlineKeyboardButton(
+                            i18n.ts("dup_add_new", lang),
+                            callback_data="cb_dup_add_new",
+                        )],
+                        [InlineKeyboardButton(
+                            i18n.ts("dup_cancel", lang),
+                            callback_data="cb_dup_cancel",
+                        )],
+                    ])
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⚠️ {dup_msg}",
+                        reply_markup=dup_buttons,
+                    )
+                    return
 
                 if isinstance(result, dict) and "error" in result:
                     await ctx.bot.send_message(
@@ -2714,7 +2845,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
                 msg = result.get("message", "") if isinstance(result, dict) else str(result)
 
-                # Save receipt details to PostgreSQL parsed_data (Sheets Receipts tab removed)
+                # Save receipt details to PostgreSQL parsed_data
                 try:
                     await agent._tool_save_receipt(
                         {
@@ -2759,11 +2890,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-                # (pending_receipt already cleared at top — T-138)
-
-                # T-134 fix: show Who and Account in confirmation
+                # T-134: show Who and Account in confirmation
                 who_name = add_params.get("who", session.user_name)
-                account_label = i18n.ts("bal_joint_topup", lang) if account == "Joint" else i18n.ts("bal_personal_exp", lang)
                 confirm_line = f"👤 {who_name} · 📂 {account_label}"
                 msg = f"{msg}\n{confirm_line}" if msg else confirm_line
 
@@ -2771,7 +2899,6 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 bal_line = _quick_balance_line(session, lang)
                 full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
 
-                # (inline keyboard already removed at top — T-138)
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=full_msg,

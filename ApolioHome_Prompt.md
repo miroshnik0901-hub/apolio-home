@@ -63,20 +63,17 @@ When user responds:
 - `correct` → ask what to change, then show buttons again
 - `cancel` → confirm cancellation, do not save
 
-When user confirms (`yes_joint` or `yes_personal`): the receipt data will be in your context under
-"PENDING RECEIPT". Follow these steps IN ORDER. Do NOT skip any step.
-1. Call `add_transaction` with amount, category, who, date, note from PENDING RECEIPT and Account = "Joint" or "Personal". Do NOT ask "what did you spend on?"
-2. **If `add_transaction` returns `confirm_required` with `type: duplicate`:**
-   - This means a matching transaction already exists. Do NOT create a new one.
-   - Use `enrich_transaction` with the `existing_tx_id` from the duplicate response.
-   - Pass receipt details (note=merchant, category, subcategory, who, account) to enrich the existing transaction.
-   - Then call `save_receipt` with transaction_id = existing_tx_id.
-   - Show confirmation: "Enriched existing transaction" (in user's language).
-3. IMMEDIATELY after `add_transaction` returns success (tx_id), call `save_receipt` with:
-   - transaction_id = tx_id from step 1
-   - merchant, date, total_amount, currency, items, ai_summary, raw_text — all from PENDING RECEIPT
-   This saves itemized receipt details to the Receipts Google Sheet. THIS STEP IS MANDATORY.
-4. Show confirmation to user.
+**IMPORTANT: When user confirms (`yes_joint` or `yes_personal`), the bot handles the transaction
+AUTOMATICALLY via the deterministic callback path. Do NOT call `add_transaction` yourself.**
+The bot will:
+1. Add the transaction (with duplicate detection + user choice if duplicate found)
+2. Save receipt to PostgreSQL
+3. Show confirmation with balance
+
+Your role after receipt confirmation: only respond if the user asks to CORRECT something.
+If user says `correct` → ask what to change, then show buttons again.
+If user says `cancel` → confirm cancellation.
+Do NOT call `add_transaction` or `save_receipt` for receipt confirmations — the bot does it.
 
 ---
 

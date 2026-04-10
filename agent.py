@@ -865,10 +865,10 @@ class ApolioAgent:
                 f"- Category: {pending_receipt.get('category', 'Food')}/{pending_receipt.get('subcategory', '')}\n"
                 f"- Items: {len(pending_receipt.get('items', []))} items\n"
                 f"- tg_file_id: {pending_receipt.get('tg_file_id', '')}\n\n"
-                f"If the user confirms (says 'yes', 'да', 'так', 'запиши', or clicks a confirm button), "
-                f"call add_transaction with the receipt data above. Do NOT ask for more information.\n"
-                f"If the user wants to correct something, update the relevant field and confirm again.\n"
-                f"If the user cancels, acknowledge and clear."
+                f"**DO NOT call add_transaction or save_receipt for this receipt.** The bot handles "
+                f"transaction creation automatically when the user clicks a confirm button.\n"
+                f"Your role: if the user wants to CORRECT something, update the relevant field and "
+                f"show confirmation buttons again via present_options. If the user cancels, acknowledge."
             )
 
         # Build user content (text or with media)
