@@ -3458,11 +3458,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if uid not in _user_agent_locks:
             _user_agent_locks[uid] = asyncio.Lock()
         async with _user_agent_locks[uid]:
-            response = await agent.run(
-                text, session,
-                media_type=media_type,
-                media_data=media_data if media_type == "photo" else None,
-                telegram_bot=ctx.bot,
+            response = await asyncio.wait_for(
+                agent.run(
+                    text, session,
+                    media_type=media_type,
+                    media_data=media_data if media_type == "photo" else None,
+                    telegram_bot=ctx.bot,
+                ),
+                timeout=90.0,  # hard cap — prevents indefinite hangs
             )
 
             # Strip leaked tool-log lines from response (defense in depth).
@@ -3497,11 +3500,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception:
             pass
-    except Exception as agent_exc:
-        # BUG-009: agent.run() crash (API timeout, network error, etc.)
-        # must not leave the user staring at "думаю..." forever.
-        logger.error(f"agent.run() failed: {agent_exc}", exc_info=True)
-        response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
+    except BaseException as agent_exc:
+        # BUG-009: agent.run() crash — catch BaseException to also handle
+        # asyncio.CancelledError and asyncio.TimeoutError (both are BaseException
+        # subclasses in Python 3.9+). Without this, cancellations silently kill
+        # the handler and the user sees no response at all.
+        logger.error(f"agent.run() failed: {type(agent_exc).__name__}: {agent_exc}", exc_info=True)
+        try:
+            response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
+        except Exception:
+            response = "⚠️ Something went wrong. Please try again."
         # Log the exception to DB so we can debug without Railway logs
         try:
             if _db_ready:
@@ -3529,150 +3537,151 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    # ── BUG-010: Force receipt buttons if LLM skipped present_options ────
-    # The LLM sometimes analyzes a photo receipt but doesn't call
-    # store_pending_receipt / present_options. Detect this and force buttons.
-    pending_ch = getattr(session, "pending_choice", None)
-    if (
-        media_type == "photo"
-        and not pending_ch
-        and response
-        and any(kw in response.lower() for kw in ("eur", "usd", "uah", "грн", "сума", "итого", "total", "загальна"))
-    ):
-        logger.warning("BUG-010: photo receipt detected but LLM skipped present_options — forcing buttons")
-        # If LLM also skipped store_pending_receipt, try to parse from response
-        if not getattr(session, "pending_receipt", None):
-            # Extract minimal receipt data from the response text
-            import re as _re_receipt
-            _amount_m = _re_receipt.search(r"(\d[\d\s,.]*\d)\s*(EUR|USD|UAH|€|\$|грн)", response, _re_receipt.IGNORECASE)
-            _merchant_m = _re_receipt.search(r"(?:Заклад|Merchant|Магазин)[:\s]*([^\n•*]+)", response, _re_receipt.IGNORECASE)
-            _date_m = _re_receipt.search(r"(\d{2,4}[-/.]\d{2}[-/.]\d{2,4})", response)
-            _amount_val = float(_amount_m.group(1).replace(" ", "").replace(",", ".")) if _amount_m else 0
-            _currency_val = (_amount_m.group(2) if _amount_m else "EUR").upper().replace("€", "EUR").replace("$", "USD")
-            _merchant_val = _merchant_m.group(1).strip().rstrip("*").strip() if _merchant_m else ""
-            _date_val = _date_m.group(1) if _date_m else ""
-            session.pending_receipt = {
-                "merchant": _merchant_val,
-                "date": _date_val,
-                "total_amount": _amount_val,
-                "currency": _currency_val,
-                "category": "Food",
-                "subcategory": "",
-                "who": session.user_name,
-                "items": [],
-                "tg_file_id": media_file_id or "",
-                "ai_summary": response[:500],
-                "raw_text": response[:1000],
-            }
-            # Clear stale delete state when entering receipt flow
-            session.pending_delete_tx = None
-            session._bulk_delete_ids = None
-            logger.info(f"BUG-010: synthetic pending_receipt: {_amount_val} {_currency_val}, {_merchant_val}")
-        # Force the standard T-076 buttons
-        _t076_labels = {
-            "ru": ("✅ Да. Общий счёт", "✅ Да. Личный счёт", "✏️ Исправить", "❌ Отменить"),
-            "uk": ("✅ Так. Загальний рахунок", "✅ Так. Особистий рахунок", "✏️ Виправити", "❌ Скасувати"),
-            "en": ("✅ Yes. Joint account", "✅ Yes. Personal account", "✏️ Edit", "❌ Cancel"),
-            "it": ("✅ Sì. Conto comune", "✅ Sì. Conto personale", "✏️ Correggere", "❌ Annulla"),
-        }
-        _labels = _t076_labels.get(lang, _t076_labels["ru"])
-        pending_ch = [
-            {"label": _labels[0], "value": "yes_joint"},
-            {"label": _labels[1], "value": "yes_personal"},
-            {"label": _labels[2], "value": "correct"},
-            {"label": _labels[3], "value": "cancel"},
-        ]
-        session.pending_choice = pending_ch  # will be consumed below
-
-    # ── Post-response inline buttons ──────────────────────────────────────
-    pending_ch = getattr(session, "pending_choice", None)
-    pd = getattr(session, "pending_delete", None)
-    la = session.last_action
-
-    if pending_ch:
-        session.pending_choice = None  # consume
-        # T-139: store label mapping for echo on button press
-        session._last_choice_labels = {c["value"]: c["label"] for c in pending_ch}
-        # T-140/T-142: For delete confirmations, embed tx_id in callback_data
-        pending_del_tx = getattr(session, "pending_delete_tx", None)
-        choice_rows = []
-
-        # Check if pending_ch actually contains delete-related buttons
-        has_delete_btn = any(c["value"] == "confirm_delete" for c in pending_ch)
-
-        # If pending_del_tx is set but buttons are NOT delete-related
-        # (e.g. receipt yes_joint/yes_personal), clear the stale delete state
-        if pending_del_tx and not has_delete_btn:
-            session.pending_delete_tx = None
-            pending_del_tx = None
-
-        # T-143: If LLM passed multiple tx_ids (comma-separated),
-        # generate a single bulk-delete button + cancel
-        if has_delete_btn and pending_del_tx and "," in str(pending_del_tx):
-            tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
-            n = len(tx_ids)
-            bulk_label = f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}"
-            # Store bulk list in session for the handler
-            session._bulk_delete_ids = tx_ids
-            choice_rows.append([InlineKeyboardButton(
-                bulk_label, callback_data="cb_del_bulk",
-            )])
-            choice_rows.append([InlineKeyboardButton(
-                i18n.ts("dup_cancel", lang), callback_data="cb_cancel",
-            )])
-        else:
-            # Normal path: one button per choice
-            for c in pending_ch:
-                val = c["value"]
-                if val == "confirm_delete" and pending_del_tx:
-                    cb_data = f"cb_del_confirm_{pending_del_tx}"
-                else:
-                    cb_data = f"cb_choice_{val}"
-                choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
-        kb = _with_menu_btn(*choice_rows, lang=lang)
-        await _safe_reply(update.message, response, reply_markup=kb)
-    elif pd:
-        # Pending hard-delete: show confirm/cancel buttons instead of standard menu
-        s, e = pd["start_row"], pd["end_row"]
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                i18n.tu("btn_yes_delete_rows", lang, s=s, e=e),
-                callback_data=f"cb_confirm_del_{s}_{e}",
-            )],
-            [InlineKeyboardButton(i18n.tu("btn_cancel", lang), callback_data="cb_cancel_del")],
-        ])
-        await _safe_reply(update.message, response, reply_markup=kb)
-    elif la and la.action == "add" and "✓" in response:
-        tx_id = la.tx_id
-        # T-058: Append budget remaining after every expense add
-        try:
-            from tools.summary import tool_get_budget_status
-            budget = await tool_get_budget_status(
-                {"envelope_id": session.current_envelope_id},
-                session, sheets, auth,
-            )
-            if budget.get("status") == "ok":
-                spent = budget["spent"]
-                cap = budget["cap"]
-                remaining = budget["remaining"]
-                pct = budget["pct_used"]
-                _bal_labels = {
-                    "ru": "Осталось", "uk": "Залишилось",
-                    "en": "Remaining", "it": "Rimanente",
+    # ── BUG-010 + button rendering — wrapped in safety net ──────────────
+    # If anything here crashes, the user at least gets the text response.
+    try:
+        # Force receipt buttons if LLM skipped present_options
+        pending_ch = getattr(session, "pending_choice", None)
+        if (
+            media_type == "photo"
+            and not pending_ch
+            and response
+            and any(kw in response.lower() for kw in ("eur", "usd", "uah", "грн", "сума", "итого", "total", "загальна"))
+        ):
+            logger.warning("BUG-010: photo receipt detected but LLM skipped present_options — forcing buttons")
+            # If LLM also skipped store_pending_receipt, try to parse from response
+            if not getattr(session, "pending_receipt", None):
+                import re as _re_receipt
+                _amount_m = _re_receipt.search(r"(\d[\d\s,.]*\d)\s*(EUR|USD|UAH|€|\$|грн)", response, _re_receipt.IGNORECASE)
+                _merchant_m = _re_receipt.search(r"(?:Заклад|Merchant|Магазин)[:\s]*([^\n•*]+)", response, _re_receipt.IGNORECASE)
+                _date_m = _re_receipt.search(r"(\d{2,4}[-/.]\d{2}[-/.]\d{2,4})", response)
+                _amount_val = float(_amount_m.group(1).replace(" ", "").replace(",", ".")) if _amount_m else 0
+                _currency_val = (_amount_m.group(2) if _amount_m else "EUR").upper().replace("€", "EUR").replace("$", "USD")
+                _merchant_val = _merchant_m.group(1).strip().rstrip("*").strip() if _merchant_m else ""
+                _date_val = _date_m.group(1) if _date_m else ""
+                session.pending_receipt = {
+                    "merchant": _merchant_val,
+                    "date": _date_val,
+                    "total_amount": _amount_val,
+                    "currency": _currency_val,
+                    "category": "Food",
+                    "subcategory": "",
+                    "who": session.user_name,
+                    "items": [],
+                    "tg_file_id": media_file_id or "",
+                    "ai_summary": response[:500],
+                    "raw_text": response[:1000],
                 }
-                bal_label = _bal_labels.get(lang, "Remaining")
-                response += f"\n📊 {bal_label}: *{remaining:.0f}€* из {cap:.0f}€ ({pct}%)"
+                session.pending_delete_tx = None
+                session._bulk_delete_ids = None
+                logger.info(f"BUG-010: synthetic pending_receipt: {_amount_val} {_currency_val}, {_merchant_val}")
+            _t076_labels = {
+                "ru": ("✅ Да. Общий счёт", "✅ Да. Личный счёт", "✏️ Исправить", "❌ Отменить"),
+                "uk": ("✅ Так. Загальний рахунок", "✅ Так. Особистий рахунок", "✏️ Виправити", "❌ Скасувати"),
+                "en": ("✅ Yes. Joint account", "✅ Yes. Personal account", "✏️ Edit", "❌ Cancel"),
+                "it": ("✅ Sì. Conto comune", "✅ Sì. Conto personale", "✏️ Correggere", "❌ Annulla"),
+            }
+            _labels = _t076_labels.get(lang, _t076_labels["ru"])
+            pending_ch = [
+                {"label": _labels[0], "value": "yes_joint"},
+                {"label": _labels[1], "value": "yes_personal"},
+                {"label": _labels[2], "value": "correct"},
+                {"label": _labels[3], "value": "cancel"},
+            ]
+            session.pending_choice = pending_ch
+
+        # ── Post-response inline buttons ──────────────────────────────────
+        pending_ch = getattr(session, "pending_choice", None)
+        pd = getattr(session, "pending_delete", None)
+        la = session.last_action
+
+        if pending_ch:
+            session.pending_choice = None  # consume
+            session._last_choice_labels = {c["value"]: c["label"] for c in pending_ch}
+            pending_del_tx = getattr(session, "pending_delete_tx", None)
+            choice_rows = []
+            has_delete_btn = any(c["value"] == "confirm_delete" for c in pending_ch)
+            if pending_del_tx and not has_delete_btn:
+                session.pending_delete_tx = None
+                pending_del_tx = None
+            if has_delete_btn and pending_del_tx and "," in str(pending_del_tx):
+                tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
+                n = len(tx_ids)
+                bulk_label = f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}"
+                session._bulk_delete_ids = tx_ids
+                choice_rows.append([InlineKeyboardButton(
+                    bulk_label, callback_data="cb_del_bulk",
+                )])
+                choice_rows.append([InlineKeyboardButton(
+                    i18n.ts("dup_cancel", lang), callback_data="cb_cancel",
+                )])
+            else:
+                for c in pending_ch:
+                    val = c["value"]
+                    if val == "confirm_delete" and pending_del_tx:
+                        cb_data = f"cb_del_confirm_{pending_del_tx}"
+                    else:
+                        cb_data = f"cb_choice_{val}"
+                    choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
+            kb = _with_menu_btn(*choice_rows, lang=lang)
+            await _safe_reply(update.message, response, reply_markup=kb)
+        elif pd:
+            s, e = pd["start_row"], pd["end_row"]
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    i18n.tu("btn_yes_delete_rows", lang, s=s, e=e),
+                    callback_data=f"cb_confirm_del_{s}_{e}",
+                )],
+                [InlineKeyboardButton(i18n.tu("btn_cancel", lang), callback_data="cb_cancel_del")],
+            ])
+            await _safe_reply(update.message, response, reply_markup=kb)
+        elif la and la.action == "add" and "✓" in response:
+            tx_id = la.tx_id
+            try:
+                from tools.summary import tool_get_budget_status
+                budget = await tool_get_budget_status(
+                    {"envelope_id": session.current_envelope_id},
+                    session, sheets, auth,
+                )
+                if budget.get("status") == "ok":
+                    spent = budget["spent"]
+                    cap = budget["cap"]
+                    remaining = budget["remaining"]
+                    pct = budget["pct_used"]
+                    _bal_labels = {
+                        "ru": "Осталось", "uk": "Залишилось",
+                        "en": "Remaining", "it": "Rimanente",
+                    }
+                    bal_label = _bal_labels.get(lang, "Remaining")
+                    response += f"\n📊 {bal_label}: *{remaining:.0f}€* из {cap:.0f}€ ({pct}%)"
+            except Exception:
+                pass
+            kb = _with_menu_btn(
+                [InlineKeyboardButton(i18n.tu("btn_edit", lang),   callback_data=f"cb_edit_{tx_id}"),
+                 InlineKeyboardButton(i18n.tu("btn_delete", lang), callback_data=f"cb_del_{tx_id}")],
+                [InlineKeyboardButton(i18n.tu("btn_budget", lang), callback_data="cb_status")],
+                lang=lang,
+            )
+            await _safe_reply(update.message, response, reply_markup=kb)
+        else:
+            await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
+    except Exception as _render_exc:
+        logger.error(f"Post-agent rendering crashed: {_render_exc}", exc_info=True)
+        try:
+            if _db_ready:
+                await appdb.log_message(
+                    user_id=session.user_id, direction="bot",
+                    message_type="error",
+                    raw_text=f"[RENDER CRASHED] {type(_render_exc).__name__}: {str(_render_exc)[:500]}",
+                    session_id=session.session_id or "",
+                    envelope_id=session.current_envelope_id or "",
+                )
         except Exception:
-            pass  # Non-critical — don't break the flow
-        kb = _with_menu_btn(
-            [InlineKeyboardButton(i18n.tu("btn_edit", lang),   callback_data=f"cb_edit_{tx_id}"),
-             InlineKeyboardButton(i18n.tu("btn_delete", lang), callback_data=f"cb_del_{tx_id}")],
-            [InlineKeyboardButton(i18n.tu("btn_budget", lang), callback_data="cb_status")],
-            lang=lang,
-        )
-        await _safe_reply(update.message, response, reply_markup=kb)
-    else:
-        await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
+            pass
+        try:
+            await _safe_reply(update.message, response or "⚠️", reply_markup=_with_menu_btn(lang=lang))
+        except Exception:
+            pass
 
 
 # ── Weekly summary job ─────────────────────────────────────────────────────────

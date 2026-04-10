@@ -334,7 +334,8 @@ def format_context_for_prompt(rows: list[dict]) -> str:
 
 async def get_recent_messages_for_api(user_id: int,
                                        n_turns: int = 6,
-                                       telegram_bot=None) -> list[dict]:
+                                       telegram_bot=None,
+                                       max_images: int = 1) -> list[dict]:
     """
     Load the last n_turns conversation turns and return a properly alternating
     messages list ready for the Claude API.
@@ -342,6 +343,10 @@ async def get_recent_messages_for_api(user_id: int,
     If telegram_bot is provided, photo messages are re-downloaded from Telegram
     and included as base64 images in the history — giving Claude visual memory
     of previously sent screenshots without the user having to resend them.
+
+    max_images: cap on how many history images to re-download (default 1).
+    Re-downloading many photos bloats the API request token count and can cause
+    timeouts or 400 errors when multiple receipt photos accumulate in history.
 
     Rules:
       - Alternates user / assistant roles strictly
@@ -357,6 +362,7 @@ async def get_recent_messages_for_api(user_id: int,
     pending_role: str | None = None
     pending_parts: list = []   # list of text strings or image dicts
     messages: list[dict] = []
+    _images_included = 0  # track how many history images we've included
 
     def _flush():
         if pending_role is None or not pending_parts:
@@ -389,11 +395,16 @@ async def get_recent_messages_for_api(user_id: int,
         row_parts: list = []
 
         # For photo messages with a stored file_id, try to re-download the image
-        if msg_type == "photo" and file_id and telegram_bot is not None:
+        # BUT cap total images to avoid bloating the API request
+        if msg_type == "photo" and file_id and telegram_bot is not None and _images_included < max_images:
             try:
                 import base64 as _b64
-                tg_file = await telegram_bot.get_file(file_id)
-                img_bytes = await tg_file.download_as_bytearray()
+                tg_file = await asyncio.wait_for(
+                    telegram_bot.get_file(file_id), timeout=5.0
+                )
+                img_bytes = await asyncio.wait_for(
+                    tg_file.download_as_bytearray(), timeout=10.0
+                )
                 row_parts.append({
                     "type": "image",
                     "source": {
@@ -402,8 +413,9 @@ async def get_recent_messages_for_api(user_id: int,
                         "data": _b64.b64encode(bytes(img_bytes)).decode(),
                     },
                 })
+                _images_included += 1
             except Exception:
-                pass  # if download fails, fall through to text-only
+                pass  # if download fails or times out, fall through to text-only
             if text:
                 row_parts.append(text)
         elif text:

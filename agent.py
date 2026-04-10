@@ -896,8 +896,13 @@ class ApolioAgent:
         # has genuine context of prior exchanges (not just text in system prompt).
         import db as _db
         try:
+            # When current message is a photo, limit history images to 1
+            # (the current photo is already included in user_content).
+            # This prevents token bloat when multiple receipt photos accumulate.
+            _max_hist_images = 0 if (media_type == "photo" and media_data) else 1
             history_messages = await _db.get_recent_messages_for_api(
-                session.user_id, n_turns=12, telegram_bot=telegram_bot
+                session.user_id, n_turns=12, telegram_bot=telegram_bot,
+                max_images=_max_hist_images,
             ) if _db.is_ready() else []
         except Exception:
             history_messages = []
