@@ -924,17 +924,21 @@ class ApolioAgent:
         # Build user content (text or with media)
         if media_type == "photo" and media_data:
             import base64
-            user_content = [
-                {
+            # Support both single photo (bytes) and batch (list[bytes])
+            _photos = media_data if isinstance(media_data, list) else [media_data]
+            user_content = []
+            for _photo_bytes in _photos:
+                user_content.append({
                     "type": "image",
                     "source": {
                         "type": "base64",
                         "media_type": "image/jpeg",
-                        "data": base64.b64encode(media_data).decode(),
+                        "data": base64.b64encode(_photo_bytes).decode(),
                     },
-                },
-                {"type": "text", "text": message or self._photo_fallback(user_lang)},
-            ]
+                })
+            user_content.append(
+                {"type": "text", "text": message or self._photo_fallback(user_lang)}
+            )
         else:
             user_content = message
 

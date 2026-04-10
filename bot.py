@@ -3184,6 +3184,219 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+# ── Photo batch processor ─────────────────────────────────────────────────────
+
+async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
+    """Process a batch of photos collected over 4s as a single agent call."""
+    batch = getattr(session, "_photo_batch", [])
+    session._photo_batch = None  # consume immediately
+    session._photo_batch_task = None
+
+    if not batch:
+        return
+
+    # Ensure session has a session_id
+    if not getattr(session, "session_id", None):
+        session.session_id = make_session_id()
+
+    n_photos = len(batch)
+    logger.info(f"Photo batch: processing {n_photos} photo(s) for user {session.user_id}")
+
+    # Collect all captions
+    captions = [p["caption"] for p in batch if p.get("caption")]
+    all_media_data = [p["data"] for p in batch]
+    # Use last photo's file_id as the primary one
+    media_file_id = batch[-1]["file_id"]
+
+    # Build the user prompt
+    if captions:
+        text = " | ".join(captions)
+    elif n_photos == 1:
+        _photo_auto_analyze = {
+            "ru": (
+                "Проанализируй это изображение полностью. "
+                "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
+                "Не записывай ничего сам. "
+                "Покажи мне список всего, что ты увидел, и спроси что с этим сделать."
+            ),
+            "uk": (
+                "Проаналізуй це зображення повністю. "
+                "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
+                "Нічого не записуй сам. "
+                "Покажи мені список усього, що ти побачив, і спитай що з цим робити."
+            ),
+            "en": (
+                "Analyze this image fully. "
+                "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
+                "Do NOT record anything yet. "
+                "Show me everything you found and ask what to do with it."
+            ),
+            "it": (
+                "Analizza questa immagine completamente. "
+                "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
+                "Non registrare nulla da solo. "
+                "Mostrami tutto ciò che hai trovato e chiedi cosa fare."
+            ),
+        }
+        text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
+    else:
+        # Multiple photos without captions — batch analysis prompt
+        _batch_prompt = {
+            "ru": (
+                f"Пользователь отправил {n_photos} фото. Это могут быть разные документы "
+                "одного платежа (карточный чек, фискальный чек, заказ и т.д.). "
+                "Проанализируй ВСЕ фото, объедини информацию в ОДНУ транзакцию. "
+                "Извлеки: сумму, дату, заведение, позиции, НДС — всё, что есть. "
+                "Вызови store_pending_receipt ОДИН раз со всей собранной информацией. "
+                "Не записывай транзакцию — только предложи подтвердить."
+            ),
+            "uk": (
+                f"Користувач надіслав {n_photos} фото. Це можуть бути різні документи "
+                "одного платежу (картковий чек, фіскальний чек, замовлення тощо). "
+                "Проаналізуй ВСІ фото, об'єднай інформацію в ОДНУ транзакцію. "
+                "Витягни: суму, дату, заклад, позиції, ПДВ — все, що є. "
+                "Виклич store_pending_receipt ОДИН раз з усією зібраною інформацією. "
+                "Не записуй транзакцію — лише запропонуй підтвердити."
+            ),
+            "en": (
+                f"The user sent {n_photos} photos. These may be different documents "
+                "of the SAME payment (card slip, fiscal receipt, order, etc.). "
+                "Analyze ALL photos, merge info into ONE transaction. "
+                "Extract: amount, date, merchant, items, VAT — everything available. "
+                "Call store_pending_receipt ONCE with all collected info. "
+                "Do NOT record the transaction — only propose confirmation."
+            ),
+            "it": (
+                f"L'utente ha inviato {n_photos} foto. Possono essere documenti diversi "
+                "dello STESSO pagamento (scontrino, ricevuta fiscale, ordine ecc.). "
+                "Analizza TUTTE le foto, unisci le informazioni in UNA transazione. "
+                "Estrai: importo, data, esercente, voci, IVA — tutto disponibile. "
+                "Chiama store_pending_receipt UNA volta con tutte le info raccolte. "
+                "NON registrare la transazione — solo proponi conferma."
+            ),
+        }
+        text = _batch_prompt.get(lang, _batch_prompt["en"])
+
+    # Send "thinking" indicator
+    _thinking_phrases = {
+        "ru": "🏠 _думаю..._",
+        "uk": "🏠 _думаю..._",
+        "en": "🏠 _thinking..._",
+        "it": "🏠 _sto pensando..._",
+    }
+    _thinking_msg = None
+    try:
+        _thinking_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=_thinking_phrases.get(lang, "🏠 _думаю..._"),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception:
+        pass
+
+    try:
+        await bot.send_chat_action(chat_id=chat_id, action="typing")
+    except Exception:
+        pass
+
+    # Log user message
+    _db_ready = appdb.is_ready() if appdb else False
+    try:
+        if _db_ready:
+            await appdb.log_message(
+                user_id=session.user_id,
+                direction="user",
+                message_type="photo",
+                raw_text=f"[{n_photos} photo(s)] {text[:200]}",
+                session_id=session.session_id,
+                envelope_id=session.current_envelope_id or "",
+                media_file_id=media_file_id,
+            )
+    except Exception:
+        pass
+
+    # Call agent.run() with all photos
+    response = ""
+    try:
+        uid = session.user_id
+        if uid not in _user_agent_locks:
+            _user_agent_locks[uid] = asyncio.Lock()
+        async with _user_agent_locks[uid]:
+            response = await asyncio.wait_for(
+                agent.run(
+                    text, session,
+                    media_type="photo",
+                    media_data=all_media_data,  # list[bytes] for multi-photo
+                    telegram_bot=bot,
+                ),
+                timeout=90.0,
+            )
+            # Strip leaked tool-log lines
+            import re as _re
+            response = _re.sub(
+                r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
+            ).strip()
+    except BaseException as exc:
+        logger.error(f"Photo batch agent.run() failed: {type(exc).__name__}: {exc}", exc_info=True)
+        try:
+            response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
+        except Exception:
+            response = "⚠️ Something went wrong. Please try again."
+
+    # Log bot response
+    try:
+        if _db_ready:
+            await appdb.log_message(
+                user_id=session.user_id,
+                direction="bot",
+                message_type="response",
+                raw_text=response[:2000],
+                session_id=session.session_id,
+                envelope_id=session.current_envelope_id or "",
+            )
+    except Exception:
+        pass
+
+    # Delete thinking message
+    if _thinking_msg:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=_thinking_msg.message_id)
+        except Exception:
+            pass
+
+    # Send response + buttons
+    pending_ch = getattr(session, "pending_choice", None)
+    if pending_ch:
+        session.pending_choice = None
+        buttons = []
+        for c in pending_ch:
+            label = c.get("label", c.get("value", "?"))
+            value = c.get("value", label)
+            buttons.append([InlineKeyboardButton(label, callback_data=f"cb_choice_{value}")])
+        kb = InlineKeyboardMarkup(buttons)
+        await _safe_reply_to_chat(bot, chat_id, response, reply_markup=kb)
+    else:
+        await _safe_reply_to_chat(bot, chat_id, response, reply_markup=_with_menu_btn(lang=lang))
+
+
+async def _safe_reply_to_chat(bot, chat_id: int, text: str, **kwargs):
+    """Send a message to chat_id, splitting if too long."""
+    if not text:
+        text = "..."
+    MAX_LEN = 4000
+    for i in range(0, len(text), MAX_LEN):
+        chunk = text[i:i + MAX_LEN]
+        try:
+            await bot.send_message(chat_id=chat_id, text=chunk,
+                                   parse_mode=ParseMode.HTML, **kwargs)
+        except BadRequest:
+            # Fallback without HTML parsing
+            await bot.send_message(chat_id=chat_id, text=chunk, **kwargs)
+        # Only attach keyboard to last chunk
+        if "reply_markup" in kwargs:
+            kwargs = {k: v for k, v in kwargs.items() if k != "reply_markup"}
+
+
 # ── Main message handler ───────────────────────────────────────────────────────
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3346,72 +3559,33 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif msg.photo:
         file_obj = await msg.photo[-1].get_file()
         media_data = bytes(await file_obj.download_as_bytearray())
-        media_file_id = msg.photo[-1].file_id  # save Telegram file_id for memory
-        # Default prompt used ONLY when there is no caption.
-        # With a caption: the caption IS the instruction (e.g. "запиши взнос" → record immediately).
-        # Without a caption: analyze, show findings, ask for confirmation before recording.
-        _photo_auto_analyze = {
-            "ru": (
-                "Проанализируй это изображение полностью. "
-                "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
-                "Не записывай ничего сам. "
-                "Покажи мне список всего, что ты увидел, и спроси что с этим сделать."
-            ),
-            "uk": (
-                "Проаналізуй це зображення повністю. "
-                "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
-                "Нічого не записуй сам. "
-                "Покажи мені список усього, що ти побачив, і спитай що з цим робити."
-            ),
-            "en": (
-                "Analyze this image fully. "
-                "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
-                "Do NOT record anything yet. "
-                "Show me everything you found and ask what to do with it."
-            ),
-            "it": (
-                "Analizza questa immagine completamente. "
-                "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
-                "Non registrare nulla da solo. "
-                "Mostrami tutto ciò che hai trovato e chiedi cosa fare."
-            ),
-        }
-        # If there's already a pending_receipt, use a SHORT enrichment prompt
-        # instead of the full analysis prompt — prevents duplicate responses.
-        _has_pending = bool(getattr(session, "pending_receipt", None))
-        if msg.caption:
-            text = msg.caption
-        elif _has_pending:
-            _photo_enrich = {
-                "ru": (
-                    "Это ещё одно фото того же чека/платежа. "
-                    "Извлеки ТОЛЬКО новые детали (позиции, НДС, адрес и т.д.) "
-                    "и вызови store_pending_receipt для дополнения. "
-                    "НЕ показывай кнопки. Ответь кратко: что нового нашёл."
-                ),
-                "uk": (
-                    "Це ще одне фото того ж чека/платежу. "
-                    "Витягни ТІЛЬКИ нові деталі (позиції, ПДВ, адреса тощо) "
-                    "і виклич store_pending_receipt для доповнення. "
-                    "НЕ показуй кнопки. Відповідай коротко: що нового знайшов."
-                ),
-                "en": (
-                    "This is another photo of the SAME receipt/payment. "
-                    "Extract ONLY new details (items, VAT, address, etc.) "
-                    "and call store_pending_receipt to enrich. "
-                    "Do NOT show buttons. Reply briefly: what new info was found."
-                ),
-                "it": (
-                    "Questa è un'altra foto dello STESSO scontrino/pagamento. "
-                    "Estrai SOLO i nuovi dettagli (voci, IVA, indirizzo, ecc.) "
-                    "e chiama store_pending_receipt per arricchire. "
-                    "NON mostrare pulsanti. Rispondi brevemente: cosa hai trovato di nuovo."
-                ),
-            }
-            text = _photo_enrich.get(lang, _photo_enrich["en"])
-        else:
-            text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
-        media_type = "photo"
+        media_file_id = msg.photo[-1].file_id
+        caption = msg.caption or ""
+
+        # ── Photo batching: collect photos arriving within 4s, process all at once ──
+        # This prevents 3 separate responses for 3 receipt photos.
+        batch = getattr(session, "_photo_batch", None)
+        if batch is None:
+            batch = []
+            session._photo_batch = batch
+
+        batch.append({"data": media_data, "file_id": media_file_id, "caption": caption})
+
+        # Cancel previous batch timer (if any)
+        old_task = getattr(session, "_photo_batch_task", None)
+        if old_task and not old_task.done():
+            old_task.cancel()
+
+        # Schedule batch processing after 4s of silence
+        _chat_id = update.effective_chat.id
+        _bot = ctx.bot
+
+        async def _process_photo_batch():
+            await asyncio.sleep(4)
+            await _do_process_photo_batch(session, _chat_id, _bot, lang)
+
+        session._photo_batch_task = asyncio.create_task(_process_photo_batch())
+        return  # exit handle_message — batch timer will do the work
 
     elif msg.document and msg.document.mime_type in ("text/csv", "application/csv"):
         file_obj = await msg.document.get_file()
