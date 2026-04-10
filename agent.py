@@ -1462,29 +1462,53 @@ class ApolioAgent:
                     data_type="receipt",
                     limit=5,
                 )
-                already_saved = any(
-                    r.get("transaction_id") == tx_id for r in existing
-                )
+                already_saved = [
+                    r for r in existing if r.get("transaction_id") == tx_id
+                ]
+                new_payload = {
+                    "merchant": merchant,
+                    "date": date,
+                    "total_amount": total_amount,
+                    "currency": currency,
+                    "items": items,
+                    "ai_summary": ai_summary,
+                    "raw_text": raw_text,
+                    "tg_file_id": tg_file_id,
+                }
                 if not already_saved:
                     await _db.save_parsed_data(
                         user_id=session.user_id,
                         data_type="receipt",
-                        payload={
-                            "merchant": merchant,
-                            "date": date,
-                            "total_amount": total_amount,
-                            "currency": currency,
-                            "items": items,
-                            "ai_summary": ai_summary,
-                            "raw_text": raw_text,
-                            "tg_file_id": tg_file_id,
-                        },
+                        payload=new_payload,
                         envelope_id=session.current_envelope_id or "",
                         transaction_id=tx_id,
                     )
                     logger.info(f"Receipt saved to parsed_data: tx={tx_id}, merchant={merchant}")
                 else:
-                    logger.info(f"Receipt already in parsed_data, skipping duplicate: tx={tx_id}")
+                    # UPDATE existing parsed_data — merge new receipt info
+                    old_row = already_saved[0]
+                    old_payload = old_row.get("payload", {}) if isinstance(old_row.get("payload"), dict) else {}
+                    # Merge: prefer non-empty new values, combine items and summaries
+                    merged = {**old_payload}
+                    for k, v in new_payload.items():
+                        if k == "items":
+                            if v and len(v) > len(merged.get("items", [])):
+                                merged["items"] = v
+                        elif k == "ai_summary":
+                            old_sum = merged.get("ai_summary", "")
+                            if v and v not in old_sum:
+                                merged["ai_summary"] = (old_sum + "\n---\n" + v)[:2000] if old_sum else v
+                        elif k == "raw_text":
+                            old_raw = merged.get("raw_text", "")
+                            if v and v not in old_raw:
+                                merged["raw_text"] = (old_raw + "\n---\n" + v)[:3000] if old_raw else v
+                        elif v:
+                            merged[k] = v
+                    await _db.update_parsed_data_payload(
+                        row_id=old_row.get("id"),
+                        payload=merged,
+                    )
+                    logger.info(f"Receipt updated in parsed_data: tx={tx_id}, merged fields")
         except Exception as e:
             logger.warning(f"save_receipt PostgreSQL write failed: {e}")
 
@@ -1700,6 +1724,33 @@ class ApolioAgent:
         new_amount = float(params.get("total_amount", 0))
         new_currency = params.get("currency", "EUR")
 
+        # ── Early duplicate check against Sheets ────────────────────────────
+        # If a matching transaction already exists, tell LLM immediately
+        # so it can offer to enrich instead of going through add→duplicate→enrich.
+        existing_in_sheets = None
+        try:
+            envelope_id = session.current_envelope_id or ""
+            envelopes = sheets.get_envelopes()
+            file_id = None
+            for e in envelopes:
+                if e.get("ID") == envelope_id:
+                    file_id = e.get("file_id")
+                    break
+            if file_id:
+                date = params.get("date") or ""
+                if date:
+                    txs = sheets.get_transactions(file_id, {"date_from": date, "date_to": date, "limit": 20})
+                    for tx in txs:
+                        try:
+                            tx_amount = float(tx.get("Amount_Orig") or 0)
+                        except (ValueError, TypeError):
+                            tx_amount = 0.0
+                        if abs(tx_amount - new_amount) < 0.01:
+                            existing_in_sheets = tx
+                            break
+        except Exception:
+            pass  # best-effort
+
         # Guard: if pending_receipt already exists with same amount+currency,
         # this is another photo of the SAME transaction — enrich, don't replace.
         # Different photos (Nexi slip, restaurant receipt, table order) carry
@@ -1746,4 +1797,27 @@ class ApolioAgent:
         # Clear stale delete state — receipt flow takes priority
         session.pending_delete_tx = None
         session._bulk_delete_ids = None
+
+        # If matching transaction already exists, inform LLM to offer enrich path
+        if existing_in_sheets:
+            ex_id = existing_in_sheets.get("ID", "")
+            ex_cat = existing_in_sheets.get("Category", "")
+            ex_who = existing_in_sheets.get("Who", "")
+            ex_note = existing_in_sheets.get("Note", "")
+            return {
+                "status": "ok",
+                "existing_transaction": {
+                    "tx_id": ex_id,
+                    "category": ex_cat,
+                    "who": ex_who,
+                    "note": ex_note,
+                },
+                "hint_for_agent": (
+                    f"A matching transaction already exists: {ex_id} ({ex_cat}, {ex_who}, {ex_note}). "
+                    "Instead of presenting add buttons, ask the user: "
+                    "'Такая транзакция уже есть. Хочешь дополнить её деталями с чека?' "
+                    "If user confirms, call enrich_transaction with the new details. "
+                    "Also call save_receipt to store receipt data in parsed_data."
+                ),
+            }
         return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}

@@ -908,6 +908,28 @@ async def get_parsed_data(
         return []
 
 
+async def update_parsed_data_payload(
+    row_id: int,
+    payload: dict,
+) -> bool:
+    """Update payload_json for an existing parsed_data row (used for receipt enrichment)."""
+    pool = await get_pool()
+    if pool is None:
+        return False
+    try:
+        import json as _json
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE parsed_data SET payload_json=$1 WHERE id=$2",
+                _json.dumps(payload, ensure_ascii=False),
+                row_id,
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"[DB] update_parsed_data_payload failed: {e}")
+        return False
+
+
 # ── Support requests ───────────────────────────────────────────────────────────
 
 async def create_support_request(
