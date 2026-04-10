@@ -1897,4 +1897,25 @@ class ApolioAgent:
                     "Respond in the USER's language."
                 ),
             }
-        return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}
+        # Auto-set account selection buttons so user can confirm immediately
+        _lang = getattr(session, "_detected_lang", None) or getattr(session, "lang", "ru")
+        _btn_labels = {
+            "ru": ("💰 Общий", "👤 Личный"),
+            "uk": ("💰 Спільний", "👤 Особистий"),
+            "en": ("💰 Joint", "👤 Personal"),
+            "it": ("💰 Comune", "👤 Personale"),
+        }
+        _labels = _btn_labels.get(_lang, _btn_labels["ru"])
+        session.pending_choice = [
+            {"label": _labels[0], "value": "yes_joint", "callback_data": "cb_choice_yes_joint"},
+            {"label": _labels[1], "value": "yes_personal", "callback_data": "cb_choice_yes_personal"},
+        ]
+        return {
+            "status": "ok",
+            "message": "Receipt data stored. Account selection buttons queued.",
+            "hint_for_agent": (
+                "Account selection buttons (Joint/Personal) are already queued. "
+                "Do NOT call present_options — buttons are already set. "
+                "Just show the user the receipt analysis. Respond in the USER's language."
+            ),
+        }
