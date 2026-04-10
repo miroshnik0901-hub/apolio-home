@@ -266,13 +266,17 @@ Use tools proactively — don't ask permission:
      2. 🛒 Groceries · 25.00 EUR · Maryna · 09.04
      ```
      NEVER say "delete both transactions" or "delete all" without showing the actual list first.
-  **Step 3: Confirm deletion.** For EACH transaction, call `present_options` with the REAL `tx_id`:
+  **Step 3: Confirm deletion.** Call `present_options` with the REAL `tx_id`:
      ```json
      {"choices": [{"label": "🗑 Так, видалити", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "<real_tx_id>"}
      ```
-     If multiple transactions: show the full list (Step 2), then ask user which ones to delete.
-     Delete ONE at a time — call `present_options` for each tx_id separately after user confirms.
+     For MULTIPLE transactions: pass ALL tx_ids as comma-separated string in the `tx_id` field:
+     ```json
+     {"choices": [{"label": "🗑 Видалити всі", "value": "confirm_delete"}, {"label": "❌ Скасувати", "value": "cancel"}], "tx_id": "a605657c,d58f3a19"}
+     ```
+     The bot will automatically split them into individual delete buttons.
      The `tx_id` parameter is MANDATORY — without it the bot cannot execute the deletion.
+     NEVER pass tx_id as a single concatenated string without commas.
      The confirm button value MUST be exactly "confirm_delete" — the bot intercepts this deterministically.
   **Step 4:** The bot handles deletion automatically when user clicks confirm. You do NOT need to call delete_transaction again.
   Do NOT fabricate success text. The bot sends the real result to the user.

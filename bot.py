@@ -3030,11 +3030,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Pass chosen value back to agent as if the user sent it as text
         try:
-            # Remove old inline keyboard (T-095)
+            # T-139: remove buttons + echo user choice as visible message
             try:
                 await query.edit_message_reply_markup(reply_markup=None)
             except BadRequest:
                 pass
+            # Find the label for this choice from pending_choice (if available)
+            echo_label = chosen_value
+            _prev_choices = getattr(session, "_last_choice_labels", {})
+            if chosen_value in _prev_choices:
+                echo_label = _prev_choices[chosen_value]
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"✅ {echo_label}",
+            )
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             response = await agent.run(chosen_value, session)
             pending_ch2 = getattr(session, "pending_choice", None)
@@ -3484,17 +3493,33 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if pending_ch:
         session.pending_choice = None  # consume
-        # T-140: For delete confirmations, use cb_del_confirm_{tx_id} callback
-        # so the tx_id survives bot restarts (not stored in session)
+        # T-139: store label mapping for echo on button press
+        session._last_choice_labels = {c["value"]: c["label"] for c in pending_ch}
+        # T-140/T-142: For delete confirmations, embed tx_id in callback_data
         pending_del_tx = getattr(session, "pending_delete_tx", None)
         choice_rows = []
-        for c in pending_ch:
-            val = c["value"]
-            if val == "confirm_delete" and pending_del_tx:
-                cb_data = f"cb_del_confirm_{pending_del_tx}"
-            else:
-                cb_data = f"cb_choice_{val}"
-            choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
+
+        # T-142: If LLM passed multiple tx_ids (comma-separated), split into
+        # one delete button per tx_id so each can be deleted independently
+        if pending_del_tx and "," in str(pending_del_tx):
+            tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
+            for tid in tx_ids:
+                choice_rows.append([InlineKeyboardButton(
+                    f"🗑️ {tid[:8]}…",
+                    callback_data=f"cb_del_confirm_{tid}",
+                )])
+            choice_rows.append([InlineKeyboardButton(
+                i18n.ts("dup_cancel", lang), callback_data="cb_cancel",
+            )])
+        else:
+            # Normal path: one button per choice
+            for c in pending_ch:
+                val = c["value"]
+                if val == "confirm_delete" and pending_del_tx:
+                    cb_data = f"cb_del_confirm_{pending_del_tx}"
+                else:
+                    cb_data = f"cb_choice_{val}"
+                choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
         kb = _with_menu_btn(*choice_rows, lang=lang)
         await _safe_reply(update.message, response, reply_markup=kb)
     elif pd:
