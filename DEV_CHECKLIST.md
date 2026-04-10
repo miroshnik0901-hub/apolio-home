@@ -10,6 +10,8 @@ Read CLAUDE_WORKING_GUIDE.md first. Then use this checklist before and after eve
 - [ ] Traced the full chain: where it's initialized → where it's used → where it renders
 - [ ] Checked for duplicate logic elsewhere
 - [ ] Stated the target end-state (exactly what should be true after the change)
+- [ ] **No hardcoding:** if a method/tool already exists for this (present_options, i18n.ts, _with_menu_btn, etc.) — USE IT, don't reinvent
+- [ ] **Grep before writing:** search codebase for existing patterns before adding new UI, buttons, or labels
 
 ---
 
@@ -115,6 +117,15 @@ Read CLAUDE_WORKING_GUIDE.md first. Then use this checklist before and after eve
 - [ ] Send a photo without caption — bot responds (not silent)
 - [ ] Send "как дела с бюджетом?" — bot responds with budget intelligence
 - [ ] Check Google Sheet: UserContext, ConversationLog, Receipts tabs auto-created on first use
+
+### Regression testing (MANDATORY after every push)
+- [ ] **Photo: new receipt** — single photo → analysis + Joint/Personal/Edit/Cancel buttons
+- [ ] **Photo: duplicate** — photo matching existing tx → "Да, дополнить / Нет, отменить" buttons
+- [ ] **Photo: enrichment** — second photo of same tx → itemized details shown + parsed_data updated in DB
+- [ ] **Photo: batch** — 2-3 photos within 4s → ONE combined response
+- [ ] **Text command** — "coffee 3.50" → transaction added, buttons work
+- [ ] **Language** — bot responds in the language of the user's message
+- [ ] **Adjacent flows** — test flows that SHARE CODE with the changed flow, not just the changed flow itself
 
 ### Telegram button testing
 - [ ] ☰ Меню → opens main menu (Status, Analytics, Records, Envelopes, System)
