@@ -1798,12 +1798,31 @@ class ApolioAgent:
         session.pending_delete_tx = None
         session._bulk_delete_ids = None
 
-        # If matching transaction already exists, inform LLM to offer enrich path
+        # If matching transaction already exists, set up enrich buttons directly
+        # so user gets immediate actionable choice (no extra LLM round-trip).
         if existing_in_sheets:
             ex_id = existing_in_sheets.get("ID", "")
             ex_cat = existing_in_sheets.get("Category", "")
             ex_who = existing_in_sheets.get("Who", "")
             ex_note = existing_in_sheets.get("Note", "")
+            # Store duplicate context for bot.py enrich handler
+            session._dup_receipt = receipt_data
+            session._dup_existing_tx_id = ex_id
+            session._dup_account = ""  # will be resolved by enrich handler
+            session._dup_add_params = {}
+            # Set up enrich buttons via pending_choice
+            _lang = getattr(session, "_detected_lang", None) or getattr(session, "lang", "ru")
+            _enrich_labels = {
+                "ru": ("✅ Да, дополнить", "❌ Нет, отменить"),
+                "uk": ("✅ Так, доповнити", "❌ Ні, скасувати"),
+                "en": ("✅ Yes, enrich", "❌ No, cancel"),
+                "it": ("✅ Sì, arricchire", "❌ No, annulla"),
+            }
+            _labels = _enrich_labels.get(_lang, _enrich_labels["ru"])
+            session.pending_choice = [
+                {"label": _labels[0], "value": "dup_update", "callback_data": "cb_dup_update"},
+                {"label": _labels[1], "value": "dup_cancel", "callback_data": "cb_dup_cancel"},
+            ]
             return {
                 "status": "ok",
                 "existing_transaction": {
@@ -1814,10 +1833,10 @@ class ApolioAgent:
                 },
                 "hint_for_agent": (
                     f"A matching transaction already exists: {ex_id} ({ex_cat}, {ex_who}, {ex_note}). "
-                    "Instead of presenting add buttons, ask the user: "
-                    "'Такая транзакция уже есть. Хочешь дополнить её деталями с чека?' "
-                    "If user confirms, call enrich_transaction with the new details. "
-                    "Also call save_receipt to store receipt data in parsed_data."
+                    "Enrich/cancel buttons are already queued. Tell the user briefly what receipt "
+                    "details were found and that a matching transaction exists. "
+                    "Do NOT call present_options — buttons are already set. "
+                    "Respond in the USER's language."
                 ),
             }
         return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}

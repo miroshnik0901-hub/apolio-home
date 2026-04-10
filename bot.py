@@ -81,6 +81,32 @@ _IS_TEST_BOT = os.environ.get("TELEGRAM_BOT_TOKEN", "").startswith("8298458285:"
 # Flag: True once PostgreSQL is ready (set in post_init)
 _db_ready = False
 
+# ── Language detection ─────────────────────────────────────────────────────────
+
+def _detect_user_lang(text: str) -> str | None:
+    """Detect language from user text by character analysis. Returns lang code or None."""
+    if not text or len(text.strip()) < 3:
+        return None
+    cyr = lat = 0
+    for ch in text:
+        if '\u0400' <= ch <= '\u04FF' or '\u0500' <= ch <= '\u052F':
+            cyr += 1
+        elif ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'):
+            lat += 1
+    total = cyr + lat
+    if total < 2:
+        return None
+    if cyr / total > 0.5:
+        uk_chars = set('іїєґІЇЄҐ')
+        uk_count = sum(1 for ch in text if ch in uk_chars)
+        return "uk" if uk_count >= 1 else "ru"
+    if lat / total > 0.5:
+        if any(m in text.lower() for m in ('è', 'é', 'ò', 'à', 'ù', 'ì')):
+            return "it"
+        return "en"
+    return None
+
+
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
 def _build_main_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
@@ -3127,7 +3153,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if pending_ch2:
                 session.pending_choice = None
                 choice_rows2 = [
-                    [InlineKeyboardButton(c["label"], callback_data=f"cb_choice_{c['value']}")]
+                    [InlineKeyboardButton(c["label"],
+                     callback_data=c.get("callback_data") or f"cb_choice_{c['value']}")]
                     for c in pending_ch2
                 ]
                 kb = _with_menu_btn(*choice_rows2, lang=lang)
@@ -3371,8 +3398,9 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
         buttons = []
         for c in pending_ch:
             label = c.get("label", c.get("value", "?"))
-            value = c.get("value", label)
-            buttons.append([InlineKeyboardButton(label, callback_data=f"cb_choice_{value}")])
+            # Support explicit callback_data (for dup_update/dup_cancel routing)
+            cb = c.get("callback_data") or f"cb_choice_{c.get('value', label)}"
+            buttons.append([InlineKeyboardButton(label, callback_data=cb)])
         kb = InlineKeyboardMarkup(buttons)
         await _safe_reply_to_chat(bot, chat_id, response, reply_markup=kb)
     else:
@@ -3418,8 +3446,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     role = tg_user.get("role", "viewer")
     lang = getattr(session, "lang", "en")
 
+    # Use detected language from recent text messages as primary
+    lang = getattr(session, "_detected_lang", None) or lang
+
     if msg.text:
         text = msg.text.strip()
+        # Detect user's actual language from text and persist it on session
+        # so photo messages (no text) can use the correct language.
+        _det = _detect_user_lang(text)
+        if _det:
+            session._detected_lang = _det
+            lang = _det  # override for this request too
 
         # ── Reply keyboard buttons ALWAYS take priority (even over pending prompts) ──
         # This prevents "☰ Ще", "💰 Бюджет" etc. from being swallowed by pending_prompt
@@ -3838,6 +3875,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     val = c["value"]
                     if val == "confirm_delete" and pending_del_tx:
                         cb_data = f"cb_del_confirm_{pending_del_tx}"
+                    elif c.get("callback_data"):
+                        cb_data = c["callback_data"]
                     else:
                         cb_data = f"cb_choice_{val}"
                     choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
