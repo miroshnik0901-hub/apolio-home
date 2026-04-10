@@ -2655,8 +2655,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # without actually calling the tool).
         if chosen_value in ("yes_joint", "yes_personal") and getattr(session, "pending_receipt", None):
             receipt = session.pending_receipt
+            # T-138: immediately clear pending_receipt to prevent double-press duplicates
+            session.pending_receipt = None
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
             try:
+                # T-138: remove buttons immediately so user sees the press was registered
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
                 await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
                 from tools.transactions import tool_add_transaction, tool_enrich_transaction
                 add_params = {
@@ -2752,7 +2759,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-                session.pending_receipt = None
+                # (pending_receipt already cleared at top — T-138)
 
                 # T-134 fix: show Who and Account in confirmation
                 who_name = add_params.get("who", session.user_name)
@@ -2764,11 +2771,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 bal_line = _quick_balance_line(session, lang)
                 full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
 
-                # Remove old inline keyboard (T-095)
-                try:
-                    await query.edit_message_reply_markup(reply_markup=None)
-                except BadRequest:
-                    pass
+                # (inline keyboard already removed at top — T-138)
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=full_msg,
