@@ -3248,29 +3248,29 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
             "ru": (
                 "Проанализируй это изображение полностью. "
                 "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
-                "Вызови store_pending_receipt с извлечёнными данными. "
-                "НЕ вызывай add_transaction — только store_pending_receipt. "
+                "Вызови store_pending_receipt с данными, затем present_options с кнопками выбора счёта. "
+                "НЕ вызывай add_transaction. "
                 "Покажи мне список всего, что ты нашёл."
             ),
             "uk": (
                 "Проаналізуй це зображення повністю. "
                 "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
-                "Виклич store_pending_receipt з витягнутими даними. "
-                "НЕ викликай add_transaction — лише store_pending_receipt. "
+                "Виклич store_pending_receipt з даними, потім present_options з кнопками вибору рахунку. "
+                "НЕ викликай add_transaction. "
                 "Покажи мені список усього, що ти побачив."
             ),
             "en": (
                 "Analyze this image fully. "
                 "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
-                "Call store_pending_receipt with the extracted data. "
-                "Do NOT call add_transaction — only store_pending_receipt. "
+                "Call store_pending_receipt with the data, then present_options with account buttons. "
+                "Do NOT call add_transaction. "
                 "Show me everything you found."
             ),
             "it": (
                 "Analizza questa immagine completamente. "
                 "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
-                "Chiama store_pending_receipt con i dati estratti. "
-                "NON chiamare add_transaction — solo store_pending_receipt. "
+                "Chiama store_pending_receipt con i dati, poi present_options con i pulsanti del conto. "
+                "NON chiamare add_transaction. "
                 "Mostrami tutto ciò che hai trovato."
             ),
         }
