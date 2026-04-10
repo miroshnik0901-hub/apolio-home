@@ -1816,18 +1816,26 @@ class ApolioAgent:
                     except Exception as _e:
                         logger.warning(f"store_pending_receipt: parsed_data write failed: {_e}")
 
-            # Build response with items so LLM can show them to user
-            _items_list = existing.get("items", [])
+            # Return full merged receipt so LLM can show all details to user
             _resp = {
                 "status": "ok",
                 "message": f"Receipt enriched with: {', '.join(enriched_fields)}. Do NOT call present_options again — buttons already shown.",
+                "receipt": {
+                    "merchant": existing.get("merchant", ""),
+                    "date": existing.get("date", ""),
+                    "total_amount": existing.get("total_amount", 0),
+                    "currency": existing.get("currency", "EUR"),
+                    "category": existing.get("category", ""),
+                    "subcategory": existing.get("subcategory", ""),
+                    "items": existing.get("items", []),
+                    "who": existing.get("who", ""),
+                },
+                "hint_for_agent": (
+                    "Show the user the FULL enriched receipt details: merchant, date, amount, "
+                    "all items/dishes with prices, category, who paid. "
+                    "Present it clearly and completely. Respond in the USER's language."
+                ),
             }
-            if _items_list:
-                _resp["items"] = _items_list
-                _resp["hint_for_agent"] = (
-                    "Show the user the itemized receipt details you just received. "
-                    "List the dishes/items with prices. Respond in the USER's language."
-                )
             return _resp
 
         receipt_data = {
