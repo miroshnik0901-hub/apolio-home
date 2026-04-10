@@ -11,6 +11,8 @@ Read CLAUDE_WORKING_GUIDE.md before any change.
 - If architecture changed → update CLAUDE_WORKING_GUIDE.md (file map, tools, schemas).
 - Run `python3 test_regression.py` — all section 1 and 2 tests must pass.
 - After push to `dev` → check staging DB / logs to confirm deploy works.
+- **No hardcoding.** Never hardcode buttons/labels/UI. Use existing methods (present_options, i18n, etc.).
+- **Regression test ALL flows** — not just the one you changed. See DEV_CHECKLIST.md and CLAUDE_WORKING_GUIDE.md §14.
 
 ## Testing
 

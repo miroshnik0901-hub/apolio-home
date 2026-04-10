@@ -174,7 +174,6 @@ python3 -m py_compile bot.py auth.py sheets.py intelligence.py agent.py
 ```
 
 - [ ] All .py files compile without SyntaxError
-- [ ] `{contribution_context}` placeholder in ApolioHome_Prompt.md
 - [ ] No `FINANCIAL CONTEXT` hardcode in prompt
 - [ ] No hardcoded amounts (2500, 650) in prompt or intelligence.py
 - [ ] `read_envelope_config` in intelligence.py (not `read_config`)
