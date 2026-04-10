@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 import menu_config as mc
 import i18n
 
+# Per-user lock to serialize agent.run() calls — prevents concurrent API calls
+# that crash due to rate limits and session state races on multi-photo sends.
+_user_agent_locks: dict[int, asyncio.Lock] = {}
+
 from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
@@ -3448,20 +3452,26 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        response = await agent.run(
-            text, session,
-            media_type=media_type,
-            media_data=media_data if media_type == "photo" else None,
-            telegram_bot=ctx.bot,
-        )
+        # Serialize agent.run() per user — prevents concurrent API calls
+        # that crash on multi-photo sends (rate limits + session state races)
+        uid = session.user_id
+        if uid not in _user_agent_locks:
+            _user_agent_locks[uid] = asyncio.Lock()
+        async with _user_agent_locks[uid]:
+            response = await agent.run(
+                text, session,
+                media_type=media_type,
+                media_data=media_data if media_type == "photo" else None,
+                telegram_bot=ctx.bot,
+            )
 
-        # Strip leaked tool-log lines from response (defense in depth).
-        # Claude sometimes mimics "[tool:xyz] ..." lines from conversation
-        # history — these are internal and must never reach the user.
-        import re as _re
-        response = _re.sub(
-            r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
-        ).strip()
+            # Strip leaked tool-log lines from response (defense in depth).
+            # Claude sometimes mimics "[tool:xyz] ..." lines from conversation
+            # history — these are internal and must never reach the user.
+            import re as _re
+            response = _re.sub(
+                r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
+            ).strip()
 
         # Log bot response after agent call
         try:
@@ -3492,6 +3502,19 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # must not leave the user staring at "думаю..." forever.
         logger.error(f"agent.run() failed: {agent_exc}", exc_info=True)
         response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
+        # Log the exception to DB so we can debug without Railway logs
+        try:
+            if _db_ready:
+                await appdb.log_message(
+                    user_id=session.user_id,
+                    direction="bot",
+                    message_type="error",
+                    raw_text=f"[agent.run() CRASHED] {type(agent_exc).__name__}: {str(agent_exc)[:500]}",
+                    session_id=session.session_id or "",
+                    envelope_id=session.current_envelope_id or "",
+                )
+        except Exception:
+            pass
         # If present_options was already called before the crash,
         # pending_choice is set — we'll still show the buttons below.
     finally:
