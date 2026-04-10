@@ -654,12 +654,30 @@ class EnvelopeSheets:
             rows.append(["", "", "", "", ""])
 
             # ── Section C: CATEGORIES — formulas via SUMPRODUCT ──────────
+            # Write ALL main expense categories (from Categories sheet),
+            # not just those with data. Formulas evaluate to 0 for empty cats.
             rows.append(["[CATEGORIES]", "", "", "", ""])
-            top_cats = snap.get("top_categories", {})
-            if top_cats:
+            # Collect unique top-level expense categories from Categories sheet
+            all_expense_cats: list[str] = []
+            try:
+                cat_ws = self._ws("Categories")
+                cat_rows = cat_ws.get_all_values()
+                for cr_row in cat_rows[1:]:  # skip header
+                    cat_name = cr_row[0].strip() if cr_row else ""
+                    cat_type = cr_row[2].strip().lower() if len(cr_row) > 2 else ""
+                    if cat_name and cat_type == "expense" and cat_name not in all_expense_cats:
+                        all_expense_cats.append(cat_name)
+            except Exception:
+                pass
+            # Fallback: if Categories sheet read failed, use top_categories from snap
+            if not all_expense_cats:
+                top_cats = snap.get("top_categories", {})
+                all_expense_cats = list(top_cats.keys()) if top_cats else []
+
+            if all_expense_cats:
                 rows.append(["Category", "Amount", "Pct", "Count", ""])
-                cat_start_row = len(rows) + 1  # next row number
-                for cat_idx, (cat, _) in enumerate(top_cats.items()):
+                cat_start_row = len(rows) + 1
+                for cat_idx, cat in enumerate(all_expense_cats):
                     cr = cat_start_row + cat_idx
                     f_cat_amt = (
                         f'=SUMPRODUCT(({_D}=A{cr})*({_I}="expense")*{_ND}*{_CM}*{_H})'
@@ -670,10 +688,12 @@ class EnvelopeSheets:
                     )
                     rows.append([cat, f_cat_amt, f_cat_pct, f_cat_cnt, ""])
             else:
-                rows.append(["(no expenses this month)", "", "", "", ""])
+                rows.append(["(no expense categories found)", "", "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section D: HISTORY — values (cross-month formulas impractical)
+            # ── Section D: HISTORY — formulas per month ───────────────
+            # Each row uses SUMPRODUCT formulas parameterized by its own
+            # A-column (month text), so values stay fresh automatically.
             rows.append(["[HISTORY]", "", "", "", ""])
             if contrib_history:
                 all_users: list = []
@@ -682,44 +702,80 @@ class EnvelopeSheets:
                         if u not in all_users:
                             all_users.append(u)
 
-                h_row = ["Month", "Spent", "Budget", "Pct"]
+                h_header = ["Month", "Spent", "Budget", "Pct"]
                 for u in all_users:
-                    h_row += [f"{u}_obligation", f"{u}_credit"]
-                rows.append(h_row)
+                    h_header += [f"{u}_obligation", f"{u}_credit"]
+                # Pad to max_cols
+                while len(h_header) < 8:
+                    h_header.append("")
+                rows.append(h_header)
 
-                ytd_spent = 0.0
+                # Helper: month-match for a given row referencing A{row}
+                def _month_match(row_n: int) -> str:
+                    return f'(TEXT({_R},"yyyy-mm")=A{row_n})'
 
-                for h in contrib_history:
-                    if h.get("status") != "ok":
-                        continue
-                    h_threshold = h.get("threshold", 0)
-                    h_spent = h.get("total_expenses", 0)
-                    h_pct = round(h_spent / h_threshold * 100, 1) if h_threshold else 0
-                    ytd_spent += float(h_spent)
-                    # Prefix month with ' to prevent Google Sheets auto-date conversion
+                ok_months = [h for h in contrib_history if h.get("status") == "ok"]
+
+                for h_idx, h in enumerate(ok_months):
                     h_month = "'" + h.get("month", "") if h.get("month") else ""
-                    data_row = [h_month, round(float(h_spent), 2), round(float(h_threshold), 2), h_pct]
+                    r = len(rows) + 1  # 1-indexed row number for this data row
+                    _HM = _month_match(r)  # month filter for this row
+
+                    # Spent: sum of expenses for this month
+                    f_spent = f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_HM}*{_H})'
+                    # Budget: from Config
+                    f_budget = '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)'
+                    # Pct: spent/budget
+                    f_pct = f'=IF(C{r}>0,B{r}/C{r}*100,0)'
+
+                    data_row = [h_month, f_spent, f_budget, f_pct]
+
+                    # Per-user obligation and credit formulas
+                    # (same logic as USER_BALANCE but with row-specific month match)
+                    f_total_min = "+".join(
+                        f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in all_users
+                    )
+                    f_split_base = f"B{r}-({f_total_min})"
+
                     for u in all_users:
-                        obl = round(float(h.get("user_shares", {}).get(u, 0)), 2)
-                        credit = round(float(h.get("balances", {}).get(u, 0)), 2)
-                        data_row += [obl, credit]
+                        f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
+                        f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
+                        f_top_up = (
+                            f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_HM}*{_H})'
+                        )
+                        f_pers_exp = (
+                            f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_HM}*{_H})'
+                        )
+                        f_obligation = (
+                            f"=({f_min_u}-{f_top_up})"
+                            f"+MAX(0,{f_split_base})*{f_split_u}/100"
+                            f"-{f_pers_exp}"
+                        )
+                        u_col_idx = 4 + all_users.index(u) * 2  # E=4, G=6, etc.
+                        u_col_letter = chr(65 + u_col_idx)
+                        f_credit = f"=-{u_col_letter}{r}"
+                        data_row += [f_obligation, f_credit]
+
+                    # Pad
+                    while len(data_row) < 8:
+                        data_row.append("")
                     rows.append(data_row)
 
-                # YTD totals row — SUM formulas for history columns
-                hist_header_row = len(rows) - len(contrib_history)
+                # YTD totals row — SUM formulas
+                first_data = len(rows) - len(ok_months) + 1
+                last_data = len(rows)
                 ytd_row_cells: list = ["YTD"]
-                # Spent = SUM of spent column
-                first_data = hist_header_row + 1
-                last_data = first_data + len([h for h in contrib_history if h.get("status") == "ok"]) - 1
                 ytd_row_cells.append(f"=SUM(B{first_data}:B{last_data})")
-                ytd_row_cells.append("")
-                ytd_row_cells.append("")
-                col_offset = 4  # E, F for first user, G, H for second...
+                ytd_row_cells.append("")  # Budget — no YTD sum
+                ytd_row_cells.append("")  # Pct — no YTD sum
+                col_offset = 4
                 for u in all_users:
-                    for ci in range(2):  # obligation, credit
+                    for ci in range(2):
                         c_letter = chr(65 + col_offset + ci)
                         ytd_row_cells.append(f"=SUM({c_letter}{first_data}:{c_letter}{last_data})")
                     col_offset += 2
+                while len(ytd_row_cells) < 8:
+                    ytd_row_cells.append("")
                 rows.append(ytd_row_cells)
             else:
                 rows.append(["(no history data)", "", "", "", ""])
