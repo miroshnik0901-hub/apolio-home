@@ -2617,32 +2617,52 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── cb_del_confirm_<tx_id> ─────────────────────────────────────────────
     elif data.startswith("cb_del_confirm_"):
         tx_id = data[15:]
+        await query.answer()
+        # T-140: remove buttons + echo user choice
         try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+        await ctx.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🗑️ {i18n.tu('btn_yes_delete', lang)}",
+        )
+        try:
+            await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             from tools.transactions import tool_delete_transaction
             del_result = await tool_delete_transaction(
                 {"tx_id": tx_id, "confirmed": True},
                 session, sheets, auth,
             )
             if isinstance(del_result, dict) and del_result.get("deleted"):
-                # T-130: Show result + balance, keep trace
                 bal_line = _quick_balance_line(session, lang)
-                msg = f"✓ Видалено <code>{tx_id}</code>"
+                msg = f"✅ Видалено: {tx_id}"
                 if bal_line:
                     msg += f"\n\n{bal_line}"
-                await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=msg,
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
             elif isinstance(del_result, dict) and "error" in del_result:
-                await query.edit_message_text(
-                    f"⚠️ {del_result['error']}",
-                    parse_mode=ParseMode.HTML,
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"⚠️ {del_result['error']}",
+                    reply_markup=_with_menu_btn(lang=lang),
                 )
             else:
-                await query.edit_message_text(
-                    f"⚠️ Невідомий результат: {del_result}",
-                    parse_mode=ParseMode.HTML,
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"⚠️ Невідомий результат: {del_result}",
+                    reply_markup=_with_menu_btn(lang=lang),
                 )
             session.last_action = None
         except Exception as ex:
-            await query.edit_message_text(f"❌ Помилка: {ex}")
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ Помилка: {ex}",
+                reply_markup=_with_menu_btn(lang=lang),
+            )
 
     # ── T-139: cb_dup_<action> — duplicate transaction decision ─────────
     elif data.startswith("cb_dup_"):
@@ -2918,6 +2938,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # When user clicks confirm_delete, call delete_transaction directly
         # instead of routing through LLM (which fabricates success text
         # without calling the tool — same pattern as BUG-001).
+        if chosen_value == "confirm_delete":
+            # T-140: If pending_delete_tx is lost (bot restart), show error
+            # instead of falling through to agent (which fabricates success)
+            if not getattr(session, "pending_delete_tx", None):
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="⚠️ Сесія оновилася. Повторіть видалення заново.",
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+                return
         if chosen_value == "confirm_delete" and getattr(session, "pending_delete_tx", None):
             tx_id = session.pending_delete_tx
             session.pending_delete_tx = None
@@ -3450,10 +3484,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if pending_ch:
         session.pending_choice = None  # consume
-        choice_rows = [
-            [InlineKeyboardButton(c["label"], callback_data=f"cb_choice_{c['value']}")]
-            for c in pending_ch
-        ]
+        # T-140: For delete confirmations, use cb_del_confirm_{tx_id} callback
+        # so the tx_id survives bot restarts (not stored in session)
+        pending_del_tx = getattr(session, "pending_delete_tx", None)
+        choice_rows = []
+        for c in pending_ch:
+            val = c["value"]
+            if val == "confirm_delete" and pending_del_tx:
+                cb_data = f"cb_del_confirm_{pending_del_tx}"
+            else:
+                cb_data = f"cb_choice_{val}"
+            choice_rows.append([InlineKeyboardButton(c["label"], callback_data=cb_data)])
         kb = _with_menu_btn(*choice_rows, lang=lang)
         await _safe_reply(update.message, response, reply_markup=kb)
     elif pd:
