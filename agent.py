@@ -867,11 +867,12 @@ class ApolioAgent:
                 f"- tg_file_id: {pending_receipt.get('tg_file_id', '')}\n\n"
                 f"**DO NOT call add_transaction or save_receipt for this receipt.** The bot handles "
                 f"transaction creation automatically when the user clicks a confirm button.\n"
-                f"**DO NOT call store_pending_receipt or present_options again** — receipt is already "
-                f"pending with active buttons. If user sends another photo of the SAME receipt "
-                f"(card slip, detailed bill etc.), just note any new details (restaurant name, address, "
-                f"payment method) without creating a new receipt or showing new buttons.\n"
-                f"Your role: if the user wants to CORRECT something, update the relevant field and "
+                f"If user sends another photo of the SAME transaction (card slip, detailed bill, "
+                f"table order — different documents, same amount): call `store_pending_receipt` "
+                f"with any NEW details from this photo. The tool will MERGE them into the existing "
+                f"receipt. Do NOT call `present_options` — buttons are already shown.\n"
+                f"Respond briefly (2-3 sentences): what new info was added.\n"
+                f"If the user wants to CORRECT something, update the relevant field and "
                 f"show confirmation buttons again via present_options. If the user cancels, acknowledge."
             )
 
@@ -1593,6 +1594,10 @@ class ApolioAgent:
 
         session.pending_choice = choices
 
+        # Mark receipt buttons as shown to prevent BUG-010 from duplicating them
+        if has_receipt_btn:
+            session._receipt_buttons_shown = True
+
         # BUG-008 FIX: If this is a delete confirmation, store the tx_id
         # so cb_choice_ handler can execute deletion deterministically
         # (prevents LLM from fabricating success without calling the tool).
@@ -1647,19 +1652,33 @@ class ApolioAgent:
         new_currency = params.get("currency", "EUR")
 
         # Guard: if pending_receipt already exists with same amount+currency,
-        # this is a duplicate photo of the same receipt — enrich, don't replace
+        # this is another photo of the SAME transaction — enrich, don't replace.
+        # Different photos (Nexi slip, restaurant receipt, table order) carry
+        # complementary details: VAT, address, items, payment method, etc.
         existing = getattr(session, "pending_receipt", None)
         if existing and existing.get("total_amount") == new_amount and existing.get("currency") == new_currency:
-            # Enrich existing receipt with new details (merchant, date, etc.)
+            # Enrich existing receipt with new details
             for field in ("merchant", "date", "category", "subcategory"):
                 new_val = params.get(field, "")
                 old_val = existing.get(field, "")
                 if new_val and (not old_val or old_val == "?" or old_val == "Food"):
                     existing[field] = new_val
+            # Merge items list: add new items that aren't already present
+            new_items = params.get("items", [])
+            old_items = existing.get("items", [])
+            if new_items and len(new_items) > len(old_items):
+                existing["items"] = new_items  # take the more detailed list
+            # Append AI summary for richer context
+            new_summary = params.get("ai_summary", "")
+            if new_summary:
+                old_summary = existing.get("ai_summary", "")
+                existing["ai_summary"] = (old_summary + "\n---\n" + new_summary)[:1500]
             if params.get("tg_file_id"):
                 existing["tg_file_id"] = params["tg_file_id"]
-            logger.info(f"store_pending_receipt: enriched existing receipt ({new_amount} {new_currency}), not replaced")
-            return {"status": "ok", "message": "Receipt already pending — enriched with new details. Do NOT call present_options again."}
+            enriched_fields = [f for f in ("merchant", "date", "category", "subcategory", "items")
+                               if params.get(f)]
+            logger.info(f"store_pending_receipt: enriched ({new_amount} {new_currency}), fields: {enriched_fields}")
+            return {"status": "ok", "message": f"Receipt enriched with: {', '.join(enriched_fields)}. Do NOT call present_options again — buttons already shown."}
 
         receipt_data = {
             "merchant": params.get("merchant", ""),

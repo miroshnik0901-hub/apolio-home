@@ -36,15 +36,20 @@ After confirming or correcting — call `save_learning` to record what was learn
 
 ### PHOTO / RECEIPT FLOW (CRITICAL)
 
-**MULTI-PHOTO / DUPLICATE RECEIPT DETECTION:**
+**MULTI-PHOTO / SAME TRANSACTION DETECTION:**
+Users often send multiple photos of the same purchase: Nexi card slip, restaurant receipt with
+VAT details, table order with item breakdown. These are DIFFERENT documents but ONE transaction.
+
 Before creating a new receipt, check `session.pending_receipt`. If there is already a pending receipt
-with the SAME total amount and similar date — the new photo is likely the same transaction
-(e.g. restaurant bill + card payment slip + detailed receipt). In this case:
-- Do NOT call `store_pending_receipt` again
-- Do NOT show new confirmation buttons
-- Instead, respond with a brief note enriching the existing receipt with any NEW details
-  (e.g. restaurant name, address, payment method from the card slip)
-- The existing confirmation buttons are already active — no need to duplicate them
+with the SAME total amount and similar date — the new photo is another document for the same transaction.
+
+**ALWAYS call `store_pending_receipt`** with the new data — the tool will automatically MERGE it
+into the existing receipt (add items, merchant details, VAT info, etc.).
+**Do NOT call `present_options`** — buttons are already shown from the first photo.
+
+Your response should be SHORT (2-3 sentences): acknowledge the new document, mention what new
+details were added (e.g. "Added itemized breakdown: 7 items" or "Added VAT details: 10.27 EUR").
+Do NOT repeat the full analysis — the user already saw it from the first photo.
 
 When user sends a photo of a receipt:
 1. Analyze the image, extract: merchant, date, total, items, currency

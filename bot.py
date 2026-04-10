@@ -2870,6 +2870,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             receipt = session.pending_receipt
             # T-138: immediately clear pending_receipt to prevent duplicate paths
             session.pending_receipt = None
+            session._receipt_buttons_shown = False
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
             try:
                 # T-139: echo user choice as visible message + remove buttons from feed
@@ -3175,6 +3176,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── cb_cancel ──────────────────────────────────────────────────────────
     elif data == "cb_cancel":
+        session.pending_receipt = None
+        session._receipt_buttons_shown = False
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except BadRequest:
@@ -3542,15 +3545,21 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         # Force receipt buttons if LLM skipped present_options
         pending_ch = getattr(session, "pending_choice", None)
+        _has_pending_receipt = bool(getattr(session, "pending_receipt", None))
+        # Track whether we've already shown buttons for the current pending_receipt.
+        # _receipt_buttons_shown is set to True after first BUG-010 trigger and cleared
+        # when pending_receipt is consumed (yes_joint/yes_personal/cancel callbacks).
+        _already_shown = getattr(session, "_receipt_buttons_shown", False)
         if (
             media_type == "photo"
             and not pending_ch
             and response
+            and not _already_shown  # don't repeat buttons for duplicate photos
             and any(kw in response.lower() for kw in ("eur", "usd", "uah", "грн", "сума", "итого", "total", "загальна"))
         ):
             logger.warning("BUG-010: photo receipt detected but LLM skipped present_options — forcing buttons")
             # If LLM also skipped store_pending_receipt, try to parse from response
-            if not getattr(session, "pending_receipt", None):
+            if not _has_pending_receipt:
                 import re as _re_receipt
                 _amount_m = _re_receipt.search(r"(\d[\d\s,.]*\d)\s*(EUR|USD|UAH|€|\$|грн)", response, _re_receipt.IGNORECASE)
                 _merchant_m = _re_receipt.search(r"(?:Заклад|Merchant|Магазин)[:\s]*([^\n•*]+)", response, _re_receipt.IGNORECASE)
@@ -3589,6 +3598,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 {"label": _labels[3], "value": "cancel"},
             ]
             session.pending_choice = pending_ch
+            session._receipt_buttons_shown = True  # prevent BUG-010 on next photo
 
         # ── Post-response inline buttons ──────────────────────────────────
         pending_ch = getattr(session, "pending_choice", None)
