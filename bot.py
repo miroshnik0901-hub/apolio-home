@@ -3248,26 +3248,30 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
             "ru": (
                 "Проанализируй это изображение полностью. "
                 "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
-                "Не записывай ничего сам. "
-                "Покажи мне список всего, что ты увидел, и спроси что с этим сделать."
+                "Вызови store_pending_receipt с извлечёнными данными. "
+                "НЕ вызывай add_transaction — только store_pending_receipt. "
+                "Покажи мне список всего, что ты нашёл."
             ),
             "uk": (
                 "Проаналізуй це зображення повністю. "
                 "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
-                "Нічого не записуй сам. "
-                "Покажи мені список усього, що ти побачив, і спитай що з цим робити."
+                "Виклич store_pending_receipt з витягнутими даними. "
+                "НЕ викликай add_transaction — лише store_pending_receipt. "
+                "Покажи мені список усього, що ти побачив."
             ),
             "en": (
                 "Analyze this image fully. "
                 "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
-                "Do NOT record anything yet. "
-                "Show me everything you found and ask what to do with it."
+                "Call store_pending_receipt with the extracted data. "
+                "Do NOT call add_transaction — only store_pending_receipt. "
+                "Show me everything you found."
             ),
             "it": (
                 "Analizza questa immagine completamente. "
                 "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
-                "Non registrare nulla da solo. "
-                "Mostrami tutto ciò che hai trovato e chiedi cosa fare."
+                "Chiama store_pending_receipt con i dati estratti. "
+                "NON chiamare add_transaction — solo store_pending_receipt. "
+                "Mostrami tutto ciò che hai trovato."
             ),
         }
         text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
