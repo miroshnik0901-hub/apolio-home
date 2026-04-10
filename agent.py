@@ -1778,7 +1778,57 @@ class ApolioAgent:
             enriched_fields = [f for f in ("merchant", "date", "category", "subcategory", "items")
                                if params.get(f)]
             logger.info(f"store_pending_receipt: enriched ({new_amount} {new_currency}), fields: {enriched_fields}")
-            return {"status": "ok", "message": f"Receipt enriched with: {', '.join(enriched_fields)}. Do NOT call present_options again — buttons already shown."}
+
+            # If transaction already saved in Sheets, persist enrichment to parsed_data
+            if existing_in_sheets:
+                _enrich_tx_id = existing_in_sheets.get("ID", "")
+                if _enrich_tx_id:
+                    try:
+                        import db as _db
+                        if _db.is_ready():
+                            _existing_pd = await _db.get_parsed_data(
+                                user_id=session.user_id, data_type="receipt", limit=10,
+                            )
+                            _match = [r for r in _existing_pd if r.get("transaction_id") == _enrich_tx_id]
+                            _payload = {
+                                "merchant": existing.get("merchant", ""),
+                                "date": existing.get("date", ""),
+                                "total_amount": existing.get("total_amount", 0),
+                                "currency": existing.get("currency", "EUR"),
+                                "items": existing.get("items", []),
+                                "ai_summary": existing.get("ai_summary", ""),
+                                "raw_text": existing.get("raw_text", ""),
+                                "tg_file_id": existing.get("tg_file_id", ""),
+                            }
+                            if _match:
+                                await _db.update_parsed_data_payload(
+                                    row_id=_match[0].get("id"), payload=_payload,
+                                )
+                                logger.info(f"store_pending_receipt: updated parsed_data for tx={_enrich_tx_id}")
+                            else:
+                                await _db.save_parsed_data(
+                                    user_id=session.user_id, data_type="receipt",
+                                    payload=_payload,
+                                    envelope_id=session.current_envelope_id or "",
+                                    transaction_id=_enrich_tx_id,
+                                )
+                                logger.info(f"store_pending_receipt: saved new parsed_data for tx={_enrich_tx_id}")
+                    except Exception as _e:
+                        logger.warning(f"store_pending_receipt: parsed_data write failed: {_e}")
+
+            # Build response with items so LLM can show them to user
+            _items_list = existing.get("items", [])
+            _resp = {
+                "status": "ok",
+                "message": f"Receipt enriched with: {', '.join(enriched_fields)}. Do NOT call present_options again — buttons already shown.",
+            }
+            if _items_list:
+                _resp["items"] = _items_list
+                _resp["hint_for_agent"] = (
+                    "Show the user the itemized receipt details you just received. "
+                    "List the dishes/items with prices. Respond in the USER's language."
+                )
+            return _resp
 
         receipt_data = {
             "merchant": params.get("merchant", ""),

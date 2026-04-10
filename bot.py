@@ -2793,6 +2793,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             session._dup_existing_tx_id = None
             session._dup_account = None
             session._dup_add_params = None
+            session.pending_receipt = None  # prevent stale receipt from capturing next photo
 
             if dup_action == "cancel":
                 await ctx.bot.send_message(
