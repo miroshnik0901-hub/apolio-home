@@ -867,6 +867,10 @@ class ApolioAgent:
                 f"- tg_file_id: {pending_receipt.get('tg_file_id', '')}\n\n"
                 f"**DO NOT call add_transaction or save_receipt for this receipt.** The bot handles "
                 f"transaction creation automatically when the user clicks a confirm button.\n"
+                f"**DO NOT call store_pending_receipt or present_options again** — receipt is already "
+                f"pending with active buttons. If user sends another photo of the SAME receipt "
+                f"(card slip, detailed bill etc.), just note any new details (restaurant name, address, "
+                f"payment method) without creating a new receipt or showing new buttons.\n"
                 f"Your role: if the user wants to CORRECT something, update the relevant field and "
                 f"show confirmation buttons again via present_options. If the user cancels, acknowledge."
             )
@@ -1638,4 +1642,7 @@ class ApolioAgent:
             "tg_file_id": params.get("tg_file_id", ""),
         }
         session.pending_receipt = receipt_data
+        # Clear stale delete state — receipt flow takes priority
+        session.pending_delete_tx = None
+        session._bulk_delete_ids = None
         return {"status": "ok", "message": "Receipt data stored. Will be injected on next message."}

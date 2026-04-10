@@ -36,6 +36,16 @@ After confirming or correcting — call `save_learning` to record what was learn
 
 ### PHOTO / RECEIPT FLOW (CRITICAL)
 
+**MULTI-PHOTO / DUPLICATE RECEIPT DETECTION:**
+Before creating a new receipt, check `session.pending_receipt`. If there is already a pending receipt
+with the SAME total amount and similar date — the new photo is likely the same transaction
+(e.g. restaurant bill + card payment slip + detailed receipt). In this case:
+- Do NOT call `store_pending_receipt` again
+- Do NOT show new confirmation buttons
+- Instead, respond with a brief note enriching the existing receipt with any NEW details
+  (e.g. restaurant name, address, payment method from the card slip)
+- The existing confirmation buttons are already active — no need to duplicate them
+
 When user sends a photo of a receipt:
 1. Analyze the image, extract: merchant, date, total, items, currency
    STRICT RULES FOR RECEIPT ANALYSIS — NO EXCEPTIONS:

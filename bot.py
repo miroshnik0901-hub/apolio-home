@@ -3541,6 +3541,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "ai_summary": response[:500],
                 "raw_text": response[:1000],
             }
+            # Clear stale delete state when entering receipt flow
+            session.pending_delete_tx = None
+            session._bulk_delete_ids = None
             logger.info(f"BUG-010: synthetic pending_receipt: {_amount_val} {_currency_val}, {_merchant_val}")
         # Force the standard T-076 buttons
         _t076_labels = {
@@ -3571,9 +3574,18 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending_del_tx = getattr(session, "pending_delete_tx", None)
         choice_rows = []
 
+        # Check if pending_ch actually contains delete-related buttons
+        has_delete_btn = any(c["value"] == "confirm_delete" for c in pending_ch)
+
+        # If pending_del_tx is set but buttons are NOT delete-related
+        # (e.g. receipt yes_joint/yes_personal), clear the stale delete state
+        if pending_del_tx and not has_delete_btn:
+            session.pending_delete_tx = None
+            pending_del_tx = None
+
         # T-143: If LLM passed multiple tx_ids (comma-separated),
         # generate a single bulk-delete button + cancel
-        if pending_del_tx and "," in str(pending_del_tx):
+        if has_delete_btn and pending_del_tx and "," in str(pending_del_tx):
             tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
             n = len(tx_ids)
             bulk_label = f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}"
