@@ -599,6 +599,10 @@ SYS: dict[str, dict[str, str]] = {
     "dup_cancelled": {
         "ru": "Операция отменена.", "uk": "Операцію скасовано.", "en": "Operation cancelled.", "it": "Operazione annullata.",
     },
+    # ── T-143: Bulk delete ──
+    "del_bulk": {
+        "ru": "🗑️ Удалить все ({n})", "uk": "🗑️ Видалити всі ({n})", "en": "🗑️ Delete all ({n})", "it": "🗑️ Elimina tutti ({n})",
+    },
     "bal_obligation": {
         "ru": "Обязательство", "uk": "Зобов'язання", "en": "Obligation", "it": "Obbligo",
     },

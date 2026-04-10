@@ -2614,6 +2614,78 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except BadRequest:
             pass
 
+    # ── T-143: cb_del_bulk — bulk delete multiple transactions ──────────
+    elif data == "cb_del_bulk":
+        await query.answer()
+        tx_ids = getattr(session, "_bulk_delete_ids", None)
+        session._bulk_delete_ids = None
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+        if not tx_ids:
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="⚠️ Сесія оновилася. Повторіть видалення.",
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+            return
+        # Echo
+        n = len(tx_ids)
+        await ctx.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}",
+        )
+        await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        from tools.transactions import tool_delete_transaction
+        deleted = []
+        failed = []
+        for tid in tx_ids:
+            try:
+                result = await tool_delete_transaction(
+                    {"tx_id": tid, "confirmed": True},
+                    session, sheets, auth,
+                )
+                if isinstance(result, dict) and result.get("deleted"):
+                    deleted.append(tid)
+                else:
+                    err = result.get("error", "unknown") if isinstance(result, dict) else str(result)
+                    failed.append(f"{tid}: {err}")
+            except Exception as e:
+                failed.append(f"{tid}: {e}")
+
+        lines = []
+        if deleted:
+            lines.append(f"✅ Видалено: {len(deleted)} із {n}")
+            for d in deleted:
+                lines.append(f"  • {d}")
+        if failed:
+            lines.append(f"⚠️ Помилки:")
+            for f_line in failed:
+                lines.append(f"  • {f_line}")
+        bal_line = _quick_balance_line(session, lang)
+        if bal_line:
+            lines.append(f"\n{bal_line}")
+        await ctx.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="\n".join(lines),
+            reply_markup=_with_menu_btn(lang=lang),
+        )
+        # Log
+        try:
+            await appdb.log_message(
+                user_id=session.user_id, direction="bot",
+                message_type="tool",
+                raw_text=f"[tool:bulk_delete] deleted={deleted} failed={failed}",
+                tool_called="delete_transaction",
+                result_short=f"deleted {len(deleted)}/{n}",
+                session_id=session.session_id,
+                envelope_id=session.current_envelope_id or "",
+            )
+        except Exception:
+            pass
+        return
+
     # ── cb_del_confirm_<tx_id> ─────────────────────────────────────────────
     elif data.startswith("cb_del_confirm_"):
         tx_id = data[15:]
@@ -3499,15 +3571,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending_del_tx = getattr(session, "pending_delete_tx", None)
         choice_rows = []
 
-        # T-142: If LLM passed multiple tx_ids (comma-separated), split into
-        # one delete button per tx_id so each can be deleted independently
+        # T-143: If LLM passed multiple tx_ids (comma-separated),
+        # generate a single bulk-delete button + cancel
         if pending_del_tx and "," in str(pending_del_tx):
             tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
-            for tid in tx_ids:
-                choice_rows.append([InlineKeyboardButton(
-                    f"🗑️ {tid[:8]}…",
-                    callback_data=f"cb_del_confirm_{tid}",
-                )])
+            n = len(tx_ids)
+            bulk_label = i18n.ts("del_bulk", lang).format(n=n)
+            # Store bulk list in session for the handler
+            session._bulk_delete_ids = tx_ids
+            choice_rows.append([InlineKeyboardButton(
+                bulk_label, callback_data="cb_del_bulk",
+            )])
             choice_rows.append([InlineKeyboardButton(
                 i18n.ts("dup_cancel", lang), callback_data="cb_cancel",
             )])
