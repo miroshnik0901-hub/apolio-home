@@ -149,13 +149,14 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                 "status": "confirm_required",
                 "type": "unknown_values",
                 "message": (
-                    "Обнаружены неизвестные значения:\n" + "\n".join(lines) +
-                    "\n\nУточни у пользователя: использовать одно из предложенных "
-                    "или добавить новое значение в справочник? "
-                    "При подтверждении вызови снова с force_new=true."
+                    "⚠️ Неизвестные значения:\n" + "\n".join(lines)
                 ),
                 "unknown_fields": unknown,
                 "suggestions": sug,
+                "hint_for_agent": (
+                    "Ask the user: pick one of the suggested values, or confirm "
+                    "creating a new one? If user confirms new value, call again with force_new=true."
+                ),
             }
     except Exception:
         pass  # validation is best-effort; don't block the write
@@ -196,11 +197,11 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                         "status": "confirm_required",
                         "type": "duplicate",
                         "message": (
-                            f"Похожая запись уже есть за {date}: "
-                            f"{ex.get('Category', '')} · {ex_amount} {ex.get('Currency_Orig', currency)} · {ex.get('Who', '')}. "
-                            "Это дубликат? Если нет — вызови снова с force_add=true."
+                            f"⚠️ Похожая запись уже есть за {date}: "
+                            f"{ex.get('Category', '')} · {ex_amount} {ex.get('Currency_Orig', currency)} · {ex.get('Who', '')}."
                         ),
                         "existing_tx_id": ex.get("ID", ""),
+                        "hint_for_agent": "Ask user: is this a duplicate? If not, call add_transaction again with force_add=true.",
                     }
         except Exception:
             pass  # duplicate check is best-effort; don't block the write
@@ -329,6 +330,50 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
             break
     if not file_id:
         return {"error": "Envelope not found."}
+
+    # Validate category/subcategory/who against reference data
+    try:
+        ref = sheets.get_reference_data(file_id)
+        # Build a mini-params dict for validation
+        _vparams = {}
+        if params.get("category"):
+            _vparams["category"] = params["category"]
+        if params.get("subcategory"):
+            _vparams["subcategory"] = params["subcategory"]
+        if params.get("who"):
+            _vparams["who"] = params["who"]
+        if _vparams:
+            issues = _validate_transaction_params(_vparams, ref)
+            if issues:
+                unknown = issues["unknown"]
+                sug = issues["suggestions"]
+                known = issues["known"]
+                lines = []
+                for field, val in unknown.items():
+                    s = sug.get(field, [])
+                    hint = (f"Похожие: {', '.join(s)}" if s
+                            else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}")
+                    lines.append(f"• {field} = «{val}» — не найдено. {hint}")
+                return {
+                    "status": "confirm_required",
+                    "type": "unknown_values",
+                    "message": "⚠️ Неизвестные значения:\n" + "\n".join(lines),
+                    "unknown_fields": unknown,
+                    "suggestions": sug,
+                    "hint_for_agent": (
+                        "Ask user: pick a suggested value, or confirm creating new? "
+                        "If confirmed, call enrich_transaction again — the value will be accepted."
+                    ),
+                }
+            # Apply auto-corrections from validation
+            if "category" in _vparams:
+                params["category"] = _vparams["category"]
+            if "subcategory" in _vparams:
+                params["subcategory"] = _vparams["subcategory"]
+            if "who" in _vparams:
+                params["who"] = _vparams["who"]
+    except Exception:
+        pass  # validation is best-effort
 
     # Fields that can be enriched from receipt data
     updatable = {
