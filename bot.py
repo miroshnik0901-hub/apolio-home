@@ -3373,11 +3373,25 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
                 r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
             ).strip()
     except BaseException as exc:
-        logger.error(f"Photo batch agent.run() failed: {type(exc).__name__}: {exc}", exc_info=True)
+        _err_detail = f"{type(exc).__name__}: {exc}"
+        logger.error(f"Photo batch agent.run() failed: {_err_detail}", exc_info=True)
         try:
             response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
         except Exception:
             response = "⚠️ Something went wrong. Please try again."
+        # Log error detail to DB for debugging
+        try:
+            if _db_ready:
+                await appdb.log_message(
+                    user_id=session.user_id,
+                    direction="bot",
+                    message_type="error",
+                    raw_text=f"[CRASH] {_err_detail[:500]}",
+                    session_id=getattr(session, "session_id", ""),
+                    envelope_id=getattr(session, "current_envelope_id", "") or "",
+                )
+        except Exception:
+            pass
 
     # Log bot response
     try:
