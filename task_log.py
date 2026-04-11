@@ -84,7 +84,6 @@ VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_DISCUSS
 # Fallback only used if config sheet is unreadable:
 _FALLBACK_TOPICS = {
     "Interface", "Features", "Data", "Infrastructure", "AI", "Docs",
-    "Bug Fix", "Process",
 }
 VALID_TOPICS: set[str] = set()  # populated by TaskLog.__init__
 
