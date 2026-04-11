@@ -45,7 +45,7 @@ function onEdit(e) {
     if (val === 'CLOSED' || val === 'BLOCKED' || val === 'DISCUSSION') {
       if (!resolvedCell.getValue()) {
         resolvedCell.setValue(new Date());
-        resolvedCell.setNumberFormat('yyyy-mm-dd');
+        resolvedCell.setNumberFormat('yyyy-mm-dd hh:mm');
       }
       // T-117/T-129: auto-set Deploy=READY when moving to DISCUSSION (if empty)
       if (val === 'DISCUSSION') {

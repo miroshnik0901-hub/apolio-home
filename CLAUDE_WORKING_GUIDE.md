@@ -319,13 +319,24 @@ Col 10 J: Confirm          — GO / HOLD / (empty)
 ### Status values
 `OPEN` → `IN PROCESS` → `ON HOLD` / `BLOCKED` / `DISCUSSION` → `CLOSED`
 
-### Topic values (pick exactly one)
-`Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Admin` | `Финансы`
+### Topic values (pick exactly one — from config sheet)
+Valid topics are loaded dynamically from the `config` tab (col B) in Task Log sheet.
+Current values: `Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Bug Fix` | `Process`
 
 Both Status and Topic have dropdown validation in the sheet.
-Valid values are also in the `config` sheet tab (col A = statuses, col B = topics).
+`task_log.py` reads col B from `config` tab at init — no hardcoded list in Python code.
 
 ---
+
+### Trigger: "проверь задачи" / "иди в задачи"
+
+When Mikhail says "проверь задачи", "иди в задачи", or any variation — Claude must:
+1. Load `.env` from mounted folder → init `TaskLog()`
+2. Read ALL OPEN tasks (Status = OPEN)
+3. **Execute them** — not just list them. OPEN means "do this now".
+4. For each OPEN task: read full Task (C) text, determine action, do the work, update status.
+
+This is NOT a read-only review. It's a command to process the backlog.
 
 ### How Claude works with the Task Log — step by step
 

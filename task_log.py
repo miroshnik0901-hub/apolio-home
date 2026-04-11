@@ -79,10 +79,14 @@ STATUS_BLOCKED = "BLOCKED"
 STATUS_CLOSED = "CLOSED"
 
 VALID_STATUSES = {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD, STATUS_DISCUSSION, STATUS_BLOCKED, STATUS_CLOSED}
-VALID_TOPICS = {
-    "Interface", "Features", "Data", "Infrastructure", "AI", "Docs", "Admin",
+
+# VALID_TOPICS is loaded dynamically from config sheet at runtime — see TaskLog._load_config_topics()
+# Fallback only used if config sheet is unreadable:
+_FALLBACK_TOPICS = {
+    "Interface", "Features", "Data", "Infrastructure", "AI", "Docs",
     "Bug Fix", "Process",
 }
+VALID_TOPICS: set[str] = set()  # populated by TaskLog.__init__
 
 
 def _get_client() -> gspread.Client:
@@ -94,11 +98,29 @@ def _get_client() -> gspread.Client:
     return gspread.authorize(creds)
 
 
+CONFIG_TAB = "config"
+
+
 class TaskLog:
     def __init__(self, gc: Optional[gspread.Client] = None):
         self._gc = gc or _get_client()
         self._sh = self._gc.open_by_key(SHEET_ID)
         self._ws = self._sh.worksheet(SHEET_TAB)
+        self._load_config_topics()
+
+    def _load_config_topics(self) -> None:
+        """Load valid Topic values from config sheet col B (skip header 'topic')."""
+        global VALID_TOPICS
+        try:
+            cfg_ws = self._sh.worksheet(CONFIG_TAB)
+            col_b = cfg_ws.col_values(2)  # col B = topics
+            topics = {v.strip() for v in col_b if v.strip() and v.strip().lower() != "topic"}
+            if topics:
+                VALID_TOPICS = topics
+                return
+        except Exception:
+            pass
+        VALID_TOPICS = _FALLBACK_TOPICS
 
     # ── Core read ──────────────────────────────────────────────────────────────
 
