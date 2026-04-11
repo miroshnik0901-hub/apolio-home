@@ -174,8 +174,8 @@ class TaskLog:
         """Add a new task row. Returns the assigned task ID string (e.g. 'T-007')."""
         if status not in VALID_STATUSES:
             raise ValueError(f"Invalid status '{status}'. Must be one of {VALID_STATUSES}")
-        if topic and topic not in VALID_TOPICS:
-            raise ValueError(f"Invalid topic '{topic}'. Must be one of {VALID_TOPICS}")
+        if not topic or topic not in VALID_TOPICS:
+            raise ValueError(f"Topic is required and must be one of {VALID_TOPICS}. Got: '{topic}'")
         if deploy and deploy not in VALID_DEPLOY:
             raise ValueError(f"Invalid deploy '{deploy}'. Must be one of {VALID_DEPLOY}")
 
@@ -238,6 +238,8 @@ class TaskLog:
                 if resolved_at is not None:
                     updates[COL_RESOLVED] = resolved_at
                 if topic is not None:
+                    if topic and topic not in VALID_TOPICS:
+                        raise ValueError(f"Invalid topic '{topic}'. Must be one of {VALID_TOPICS}")
                     updates[COL_TOPIC] = topic
                 if deploy is not None:
                     updates[COL_DEPLOY] = deploy
