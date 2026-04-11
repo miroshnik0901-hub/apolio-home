@@ -557,15 +557,33 @@ class EnvelopeSheets:
             sheet_id = ws.id
             wb = ws.spreadsheet
             meta = wb.fetch_sheet_metadata()
+            requests = []
             for s in meta.get("sheets", []):
                 if s["properties"]["sheetId"] == sheet_id:
                     merges = s.get("merges", [])
                     if merges:
-                        requests = [
+                        requests.extend(
                             {"unmergeCells": {"range": m}} for m in merges
-                        ]
-                        wb.batch_update({"requests": requests})
+                        )
                     break
+            # Reset all cell formatting — old formats (date, %, currency)
+            # corrupt new formula outputs. Must clear after ws.clear()
+            # which only removes values, not formatting.
+            requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {"type": "NUMBER", "pattern": ""},
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            })
+            if requests:
+                wb.batch_update({"requests": requests})
 
             month = snap.get("month", datetime.utcnow().strftime("%Y-%m"))
             cap = snap.get("cap", 0)
