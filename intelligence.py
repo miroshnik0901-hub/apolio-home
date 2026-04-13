@@ -434,16 +434,42 @@ def format_contribution_for_prompt(snap: dict) -> str:
 def compute_contribution_history(sheets: SheetsClient, envelope_id: str,
                                   months_back: int = 6) -> list[dict]:
     """
-    Return a list of compute_contribution_status snapshots for the last
-    months_back months (oldest first). Skips months with errors.
+    T-175: Return contribution snapshots for every month that has ≥1 non-deleted
+    transaction, sorted oldest-first.
+
+    The old months_back approach generated N calendar months backwards from today
+    regardless of actual data — producing empty rows for months with no transactions
+    and missing months older than months_back. This version:
+      1. Reads all non-deleted transactions from the envelope.
+      2. Extracts distinct YYYY-MM values from the Date column.
+      3. Computes contribution_status per month, keeps only status==ok results.
+
+    months_back is now ignored (kept for backward-compatible signature).
     """
+    try:
+        envelopes = sheets.get_envelopes()
+        env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+        if not env:
+            return []
+        file_id = env.get("file_id", "")
+        if not file_id:
+            return []
+        env_sheets = sheets._env_sheets(file_id)
+        txs = env_sheets.get_transactions({})
+        # Collect distinct months from non-deleted transactions
+        months_set: set[str] = set()
+        for t in txs:
+            date_str = t.get("Date", "")
+            if date_str and len(date_str) >= 7 and t.get("Deleted", "FALSE") != "TRUE":
+                months_set.add(date_str[:7])
+    except Exception:
+        return []
+
     results = []
-    month = _current_month()
-    for _ in range(months_back):
+    for month in sorted(months_set):
         snap = compute_contribution_status(sheets, envelope_id, month)
         if snap.get("status") == "ok":
-            results.insert(0, snap)
-        month = _prev_month(month)
+            results.append(snap)
     return results
 
 

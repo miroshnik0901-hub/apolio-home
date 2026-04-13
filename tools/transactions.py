@@ -260,6 +260,13 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         logger.error(f"sheets.add_transaction failed for {tx_id}: {e}", exc_info=True)
         return {"error": f"TRANSACTION FAILED to save: {e}", "tx_id": tx_id}
 
+    # T-176: sort Transactions sheet by Date (asc) after every add.
+    # Backdated or late entries would otherwise appear at the bottom.
+    try:
+        sheets.sort_transactions_by_date(envelope["file_id"], order="asc")
+    except Exception as _sort_err:
+        logger.warning(f"sort_transactions_by_date failed (non-fatal): {_sort_err}")
+
     # Update session last_action for undo
     session.last_action = LastAction(
         tx_id=tx_id, action="add",

@@ -3379,7 +3379,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             response = _sanitize_agent_response(
-                await agent.run(chosen_value, session), session.language or "ru"
+                await agent.run(chosen_value, session), session.lang or "ru"
             )
             pending_ch2 = getattr(session, "pending_choice", None)
             if pending_ch2:
@@ -3986,7 +3986,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
 
             # T-155: Strip leaked tool internals (XML invoke, tool-log lines)
-            response = _sanitize_agent_response(response, session.language or "ru")
+            response = _sanitize_agent_response(response, session.lang or "ru")
 
         # Log bot response after agent call
         try:
