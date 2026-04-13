@@ -731,8 +731,9 @@ class EnvelopeSheets:
                         f"+MAX(0,{f_split_base})*{f_split_u}/100"
                         f"-{f_pers_exp}"
                     )
-                    u_idx = split_users.index(u)
-                    u_row = 18 + u_idx
+                    # Row number must be dynamic — computed from actual rows list length,
+                    # not hardcoded, since sections above can shift row positions.
+                    u_row = len(rows) + 1  # 1-indexed row this entry will occupy
                     # credit = -obligation
                     f_credit = f"=-B{u_row}"
                     f_status = f'=IF(C{u_row}>=0,"surplus","deficit")'
