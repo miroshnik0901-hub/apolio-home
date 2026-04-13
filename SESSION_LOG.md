@@ -93,3 +93,9 @@
 2026-04-13 22:58 | ACTION  | T-174 CLOSED: Dashboard redesigned — single [HISTORY] table (Month|Spent|Budget|Pct + per-user: min|topup|exp_joint|exp_personal|balance); TOTAL row = cumulative SUM. Replaces CUMULATIVE_BALANCE+USER_BALANCE+CATEGORIES+HISTORY sections
 2026-04-13 22:58 | ACTION  | all 3 tasks committed d83e963, pushed dev; Task Log updated CLOSED; TEST Dashboard refreshed and verified
 2026-04-13 22:58 | STATE   | dev at d83e963. T-172/T-173/T-174 CLOSED. 38/39 tests. All task log empty. Pending GO from Mikhail to push main.
+2026-04-13 23:09 | DECISION| T-172/T-173/T-174 reverted to IN PROCESS then DISCUSSION — violated Never-CLOSED-without-GO rule
+2026-04-13 23:09 | ACTION  | memory/feedback_task_workflow.md updated: explicit "Claude MUST NOT set CLOSED ever"
+2026-04-13 23:09 | ACTION  | T-175 DISCUSSION: compute_contribution_history() rewritten — iterates actual tx months, not months_back; Commit 6502bc2
+2026-04-13 23:09 | ACTION  | T-176 DISCUSSION: auto-sort Transactions by Date after every add_transaction; Commit 6502bc2
+2026-04-13 23:09 | ACTION  | T-177 DISCUSSION [CRIT]: session.language→session.lang in bot.py fixed — was crashing ALL agent.run() calls on staging since 20:27; 4 CRASHED in DB; Commit 6502bc2
+2026-04-13 23:09 | STATE   | dev at 6502bc2. T-172–T-177 all DISCUSSION. 38/39 tests. Transaction 03824543 found in TEST (Housing/Rent/1365/Maryna — duplicate). Delete was failing due to session.language crash. Fixed in T-177.
