@@ -11,7 +11,7 @@
 
 Step 1: run `date '+%Y-%m-%d %H:%M'` to get the timestamp.
 Step 2: check log size: `wc -c SESSION_LOG.md`
-Step 3: if size > 8192 bytes → rotate (see Rotation below). Otherwise append one line:
+Step 3: if size > 16384 bytes → rotate (see Rotation below). Otherwise append one line:
 ```
 YYYY-MM-DD HH:MM | CHAT    | what was discussed
 YYYY-MM-DD HH:MM | ACTION  | what was done + result

@@ -19,3 +19,19 @@
 2026-04-13 | ACTION | Project Instructions (Claude UI) updated — DEV_CHECKLIST removed, SESSION_LOG read trigger + after-every-reply rule added
 2026-04-13 14:48 | CHAT | исправлен формат записей: время обязательно; получать через date '+%Y-%m-%d %H:%M'
 2026-04-13 14:49 | ACTION | правило date+append добавлено в CLAUDE.md; нужно также добавить в Project Instructions вручную
+2026-04-13 15:12 | ACTION | создан MEMORY_GUIDE.md — инструкция по настройке памяти для любого проекта; запушено dev 5d25d70
+2026-04-13 15:16 | ACTION | создан memory snapshot apolio-home_MEMORY_04-13-2026_15-15.md (gitignored, только в папке)
+2026-04-13 15:18 | ACTION | restored context from memory snapshot apolio-home_MEMORY_04-13-2026_15-15.md in new session
+2026-04-13 15:19 | CHAT | спросил о последних двух действиях предыдущей сессии; ответил по SESSION_LOG
+2026-04-13 15:XX | CHAT | обсуждение роста SESSION_LOG; решение: ротация по 100 строк + архив + 5-7 строк summary в новом логе
+2026-04-13 15:30 | ACTION | CLAUDE.md updated: SESSION_LOG rotation rule added (trigger >8KB, archive to logs/, mechanical summary by type); pushed dev 9c4ff0e
+2026-04-13 15:30 | PENDING | Project Instructions update — rotation trigger (step 2-3 after every reply); Mikhail pastes manually in Claude UI
+2026-04-13 16:11 | DECISION | SESSION_LOG rotation threshold: 16384 bytes (~100-120 lines, 3-4 weeks dev). 8192 was too aggressive.
+2026-04-13 16:11 | PENDING | git commit+push blocked by stale lock files; Mikhail runs: rm .git/*.lock .git/objects/maintenance.lock && git commit && git push origin dev
+2026-04-13 16:18 | DECISION | pm-create SKILL.md: add Step 0.5 — read SESSION_LOG + archives before snapshot; extracts DECISION/STATE/PENDING/NEXT across all sessions
+2026-04-13 16:18 | PENDING | pm-create update blocked: .claude/skills/ is read-only in sandbox; Mikhail edits manually: ~/.claude/skills/project-memory/references/pm-create.md — insert Step 0.5 after Step 0 block
+2026-04-13 16:20 | ACTION | cowork-memory plugin updated to v1.4.5 — Step 0.5 added to pm-create (reads SESSION_LOG + archives before snapshot); .plugin file in AI folder
+2026-04-13 16:28 | PENDING | git push blocked by sandbox bindfs no-delete restriction; fix: run fix_git_and_push.command in Finder OR rm .git/*.lock manually + git push origin dev
+2026-04-13 16:28 | PENDING | Project Instructions update: Mikhail pastes new text manually (Claude UI → Apolio-home → Settings → Project Instructions)
+2026-04-13 16:31 | ACTION | plugin.json version fixed 1.4.4→1.4.5, plugin repackaged and re-presented to user
+2026-04-13 16:41 | ACTION | chmod +x fix_git_and_push.command — was not executable, now fixed
