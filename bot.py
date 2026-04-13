@@ -2972,14 +2972,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             receipt = session.pending_receipt
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
 
-            # T-168: if receipt has 3+ distinct-merchant items (bank statement),
+            # T-168: if receipt has 3+ items (bank statement or multi-item receipt),
             # ask split vs single BEFORE adding. Store account choice in session.
+            # Merchant check removed: bank statements set merchant="Bank Statement Ukraine"
+            # etc. — any non-empty string would block the question. Check items count only.
             items = receipt.get("items") or []
-            merchant = receipt.get("merchant", "")
-            _is_multi_merchant = (
-                len(items) >= 3
-                and (not merchant or "multiple" in merchant.lower() or "merchants" in merchant.lower())
-            )
+            _is_multi_merchant = len(items) >= 3
             if _is_multi_merchant and not getattr(session, "_split_mode_chosen", False):
                 # Store account so we can use it after user picks split mode
                 session._pending_split_account = account
