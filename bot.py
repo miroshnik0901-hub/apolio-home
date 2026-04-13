@@ -2739,22 +2739,80 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text=f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}",
         )
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-        from tools.transactions import tool_delete_transaction
         deleted = []
         failed = []
-        for tid in tx_ids:
-            try:
-                result = await tool_delete_transaction(
-                    {"tx_id": tid, "confirmed": True},
-                    session, sheets, auth,
+        # T-194: batch delete — 1 Sheets read + N deletes instead of N reads+N deletes
+        # This prevents 429 quota errors on bulk operations (N×read was hitting 60/min limit)
+        try:
+            envelopes = sheets.get_envelopes()
+            envelope_id = session.current_envelope_id
+            target_env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+            if not target_env:
+                # Fallback: try each envelope
+                batch_result = {"deleted": [], "not_found": list(tx_ids)}
+                for env in envelopes:
+                    remaining = batch_result["not_found"]
+                    if not remaining:
+                        break
+                    try:
+                        r = sheets.batch_hard_delete_transactions(env["file_id"], remaining)
+                        batch_result["deleted"] += r.get("deleted", [])
+                        batch_result["not_found"] = r.get("not_found", [])
+                    except Exception:
+                        pass
+            else:
+                batch_result = sheets.batch_hard_delete_transactions(
+                    target_env["file_id"], list(tx_ids)
                 )
-                if isinstance(result, dict) and result.get("deleted"):
-                    deleted.append(tid)
-                else:
-                    err = result.get("error", "unknown") if isinstance(result, dict) else str(result)
-                    failed.append(f"{tid}: {err}")
-            except Exception as e:
-                failed.append(f"{tid}: {e}")
+                # If some not found in main env, try others
+                if batch_result.get("not_found"):
+                    for env in envelopes:
+                        if env.get("ID") == envelope_id:
+                            continue
+                        remaining = batch_result["not_found"]
+                        if not remaining:
+                            break
+                        try:
+                            r = sheets.batch_hard_delete_transactions(env["file_id"], remaining)
+                            batch_result["deleted"] += r.get("deleted", [])
+                            batch_result["not_found"] = r.get("not_found", [])
+                        except Exception:
+                            pass
+            deleted = batch_result.get("deleted", [])
+            not_found = batch_result.get("not_found", [])
+            if not_found:
+                for tid in not_found:
+                    failed.append(f"{tid}: not found in any envelope")
+            # PostgreSQL cleanup for deleted IDs
+            import db as _db
+            if _db.is_ready() and deleted:
+                try:
+                    pool = await _db.get_pool()
+                    if pool:
+                        async with pool.acquire() as conn:
+                            for tid in deleted:
+                                await conn.execute(
+                                    "DELETE FROM parsed_data WHERE transaction_id = $1", tid
+                                )
+                except Exception as _dbe:
+                    logger.warning(f"bulk_delete: parsed_data cleanup failed: {_dbe}")
+        except Exception as _be:
+            # Fallback to individual deletes if batch fails
+            logger.warning(f"T-194: batch delete failed ({_be}), falling back to individual")
+            from tools.transactions import tool_delete_transaction
+            for tid in tx_ids:
+                try:
+                    result = await tool_delete_transaction(
+                        {"tx_id": tid, "confirmed": True},
+                        session, sheets, auth,
+                    )
+                    if isinstance(result, dict) and result.get("deleted"):
+                        deleted.append(tid)
+                    else:
+                        err = result.get("error", "unknown") if isinstance(result, dict) else str(result)
+                        failed.append(f"{tid}: {err}")
+                except Exception as e:
+                    failed.append(f"{tid}: {e}")
 
         lines = []
         if deleted:

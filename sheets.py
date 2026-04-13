@@ -488,6 +488,41 @@ class EnvelopeSheets:
         """Soft-delete: set Deleted=TRUE (kept for backward compat, prefer hard_delete_by_tx_id)."""
         return self.edit_transaction(tx_id, "Deleted", "TRUE")
 
+    def batch_hard_delete_by_tx_ids(self, tx_ids: list) -> dict:
+        """
+        T-194: Batch hard-delete multiple rows in ONE sheet read.
+        Reads all_values once, finds row numbers for all tx_ids, then deletes
+        in reverse row order (prevents row-index drift).
+        Returns: {"deleted": [...tx_ids...], "not_found": [...tx_ids...]}
+        Raises on Sheets API error.
+        """
+        ws = self._ws("Transactions")
+        all_values = _sheets_retry(ws.get_all_values)
+        deleted_ids: list = []
+        not_found_ids: list = []
+        if not all_values:
+            return {"deleted": deleted_ids, "not_found": list(tx_ids)}
+        headers = all_values[0]
+        try:
+            id_col = headers.index("ID")
+        except ValueError:
+            return {"deleted": deleted_ids, "not_found": list(tx_ids)}
+        tx_ids_stripped = {str(tid).strip(): str(tid) for tid in tx_ids}
+        found_rows: dict = {}  # stripped_tx_id → row_number (1-based)
+        for i, row in enumerate(all_values[1:], start=2):
+            padded = row + [""] * max(0, len(headers) - len(row))
+            row_id = padded[id_col].strip()
+            if row_id in tx_ids_stripped:
+                found_rows[row_id] = i
+        # Delete in reverse order to avoid row-index shifts
+        for stripped_id, row_num in sorted(found_rows.items(), key=lambda x: x[1], reverse=True):
+            _sheets_retry(ws.delete_rows, row_num)
+            deleted_ids.append(tx_ids_stripped[stripped_id])
+        not_found_ids = [
+            tx_ids_stripped[s] for s in tx_ids_stripped if s not in found_rows
+        ]
+        return {"deleted": deleted_ids, "not_found": not_found_ids}
+
     def hard_delete_by_tx_id(self, tx_id: str) -> bool:
         """
         Physically remove the row matching tx_id from the Transactions sheet.
@@ -1127,6 +1162,12 @@ class SheetsClient:
         """Physically remove the row for tx_id from the Transactions sheet."""
         self._cache.invalidate(f"txns_{sheet_id}")
         return self._env_sheets(sheet_id).hard_delete_by_tx_id(tx_id)
+
+    def batch_hard_delete_transactions(self, sheet_id: str, tx_ids: list) -> dict:
+        """T-194: Batch hard-delete — ONE sheet read, N deletes (no per-item quota hit).
+        Returns: {"deleted": [...], "not_found": [...]}"""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).batch_hard_delete_by_tx_ids(tx_ids)
 
     def delete_transaction_rows(self, sheet_id: str, start_row: int, end_row: int) -> int:
         """Physically delete rows start_row..end_row from Transactions sheet.
