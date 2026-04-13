@@ -44,6 +44,53 @@ SCOPES = [
 ]
 
 
+def safe_float(value, default: float = 0.0) -> float:
+    """Convert value to float safely, handling European number formats.
+
+    Handles:
+    - None / empty string → default
+    - Already numeric (int/float) → direct cast
+    - '2,735.00' (comma as thousands separator) → 2735.0
+    - '1.234,56' (European decimal comma) → 1234.56
+    - '-123.45' → -123.45
+
+    T-154: float('2,735.00') crashes on European comma-as-thousands-separator.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        s = str(value).strip()
+        if not s:
+            return default
+        # Remove spaces used as thousand separators
+        s = s.replace(" ", "")
+        # European format: 1.234,56 → decimal comma, dot as thousands
+        # Detect if comma is decimal separator (e.g. '1234,56' or '1.234,56')
+        if "," in s and "." in s:
+            # Both present: whichever comes last is the decimal separator
+            if s.rfind(",") > s.rfind("."):
+                # '1.234,56' → '1234.56'
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                # '1,234.56' → '1234.56' (standard US/UK format with thousands comma)
+                s = s.replace(",", "")
+        elif "," in s:
+            # Only comma: could be thousands ('2,735') or decimal ('12,5')
+            # If digits after comma > 2 → thousands separator
+            parts = s.split(",")
+            if len(parts) == 2 and len(parts[1]) > 2:
+                # '2,735' → thousands separator
+                s = s.replace(",", "")
+            else:
+                # '12,50' → decimal comma
+                s = s.replace(",", ".")
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
+
 def get_sheets_client() -> gspread.Client:
     raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
     if not raw:
@@ -521,7 +568,7 @@ class EnvelopeSheets:
     def sum_expenses(self, month: str) -> float:
         txs = self.get_transactions({"date_from": f"{month}-01", "date_to": f"{month}-31"})
         return sum(
-            float(t.get("Amount_EUR", 0) or 0)
+            safe_float(t.get("Amount_EUR", 0))
             for t in txs
             if t.get("Type", "expense") == "expense"
         )
@@ -912,7 +959,7 @@ class SheetsClient:
                 "id": e.get("ID", ""),
                 "name": e.get("Name", ""),
                 "currency": env_cfg.get("currency") or e.get("Currency", "EUR"),
-                "monthly_cap": float(env_cfg.get("monthly_cap") or 0),
+                "monthly_cap": safe_float(env_cfg.get("monthly_cap") or 0),
                 "split_rule": env_cfg.get("split_rule") or "solo",
                 "file_id": file_id,
                 "url": url,
@@ -1013,7 +1060,7 @@ class SheetsClient:
 
             DEFAULTS = {
                 "currency":    env.get("Currency", "EUR"),
-                "monthly_cap": str(int(float(env.get("Monthly_Cap", 0) or 0))),
+                "monthly_cap": str(int(safe_float(env.get("Monthly_Cap", 0) or 0))),
                 "split_rule":  str(env.get("Split_Rule", "50_50") or "50_50"),
                 "split_users": split_users_default,
                 "base_contributor": active_users[0] if active_users else "",

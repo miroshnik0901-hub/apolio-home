@@ -46,7 +46,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from sheets import SheetsClient
+from sheets import SheetsClient, safe_float
 from auth import AuthManager, get_session
 from agent import ApolioAgent
 from tools.conversation_log import ConversationLogger, make_session_id
@@ -438,7 +438,7 @@ def _quick_balance_line(session, lang: str = "ru") -> str:
         split_users = snap.get("split_users", [])
         if len(split_users) > 1:
             for u in split_users:
-                credit = float(balances.get(u, 0))
+                credit = safe_float(balances.get(u, 0))
                 if credit > 0:
                     parts.append(f"✅ {u}: +{credit:,.0f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                 elif credit < 0:
@@ -462,10 +462,10 @@ async def _build_status_html(session, lang: str = "ru") -> str:
             {"breakdown_by": "category"}, session, sheets, auth
         )
 
-        cap = float(status.get("cap") or 0)
-        spent = float(status.get("spent") or 0)
-        remaining = float(status.get("remaining") or 0)
-        pct = float(status.get("pct_used") or 0)
+        cap = safe_float(status.get("cap") or 0)
+        spent = safe_float(status.get("spent") or 0)
+        remaining = safe_float(status.get("remaining") or 0)
+        pct = safe_float(status.get("pct_used") or 0)
         month = status.get("month", "")
         alert = status.get("alert", False)
 
@@ -545,7 +545,7 @@ async def _build_status_html(session, lang: str = "ru") -> str:
                 lines.append("")
                 lines.append(i18n.ts("bal_header", lang))
                 for u in snap["split_users"]:
-                    credit = float(balances.get(u, 0))
+                    credit = safe_float(balances.get(u, 0))
                     if credit > 0:
                         lines.append(f"  ✅ {u}: +{credit:,.0f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                     elif credit < 0:
@@ -583,8 +583,8 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             {"breakdown_by": "category", "period": prev_period}, session, sheets, auth
         )
 
-        total = float(summary.get("total_spent") or 0)
-        total_prev = float(summary_prev.get("total_spent") or 0) if summary_prev.get("status") == "ok" else 0
+        total = safe_float(summary.get("total_spent") or 0)
+        total_prev = safe_float(summary_prev.get("total_spent") or 0) if summary_prev.get("status") == "ok" else 0
         label = _month_label(period, lang)
         cats = summary.get("categories", {})
         by_who = summary.get("by_who", {})
@@ -598,7 +598,7 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
             # T-135: monthly_cap from envelope Config only (single source of truth)
             file_id_r = env_match.get("file_id", "") if env_match else ""
             env_cfg_r = sheets.read_envelope_config(file_id_r) if file_id_r else {}
-            cap = float(env_cfg_r.get("monthly_cap") or 0)
+            cap = safe_float(env_cfg_r.get("monthly_cap") or 0)
             env_label = env_match.get("Name", env_id) if env_match else env_id
         except Exception:
             cap = 0
@@ -673,9 +673,9 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
                 lines.append("")
                 lines.append(i18n.tu("contrib_balance", lang))
                 for u in snap["split_users"]:
-                    a = float(assets.get(u, 0))
-                    s = float(user_shares.get(u, 0))
-                    b = float(balances.get(u, 0))
+                    a = safe_float(assets.get(u, 0))
+                    s = safe_float(user_shares.get(u, 0))
+                    b = safe_float(balances.get(u, 0))
                     status_icon = "✅" if b >= 0 else "⚠️"
                     bal_str = f"+{b:,.0f}" if b > 0 else f"{b:,.0f}"
                     lines.append(
@@ -707,12 +707,12 @@ async def _build_week_html(session, lang: str = "ru") -> str:
         if not txs:
             return i18n.tu("week_no_expenses", lang)
 
-        total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
+        total = sum(safe_float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
         cats: dict = {}
         by_day: dict = {}
         for r in txs:
             cat = r.get("Category", "Other")
-            amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+            amt = safe_float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
             cats[cat] = cats.get(cat, 0) + amt
             day = r.get("Date", "")[:10]
             by_day[day] = by_day.get(day, 0) + amt
@@ -790,10 +790,10 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
 
         # Per-user breakdown: top_up, personal, obligation, credit
         for u in split_users:
-            tu = float(top_up.get(u, 0))
-            pe = float(pers_exp.get(u, 0))
-            obl = float(user_shares.get(u, 0))
-            credit = float(balances.get(u, 0))
+            tu = safe_float(top_up.get(u, 0))
+            pe = safe_float(pers_exp.get(u, 0))
+            obl = safe_float(user_shares.get(u, 0))
+            credit = safe_float(balances.get(u, 0))
             lines.append(f"👤 <b>{u}</b>")
             if tu > 0:
                 lines.append(f"  💳 {i18n.ts('bal_joint_topup', lang)}: {tu:,.0f} {cur}")
@@ -930,7 +930,7 @@ async def _build_category_html(session, period: str, category: str, lang: str = 
             lines.append(empty.get(lang, empty["ru"]))
             return "\n".join(lines)
 
-        total = sum(float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
+        total = sum(safe_float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs)
         totals = {"ru": f"Итого: <b>{total:,.0f} EUR</b>  ·  {len(txs)} записей",
                   "uk": f"Разом: <b>{total:,.0f} EUR</b>  ·  {len(txs)} записів",
                   "en": f"Total: <b>{total:,.0f} EUR</b>  ·  {len(txs)} records",
@@ -940,7 +940,7 @@ async def _build_category_html(session, period: str, category: str, lang: str = 
 
         for r in reversed(txs):  # chronological order
             date = r.get("Date", "")[:10]
-            amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+            amt = safe_float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
             note = r.get("Note", "").strip()
             who = r.get("Who", "").strip()
             parts = [f"  {date}  <b>{amt:,.0f} EUR</b>"]
@@ -1735,7 +1735,7 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             from tools.summary import tool_get_summary
             check = await tool_get_summary({"period": "current"}, session, sheets, auth)
-            if float(check.get("total_spent") or 0) == 0:
+            if safe_float(check.get("total_spent") or 0) == 0:
                 period = "last"
         except Exception:
             pass
@@ -1779,7 +1779,7 @@ async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             from tools.summary import tool_get_summary
             check = await tool_get_summary({"period": "current"}, session, sheets, auth)
-            if float(check.get("total_spent") or 0) == 0:
+            if safe_float(check.get("total_spent") or 0) == 0:
                 period = "last"
         except Exception:
             pass
@@ -2626,7 +2626,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # T-135: read cap from envelope Config, not Admin Envelopes
         file_id_sel = match.get("file_id", "")
         env_cfg_sel = sheets.read_envelope_config(file_id_sel) if file_id_sel else {}
-        cap = float(env_cfg_sel.get("monthly_cap") or 0)
+        cap = safe_float(env_cfg_sel.get("monthly_cap") or 0)
         currency_sel = env_cfg_sel.get("currency") or match.get("Currency", "EUR")
         cap_str = f"{cap:,.0f} {currency_sel}" if cap else i18n.NO_LIMIT.get(lang, "no limit")
         file_id_val = match.get("file_id", "")
@@ -3539,7 +3539,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         )
                         return
                     total = sum(
-                        float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs
+                        safe_float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0) for r in txs
                     )
                     lines = [f"📝 <b>Категория «{text}»</b> — {len(txs)} записей · {total:,.0f} EUR\n"]
                     for tx in txs[-20:]:

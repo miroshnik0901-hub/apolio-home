@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Optional
 
-from sheets import SheetsClient
+from sheets import SheetsClient, safe_float
 from tools.transactions import _normalize_who
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,8 @@ def _days_left_in_month() -> int:
 
 
 def _parse_amount(record: dict) -> float:
-    try:
-        return float(record.get("Amount_EUR") or record.get("Amount_Orig") or 0)
-    except (ValueError, TypeError):
-        return 0.0
+    """Parse transaction amount safely, handling European comma formats."""
+    return safe_float(record.get("Amount_EUR") or record.get("Amount_Orig") or 0)
 
 
 class IntelligenceEngine:
@@ -66,7 +64,7 @@ class IntelligenceEngine:
 
             # T-135: read cap/currency from envelope Config (single source of truth)
             env_cfg = self.sheets.read_envelope_config(file_id) if file_id else {}
-            cap = float(env_cfg.get("monthly_cap") or 0)
+            cap = safe_float(env_cfg.get("monthly_cap") or 0)
             currency = env_cfg.get("currency") or env.get("Currency", "EUR")
 
             all_txns = self.sheets.get_transactions(file_id)
@@ -297,13 +295,13 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # credit = -obligation  (positive = overpaid, negative = owes)
         if _has_per_user_min and split_users:
             total_min_pool = sum(
-                float(env_config.get(f"min_{u}", 0) or 0) for u in split_users
+                safe_float(env_config.get(f"min_{u}", 0)) for u in split_users
             )
             split_base = total_expenses - total_min_pool
             user_shares: dict[str, float] = {}
             for u in split_users:
-                u_min   = float(env_config.get(f"min_{u}", 0) or 0)
-                u_split = float(env_config.get(f"split_{u}", 0) or 0)
+                u_min   = safe_float(env_config.get(f"min_{u}", 0))
+                u_split = safe_float(env_config.get(f"split_{u}", 0))
                 from_min = u_min - top_up_joint.get(u, 0.0)
                 from_split = max(0.0, split_base) * u_split / 100
                 from_personal = -personal_exp.get(u, 0.0)
@@ -317,7 +315,7 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # ── Legacy split_rule model ────────────────────────────────────────
         else:
             split_rule    = env_config.get("split_rule", "solo")
-            threshold     = float(env_config.get("split_threshold", 0) or 0)
+            threshold     = safe_float(env_config.get("split_threshold", 0))
             if split_rule == "solo" or len(split_users) == 0:
                 user_shares   = {base_contributor: total_expenses}
                 excess_amount = 0.0
@@ -336,7 +334,7 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # Credit = -obligation (positive = overpaid / owed to you, negative = you owe)
         balances: dict[str, float] = {}
         for u in split_users:
-            balances[u] = round(-float(user_shares.get(u, 0.0)), 2)
+            balances[u] = round(-safe_float(user_shares.get(u, 0.0)), 2)
 
         # Build per-user top_up + personal for display
         assets: dict[str, float] = {}

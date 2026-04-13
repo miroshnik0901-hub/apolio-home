@@ -4,6 +4,7 @@ Formats structured data from agent tools into Telegram-ready text.
 """
 import re
 from typing import Optional
+from sheets import safe_float
 
 CATEGORY_EMOJI = {
     "Housing":       "🏠",
@@ -81,7 +82,7 @@ def format_report(data: dict, envelope_id: str = "", cap: float = 0) -> str:
     period = data.get("period", "")
     month_label = _month_name(period) if "-" in period else period
     env = envelope_id or data.get("envelope_id", "")
-    total = float(data.get("total_spent", 0))
+    total = safe_float(data.get("total_spent", 0))
     categories = data.get("categories", {})
 
     lines = [f"📋 *{month_label} — {env}*", ""]
