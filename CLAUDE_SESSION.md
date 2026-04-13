@@ -53,6 +53,45 @@ Stopped because: ...
 
 ---
 
+## Recent Changes (last session — 2026-04-13)
+
+| What changed | File | Detail |
+|---|---|---|
+| Topic validation fix | `task_log.py` | `add_task()`: empty string now raises ValueError. `_FALLBACK_TOPICS` has 6 items (Bug Fix and Process removed) |
+| Dashboard format reset | `sheets.py` | `update_dashboard()`: added `repeatCell` + empty `numberFormat` via `batch_update` before writing — fixes % and date format corruption after `ws.clear()` |
+| Config write method | `sheets.py` | Must use `write_config()` with `value_input_option='USER_ENTERED'` — direct `ws.update()` creates text cells with `'` prefix |
+| `bot_version` type | Config sheet | Must stay as string `'2.0'` — written with `'` text prefix in Sheets, not numeric |
+| Docs cleanup | project root | ~20 files deleted. Active docs: CLAUDE.md, CLAUDE_WORKING_GUIDE.md, CLAUDE_SESSION.md, ApolioHome_Prompt.md, SELF_LEARNING_ALGORITHM.md |
+| CLAUDE.md | project root | Fully rewritten in English. All operational rules are here now |
+| CLAUDE_SESSION.md | project root | New file (this file). Replaces scattered context files |
+| Project Instructions (Claude UI) | — | Now a lean pointer only — CLAUDE.md is authoritative |
+
+---
+
+## Sandbox Initialization (Cowork / local work)
+
+Repo is mounted at: `/sessions/.../mnt/apolio-home`
+`.env` is at: `/sessions/.../mnt/apolio-home/.env`
+
+To work with project code from sandbox:
+```python
+import sys, os
+from dotenv import load_dotenv
+load_dotenv('/sessions/gallant-relaxed-lamport/mnt/apolio-home/.env')
+sys.path.insert(0, '/sessions/gallant-relaxed-lamport/mnt/apolio-home')
+from task_log import TaskLog
+from sheets import SheetsClient  # NOT SheetManager — that name doesn't exist
+```
+
+Git remote needs token (stored in `.git/config` remote URL). To push:
+```bash
+cd /sessions/gallant-relaxed-lamport/mnt/apolio-home
+git push origin dev   # staging — no confirmation needed
+git push origin main  # production — needs Mikhail's GO
+```
+
+---
+
 ## Key Technical Decisions
 
 - **`value_input_option='USER_ENTERED'`** when writing to Sheets — otherwise numbers are stored as strings with `'` prefix. Happens when writing Config via `ws.update()` directly instead of `write_config()`.

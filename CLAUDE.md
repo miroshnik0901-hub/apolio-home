@@ -1,9 +1,20 @@
 **Start of every session — read in this order:**
-1. `CLAUDE_SESSION.md` — live journal: what was done, what's in progress, pending decisions
-2. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
-3. Run relevant tests before every push
+1. `SESSION_LOG.md` — recent action history (what was done and when)
+2. `CLAUDE_SESSION.md` — current state snapshot (pending decisions, in-progress work)
+3. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
+4. Run relevant tests before every push
 
-`CLAUDE_SESSION.md` — update immediately after every significant action (deploy, data change, key decision, unfinished task).
+## Session Memory — mandatory
+
+After every significant action (push, file creation/deletion, schema change, key decision, bug fix):
+→ Append one line to `SESSION_LOG.md`:
+```
+YYYY-MM-DD | ACTION | RESULT / STATE
+```
+Never rewrite past entries. Just append.
+No friction: one line, no formatting, no sections to find.
+
+`CLAUDE_SESSION.md` — update when current **state** changes: new pending decisions, blocked tasks, deployed features. Not after every action — SESSION_LOG.md handles that.
 
 ## Languages
 
