@@ -23,7 +23,7 @@ YYYY-MM-DD HH:MM | NEXT    | concrete next step if mid-task
 
 Never rewrite past entries. Just append.
 
-### Rotation (triggered when SESSION_LOG.md > 8192 bytes)
+### Rotation (triggered when SESSION_LOG.md > 16384 bytes)
 
 1. Get timestamp: `TS=$(date '+%Y-%m-%d_%H-%M')`
 2. Move log to archive: `mv SESSION_LOG.md logs/SESSION_LOG_ARCHIVE_${TS}.md`

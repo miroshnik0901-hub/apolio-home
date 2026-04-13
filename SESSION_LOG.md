@@ -35,3 +35,5 @@
 2026-04-13 16:28 | PENDING | Project Instructions update: Mikhail pastes new text manually (Claude UI → Apolio-home → Settings → Project Instructions)
 2026-04-13 16:31 | ACTION | plugin.json version fixed 1.4.4→1.4.5, plugin repackaged and re-presented to user
 2026-04-13 16:41 | ACTION | chmod +x fix_git_and_push.command — was not executable, now fixed
+2026-04-13 16:43 | ACTION | git push confirmed dev b4e2586 — CLAUDE.md (16KB threshold) + .gitignore (.test_write, fix_git_and_push.command ignored)
+2026-04-13 16:XX | ACTION | found bug: rotation header said 8192 not 16384; fixed CLAUDE.md; push pending (lock again)
