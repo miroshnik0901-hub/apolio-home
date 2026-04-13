@@ -11,6 +11,21 @@ Mikhail writes in RU / UK / EN / IT freely, in any order, mixed in one message.
 All new user-facing strings go through `i18n.ts()` / `i18n.t()` — all 4 languages required.
 Never hardcode UI strings. Match Mikhail's language in replies.
 
+## Task Log — правило комментариев
+
+Каждый комментарий в поле "Apolio Comment" должен быть **самодостаточным**.
+Следующий Claude с нулевым контекстом чата должен прочитать комментарий и понять всё.
+
+Обязательно включать:
+- **Что** за проблема — точный симптом
+- **Почему** — причина, если известна
+- **Какие файлы/функции** затронуты
+- **Что пробовал** и результат
+- **Следующий шаг** — конкретный
+
+❌ `[2026-04-13] Починил валидацию топика`
+✅ `[2026-04-13] Пустой topic проходил валидацию т.к. "if topic and ..." falsy для "". Исправил: "if not topic or topic not in VALID_TOPICS" в add_task(). То же в update_task(). Задеплоено. Проверить: add_task с topic="" → должен ValueError.`
+
 ## Git & Deploy
 
 - Git: push to `main` for production, `dev` for staging. Never `master`.
