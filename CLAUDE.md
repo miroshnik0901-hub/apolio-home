@@ -10,7 +10,8 @@
 **After every reply** — append one line to `SESSION_LOG.md`. No exceptions. Claude doesn't know when the context window ends, so every message could be the last.
 
 Step 1: run `date '+%Y-%m-%d %H:%M'` to get the timestamp.
-Step 2: append one line:
+Step 2: check log size: `wc -c SESSION_LOG.md`
+Step 3: if size > 8192 bytes → rotate (see Rotation below). Otherwise append one line:
 ```
 YYYY-MM-DD HH:MM | CHAT    | what was discussed
 YYYY-MM-DD HH:MM | ACTION  | what was done + result
@@ -21,6 +22,32 @@ YYYY-MM-DD HH:MM | NEXT    | concrete next step if mid-task
 ```
 
 Never rewrite past entries. Just append.
+
+### Rotation (triggered when SESSION_LOG.md > 8192 bytes)
+
+1. Get timestamp: `TS=$(date '+%Y-%m-%d_%H-%M')`
+2. Move log to archive: `mv SESSION_LOG.md logs/SESSION_LOG_ARCHIVE_${TS}.md`
+3. Create new `SESSION_LOG.md` with mechanical summary — no interpretation, verbatim copy:
+
+```
+# Session Log — append only, never edit past entries
+# Types: CHAT | ACTION | DECISION | PENDING | STATE | NEXT
+# Format: YYYY-MM-DD HH:MM | TYPE | content
+# Time: always run `date '+%Y-%m-%d %H:%M'` before writing an entry
+# ROTATED from: logs/SESSION_LOG_ARCHIVE_${TS}.md
+
+YYYY-MM-DD HH:MM | STATE    | [last STATE entry from archive — verbatim]
+YYYY-MM-DD HH:MM | DECISION | [each DECISION from archive — one line each, verbatim]
+YYYY-MM-DD HH:MM | PENDING  | [all unclosed PENDING from archive — verbatim]
+YYYY-MM-DD HH:MM | NEXT     | [last NEXT entry from archive — verbatim]
+```
+
+Rules for summary:
+- Extract by type only — `grep "| STATE\|DECISION\|PENDING\|NEXT"` from archive
+- For STATE and NEXT: take only the last occurrence
+- For DECISION and PENDING: take all occurrences
+- No paraphrasing, no omissions, no interpretation
+- Then append the current entry that triggered the rotation
 
 ## Languages
 
