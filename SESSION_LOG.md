@@ -1,6 +1,7 @@
 # Session Log — append only, never edit past entries
 # Types: CHAT | ACTION | DECISION | PENDING | STATE | NEXT
 # Format: YYYY-MM-DD HH:MM | TYPE | content
+# Time: always run `date '+%Y-%m-%d %H:%M'` before writing an entry
 
 2026-04-13 | ACTION | topic validation fix in add_task() — empty string raises ValueError; Bug Fix + Process removed from _FALLBACK_TOPICS
 2026-04-13 | ACTION | Dashboard format reset in sheets.py — repeatCell+numberFormat clear via batch_update before writing; fixes % and date corruption after ws.clear()
@@ -14,3 +15,6 @@
 2026-04-13 | CHAT | обсуждаем механизм памяти: пишем в SESSION_LOG после каждого ответа
 2026-04-13 | DECISION | CLAUDE_SESSION.md избыточен — удалён; SESSION_LOG.md единственный файл памяти
 2026-04-13 | ACTION | CLAUDE_SESSION.md deleted, SESSION_LOG.md updated with types CHAT/ACTION/DECISION/PENDING/STATE
+2026-04-13 | ACTION | CLAUDE.md updated: "after every reply" rule moved into session start block; pushed dev 3497e2e
+2026-04-13 | ACTION | Project Instructions (Claude UI) updated — DEV_CHECKLIST removed, SESSION_LOG read trigger + after-every-reply rule added
+2026-04-13 14:48 | CHAT | исправлен формат записей: время обязательно; получать через date '+%Y-%m-%d %H:%M'
