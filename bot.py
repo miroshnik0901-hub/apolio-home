@@ -2791,6 +2791,58 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── cb_del_confirm_<tx_id> ─────────────────────────────────────────────
     elif data.startswith("cb_del_confirm_"):
         tx_id = data[15:]
+        # T-185: defensive — if tx_id is actually multiple IDs (agent passed space/comma
+        # separated but comma check failed), treat as bulk delete
+        import re as _re_cb
+        _cb_ids = [t.strip() for t in _re_cb.split(r'[,\s]+', tx_id) if t.strip()]
+        if len(_cb_ids) > 1:
+            logger.warning(f"T-185: cb_del_confirm_ got {len(_cb_ids)} IDs — redirecting to bulk path")
+            session._bulk_delete_ids = _cb_ids
+            # Synthesize a fake cb_del_bulk call by overwriting data
+            data = "cb_del_bulk"
+            # Fall through to cb_del_bulk handler below by re-dispatching
+            tx_ids = _cb_ids
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+            n = len(tx_ids)
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}",
+            )
+            await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+            from tools.transactions import tool_delete_transaction as _tdt_bulk
+            deleted, failed = [], []
+            for tid in tx_ids:
+                try:
+                    result = await _tdt_bulk({"tx_id": tid, "confirmed": True}, session, sheets, auth)
+                    if isinstance(result, dict) and result.get("deleted"):
+                        deleted.append(tid)
+                    else:
+                        err = result.get("error", "unknown") if isinstance(result, dict) else str(result)
+                        failed.append(f"{tid}: {err}")
+                except Exception as e:
+                    failed.append(f"{tid}: {e}")
+            lines = []
+            if deleted:
+                lines.append(f"✅ {i18n.ts('del_bulk_result', lang).format(deleted=len(deleted), total=n)}")
+                for d in deleted:
+                    lines.append(f"  • {d}")
+            if failed:
+                lines.append(f"⚠️ {i18n.ts('del_bulk_errors', lang)}")
+                for f_line in failed:
+                    lines.append(f"  • {f_line}")
+            bal_line = _quick_balance_line(session, lang)
+            if bal_line:
+                lines.append(f"\n{bal_line}")
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="\n".join(lines),
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+            return
         await query.answer()
         # T-140: remove buttons + echo user choice
         try:
@@ -4141,6 +4193,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             and not pending_ch
             and response
             and not _already_shown  # don't repeat buttons for duplicate photos
+            and not getattr(session, "_bulk_delete_ids", None)  # T-185: don't fire during bulk delete
             and any(kw in response.lower() for kw in ("eur", "usd", "uah", "грн", "сума", "итого", "total", "загальна"))
         ):
             logger.warning("BUG-010: photo receipt detected but LLM skipped present_options — forcing buttons")
@@ -4200,8 +4253,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if pending_del_tx and not has_delete_btn:
                 session.pending_delete_tx = None
                 pending_del_tx = None
-            if has_delete_btn and pending_del_tx and "," in str(pending_del_tx):
-                tx_ids = [t.strip() for t in str(pending_del_tx).split(",") if t.strip()]
+            # T-185: support both comma AND space separated IDs (agent sometimes sends spaces)
+            import re as _re_ids
+            _raw_del = str(pending_del_tx) if pending_del_tx else ""
+            _split_ids = [t.strip() for t in _re_ids.split(r'[,\s]+', _raw_del) if t.strip()] if _raw_del else []
+            if has_delete_btn and pending_del_tx and len(_split_ids) > 1:
+                tx_ids = _split_ids
                 n = len(tx_ids)
                 bulk_label = f"🗑️ {i18n.ts('del_bulk', lang).format(n=n)}"
                 session._bulk_delete_ids = tx_ids
