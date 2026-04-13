@@ -558,7 +558,7 @@ def test_sheets_caching():
 def test_agent_crash_handling():
     src = (ROOT / "bot.py").read_text()
     # Must have except clause around agent.run()
-    assert "except Exception as agent_exc" in src, "Missing except for agent.run() crash"
+    assert ("except Exception as agent_exc" in src or "except BaseException as agent_exc" in src), "Missing except for agent.run() crash"
     assert "agent.run() failed" in src, "Missing error log for agent crash"
     return True
 
