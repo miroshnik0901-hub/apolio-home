@@ -9,6 +9,8 @@
 
 **After every reply** — append one line to `SESSION_LOG.md`. No exceptions. Claude doesn't know when the context window ends, so every message could be the last.
 
+Step 1: run `date '+%Y-%m-%d %H:%M'` to get the timestamp.
+Step 2: append one line:
 ```
 YYYY-MM-DD HH:MM | CHAT    | what was discussed
 YYYY-MM-DD HH:MM | ACTION  | what was done + result
