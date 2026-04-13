@@ -18,3 +18,6 @@
 2026-04-13 21:49 | PENDING | Push to main: ждём GO від Mikhail
 2026-04-13 23:12 | ACTION  | CLAUDE_WORKING_GUIDE.md оновлено до v1.7: _sheets_retry, session.lang, compute_contribution_history data-driven, auto-sort, Dashboard [HISTORY] layout; Commit 25661c4
 2026-04-13 23:12 | ACTION  | SESSION_LOG rotated → logs/SESSION_LOG_ARCHIVE_2026-04-13_23-12.md (16.5KB exceeded 16384 threshold)
+2026-04-13 23:18 | ACTION  | TEST Transactions відсортовано по Date asc вручну (17 рядків); авто-сортування після add тепер активне (T-176)
+2026-04-13 23:18 | ACTION  | TEST Dashboard оновлено: [HISTORY] 2026-03 + 2026-04 + TOTAL, обидва юзери (T-175); дублікат 03824543 (Maryna exp_joint=2027) все ще є в TEST
+2026-04-13 23:18 | STATE   | dev at f5db016. Staging повинен бути актуальним. Pending GO від Mikhail для push main.
