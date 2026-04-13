@@ -474,14 +474,27 @@ def _quick_balance_line(session, lang: str = "ru") -> str:
                 since_label = i18n.ts("bal_cumulative_since", lang).format(month=first_month)
                 parts.append(f"{i18n.ts('bal_cumulative_header', lang)} ({since_label}):")
                 balances = cum.get("cumulative_balances", {})
+                contributions = cum.get("cumulative_contributions", {})
+                obligations = cum.get("cumulative_obligations", {})
+                # T-169: if both are negative, show as "needs to contribute" (not "owes")
+                all_negative = all(safe_float(balances.get(u, 0)) <= 0 for u in split_users)
                 for u in split_users:
                     credit = safe_float(balances.get(u, 0))
-                    if credit > 0:
+                    contrib = safe_float(contributions.get(u, 0))
+                    oblig = safe_float(obligations.get(u, 0))
+                    if all_negative and credit < 0:
+                        # Show as "needs to fund joint account by X"
+                        _needs_lbl = {
+                            "ru": "нужно внести", "uk": "потрібно внести",
+                            "en": "needs to fund", "it": "da versare",
+                        }
+                        parts.append(f"  ⚠️ {u}: {abs(credit):,.0f} {cur} ({_needs_lbl.get(lang, 'потрібно внести')}) · внесено {contrib:,.0f}")
+                    elif credit > 0:
                         parts.append(f"  ✅ {u}: +{credit:,.2f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                     elif credit < 0:
-                        parts.append(f"  ⚠️ {u}: {credit:,.2f} {cur} ({i18n.ts('bal_owes', lang)})")
+                        parts.append(f"  ⚠️ {u}: {abs(credit):,.2f} {cur} ({i18n.ts('bal_owes', lang)})")
                     else:
-                        parts.append(f"  ➖ {u}: 0 {cur}")
+                        parts.append(f"  ✅ {u}: баланс ок")
             if parts:
                 return "\n".join(parts)
 
@@ -2957,10 +2970,56 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # without actually calling the tool).
         if chosen_value in ("yes_joint", "yes_personal") and getattr(session, "pending_receipt", None):
             receipt = session.pending_receipt
-            # T-138: immediately clear pending_receipt to prevent duplicate paths
+            account = "Joint" if chosen_value == "yes_joint" else "Personal"
+
+            # T-168: if receipt has 3+ distinct-merchant items (bank statement),
+            # ask split vs single BEFORE adding. Store account choice in session.
+            items = receipt.get("items") or []
+            merchant = receipt.get("merchant", "")
+            _is_multi_merchant = (
+                len(items) >= 3
+                and (not merchant or "multiple" in merchant.lower() or "merchants" in merchant.lower())
+            )
+            if _is_multi_merchant and not getattr(session, "_split_mode_chosen", False):
+                # Store account so we can use it after user picks split mode
+                session._pending_split_account = account
+                session._split_mode_chosen = False
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
+                _split_q = {
+                    "ru": f"📋 Найдено {len(items)} операций. Как записать?",
+                    "uk": f"📋 Знайдено {len(items)} операцій. Як записати?",
+                    "en": f"📋 Found {len(items)} transactions. How to record?",
+                    "it": f"📋 Trovate {len(items)} operazioni. Come registrare?",
+                }
+                _btn_separate = {
+                    "ru": "📋 Каждую отдельно", "uk": "📋 Кожну окремо",
+                    "en": "📋 Each separately", "it": "📋 Ognuna separatamente",
+                }
+                _btn_single = {
+                    "ru": "📦 Одной транзакцией", "uk": "📦 Однією транзакцією",
+                    "en": "📦 As one transaction", "it": "📦 Come una transazione",
+                }
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=_split_q.get(lang, _split_q["ru"]),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(_btn_separate.get(lang, _btn_separate["ru"]),
+                                              callback_data="cb_split_separate")],
+                        [InlineKeyboardButton(_btn_single.get(lang, _btn_single["ru"]),
+                                              callback_data="cb_split_single")],
+                    ]),
+                )
+                return
+
+            # T-138: clear pending_receipt to prevent duplicate paths
             session.pending_receipt = None
             session._receipt_buttons_shown = False
-            account = "Joint" if chosen_value == "yes_joint" else "Personal"
+            session._split_mode_chosen = False
+            session._pending_split_account = None
+            session._receipt_buttons_shown = False
             try:
                 # T-139: echo user choice as visible message + remove buttons from feed
                 account_label = i18n.ts("bal_joint_topup", lang) if account == "Joint" else i18n.ts("bal_personal_exp", lang)
@@ -3193,6 +3252,114 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             return
         # ── END BUG-008 FIX ───────────────────────────────────────────────
+
+    # ── T-168: cb_split_separate — add each item as separate transaction ──────
+    elif data == "cb_split_separate":
+        receipt = getattr(session, "pending_receipt", None)
+        account = getattr(session, "_pending_split_account", "Personal")
+        if not receipt:
+            await ctx.bot.send_message(chat_id=query.message.chat_id,
+                                       text="⚠️ Session expired. Please resend the photo.")
+            return
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+        session.pending_receipt = None
+        session._receipt_buttons_shown = False
+        session._split_mode_chosen = True
+        session._pending_split_account = None
+
+        items = receipt.get("items") or []
+        from tools.transactions import tool_add_transaction
+        added, failed = [], []
+        await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        for item in items:
+            item_name = item.get("name") or item.get("merchant") or item.get("description") or "?"
+            item_amount = safe_float(item.get("amount") or item.get("price") or 0)
+            item_date = item.get("date") or receipt.get("date") or ""
+            item_cat = item.get("category") or receipt.get("category") or "Other"
+            if item_amount <= 0:
+                continue
+            params = {
+                "amount": item_amount,
+                "currency": receipt.get("currency", "EUR"),
+                "category": item_cat,
+                "who": receipt.get("who") or session.user_name,
+                "date": item_date,
+                "note": item_name,
+                "account": account,
+                "type": "expense",
+            }
+            try:
+                result = await tool_add_transaction(params, session, sheets, auth)
+                if isinstance(result, dict) and result.get("tx_id"):
+                    added.append(f"✓ {item_name} · {item_amount:,.2f} {receipt.get('currency','EUR')}")
+                else:
+                    err = result.get("error", "?") if isinstance(result, dict) else str(result)
+                    failed.append(f"✗ {item_name}: {err}")
+            except Exception as e:
+                failed.append(f"✗ {item_name}: {e}")
+
+        cur = receipt.get("currency", "EUR")
+        total_added = len(added)
+        total_items = len([i for i in items if safe_float(i.get("amount") or i.get("price") or 0) > 0])
+        summary_lines = [f"✅ Додано {total_added}/{total_items}:"] + added
+        if failed:
+            summary_lines += [f"\n⚠️ Не вдалося ({len(failed)}):"] + failed
+        bal_line = _quick_balance_line(session, lang)
+        if bal_line:
+            summary_lines.append(f"\n{bal_line}")
+        await ctx.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="\n".join(summary_lines),
+            reply_markup=_with_menu_btn(lang=lang),
+        )
+        return
+
+    # ── T-168: cb_split_single — add as one merged transaction ────────────────
+    elif data == "cb_split_single":
+        receipt = getattr(session, "pending_receipt", None)
+        account = getattr(session, "_pending_split_account", "Personal")
+        if not receipt:
+            await ctx.bot.send_message(chat_id=query.message.chat_id,
+                                       text="⚠️ Session expired. Please resend the photo.")
+            return
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+        session.pending_receipt = None
+        session._receipt_buttons_shown = False
+        session._split_mode_chosen = True
+        session._pending_split_account = None
+        # Fall through to standard single-transaction add
+        from tools.transactions import tool_add_transaction
+        await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        add_params = {
+            "amount": receipt.get("total_amount", 0),
+            "currency": receipt.get("currency", "EUR"),
+            "category": receipt.get("category", "Other"),
+            "who": receipt.get("who") or session.user_name,
+            "date": receipt.get("date", ""),
+            "note": receipt.get("merchant") or "Multiple merchants",
+            "account": account,
+            "type": "expense",
+        }
+        result = await tool_add_transaction(add_params, session, sheets, auth)
+        tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
+        msg = result.get("message", "") if isinstance(result, dict) else str(result)
+        if isinstance(result, dict) and "error" in result:
+            msg = f"⚠️ {result['error']}"
+        bal_line = _quick_balance_line(session, lang)
+        if bal_line:
+            msg += f"\n\n{bal_line}"
+        await ctx.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=msg,
+            reply_markup=_with_menu_btn(lang=lang),
+        )
+        return
 
         # Pass chosen value back to agent as if the user sent it as text
         try:
