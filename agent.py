@@ -6,6 +6,7 @@ System prompt loaded from ApolioHome_Prompt.md, augmented at runtime with:
   - user goals (user_context.py)
   - conversation history (tools/conversation_log.py)
 """
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,48 @@ from sheets import SheetsClient
 from auth import AuthManager, SessionContext
 
 logger = logging.getLogger(__name__)
+
+
+# ── T-160: Retry wrapper for transient Anthropic API errors ───────────────────
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}  # 529 = Overloaded
+
+async def _api_call_with_retry(client, **kwargs) -> Any:
+    """Call client.messages.create with exponential backoff retry.
+    Retries on RateLimitError (429), ServiceUnavailableError (503), and
+    InternalServerError (500/529 Overloaded). Non-retryable errors propagate immediately.
+    """
+    max_attempts = 3
+    base_delay = 2.0  # seconds
+
+    for attempt in range(max_attempts):
+        try:
+            return await client.messages.create(**kwargs)
+        except anthropic.RateLimitError as e:
+            if attempt < max_attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Anthropic RateLimitError (429), attempt {attempt+1}/{max_attempts}, retrying in {delay:.1f}s")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except anthropic.InternalServerError as e:
+            # Covers 500, 529 (Overloaded)
+            if attempt < max_attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Anthropic InternalServerError ({e}), attempt {attempt+1}/{max_attempts}, retrying in {delay:.1f}s")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except anthropic.APIStatusError as e:
+            if hasattr(e, 'status_code') and e.status_code in _RETRYABLE_STATUS_CODES:
+                if attempt < max_attempts - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Anthropic API error {e.status_code}, attempt {attempt+1}/{max_attempts}, retrying in {delay:.1f}s")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+            else:
+                raise  # Non-retryable — propagate immediately
+
 
 def _resolve_budget_file_id(sheets_client) -> str:
     """Get budget file_id from Admin → Envelopes (no hardcoded IDs)."""
@@ -970,7 +1013,8 @@ class ApolioAgent:
         tool_results = []  # last round's tool results — used by fallback error check
 
         for iteration in range(max_iterations):
-            response = await self.client.messages.create(
+            response = await _api_call_with_retry(
+                self.client,
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
                 system=system,
@@ -1073,7 +1117,8 @@ class ApolioAgent:
                 pass
 
         try:
-            fallback = await self.client.messages.create(
+            fallback = await _api_call_with_retry(
+                self.client,
                 model="claude-sonnet-4-20250514",
                 max_tokens=256,
                 system=system,
