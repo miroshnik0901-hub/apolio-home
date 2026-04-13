@@ -2986,6 +2986,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except BadRequest:
                     pass
 
+                # T-181: echo account choice so it's visible in chat history
+                _acc_label = i18n.ts("bal_joint_topup", lang) if account == "Joint" else i18n.ts("bal_personal_exp", lang)
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"✅ {_acc_label}",
+                )
+
                 # Build items preview: "• merchant/name  amount  [date]"
                 cur_r = receipt.get("currency", "")
                 _item_lines = []
@@ -3289,6 +3296,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=None)
         except BadRequest:
             pass
+        # T-181: echo split mode choice
+        _echo_sep = {"ru": "📋 Каждую отдельно", "uk": "📋 Кожну окремо",
+                     "en": "📋 Each separately", "it": "📋 Ognuna separatamente"}
+        await ctx.bot.send_message(chat_id=query.message.chat_id,
+                                   text=f"✅ {_echo_sep.get(lang, _echo_sep['ru'])}")
         session.pending_receipt = None
         session._receipt_buttons_shown = False
         session._split_mode_chosen = True
@@ -3300,10 +3312,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         for item in items:
             item_name = item.get("name") or item.get("merchant") or item.get("description") or "?"
-            item_amount = safe_float(item.get("amount") or item.get("price") or 0)
+            # T-181: check all amount field variants AI may use
+            item_amount = safe_float(
+                item.get("amount") or item.get("total_amount") or item.get("price") or 0
+            )
             item_date = item.get("date") or receipt.get("date") or ""
             item_cat = item.get("category") or receipt.get("category") or "Other"
             if item_amount <= 0:
+                failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
             params = {
                 "amount": item_amount,
@@ -3353,6 +3369,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=None)
         except BadRequest:
             pass
+        # T-181: echo split mode choice
+        _echo_single = {"ru": "📦 Одной транзакцией", "uk": "📦 Однією транзакцією",
+                        "en": "📦 As one transaction", "it": "📦 Come una transazione"}
+        await ctx.bot.send_message(chat_id=query.message.chat_id,
+                                   text=f"✅ {_echo_single.get(lang, _echo_single['ru'])}")
         session.pending_receipt = None
         session._receipt_buttons_shown = False
         session._split_mode_chosen = True
