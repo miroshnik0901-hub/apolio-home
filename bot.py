@@ -457,10 +457,36 @@ def _current_month_str() -> str:
 
 def _quick_balance_line(session, lang: str = "ru") -> str:
     """T-128: Balance summary after add/delete. Credit model from xlsx formula.
-    T-133: All strings via i18n."""
+    T-133: All strings via i18n.
+    T-167: Use cumulative balance across all months (from first transaction)."""
     try:
-        from intelligence import compute_contribution_status
-        snap = compute_contribution_status(sheets, session.current_envelope_id or "MM_BUDGET")
+        from intelligence import compute_cumulative_balance, compute_contribution_status
+        env_id = session.current_envelope_id or "MM_BUDGET"
+
+        # T-167: cumulative balance (all months from first transaction)
+        cum = compute_cumulative_balance(sheets, env_id)
+        if cum.get("status") == "ok" and cum.get("months_counted", 0) > 0:
+            split_users = cum.get("split_users", [])
+            cur = cum.get("currency", "EUR")
+            first_month = cum.get("first_month", "")
+            parts = []
+            if len(split_users) > 1:
+                since_label = i18n.ts("bal_cumulative_since", lang).format(month=first_month)
+                parts.append(f"{i18n.ts('bal_cumulative_header', lang)} ({since_label}):")
+                balances = cum.get("cumulative_balances", {})
+                for u in split_users:
+                    credit = safe_float(balances.get(u, 0))
+                    if credit > 0:
+                        parts.append(f"  ✅ {u}: +{credit:,.2f} {cur} ({i18n.ts('bal_overpaid', lang)})")
+                    elif credit < 0:
+                        parts.append(f"  ⚠️ {u}: {credit:,.2f} {cur} ({i18n.ts('bal_owes', lang)})")
+                    else:
+                        parts.append(f"  ➖ {u}: 0 {cur}")
+            if parts:
+                return "\n".join(parts)
+
+        # Fallback: current month only (solo envelope or cumulative failed)
+        snap = compute_contribution_status(sheets, env_id)
         if snap.get("status") != "ok":
             return ""
         spent = snap.get("total_expenses", 0)

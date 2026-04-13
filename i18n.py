@@ -586,6 +586,12 @@ SYS: dict[str, dict[str, str]] = {
     "bal_personal_exp": {
         "ru": "Оплатил лично", "uk": "Оплатив особисто", "en": "Paid personally", "it": "Pagato personalmente",
     },
+    "bal_cumulative_since": {
+        "ru": "с {month}", "uk": "з {month}", "en": "since {month}", "it": "da {month}",
+    },
+    "bal_cumulative_header": {
+        "ru": "⚖️ Накопленный баланс", "uk": "⚖️ Накопичений баланс", "en": "⚖️ Cumulative balance", "it": "⚖️ Saldo cumulativo",
+    },
     # ── T-139: Duplicate transaction options ──
     "dup_update": {
         "ru": "📝 Обновить существующую", "uk": "📝 Оновити існуючу", "en": "📝 Update existing", "it": "📝 Aggiorna esistente",

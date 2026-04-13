@@ -118,7 +118,8 @@ async def tool_get_budget_status(params: dict, session: SessionContext,
 async def tool_get_contribution_status(params: dict, session: SessionContext,
                                         sheets: SheetsClient, auth: AuthManager) -> Any:
     """
-    Return the per-user contribution and expense split status for a given month.
+    Return the per-user contribution and expense split status for a given month,
+    plus the cumulative balance from the first transaction (T-167).
     Uses the split rules configured in Admin Config sheet.
     """
     envelope_id = params.get("envelope_id") or session.current_envelope_id
@@ -127,6 +128,15 @@ async def tool_get_contribution_status(params: dict, session: SessionContext,
 
     month = params.get("month") or _current_month()
 
-    from intelligence import compute_contribution_status
+    from intelligence import compute_contribution_status, compute_cumulative_balance
     result = compute_contribution_status(sheets, envelope_id, month)
+
+    # T-167: attach cumulative balance to the result
+    try:
+        cumulative = compute_cumulative_balance(sheets, envelope_id)
+        if cumulative.get("status") == "ok":
+            result["cumulative"] = cumulative
+    except Exception:
+        pass
+
     return result

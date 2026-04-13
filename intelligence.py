@@ -437,6 +437,100 @@ def compute_contribution_history(sheets: SheetsClient, envelope_id: str,
     return results
 
 
+def compute_cumulative_balance(sheets: SheetsClient, envelope_id: str) -> dict:
+    """
+    T-167: Compute cumulative per-user balance from the FIRST transaction to today.
+
+    Unlike compute_contribution_status (which is month-scoped), this function:
+    1. Finds all months that have transactions
+    2. Applies per-user min obligation for EVERY such month (even if user didn't transact that month)
+    3. Sums credits/obligations across all months → cumulative balance
+
+    Returns:
+      {
+        "status": "ok",
+        "currency": "EUR",
+        "split_users": [...],
+        "months_counted": 3,
+        "first_month": "2026-02",
+        "cumulative_balances": {"Mikhail": -45.20, "Maryna": +45.20},
+        "cumulative_obligations": {"Mikhail": 300.00, ...},
+        "cumulative_contributions": {"Mikhail": 254.80, ...},
+      }
+    """
+    try:
+        envelopes = sheets.get_envelopes()
+        env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
+        if not env:
+            return {"error": "envelope_not_found"}
+
+        file_id = env.get("file_id", "")
+        currency = env.get("Currency", "EUR")
+
+        env_config = sheets.read_envelope_config(file_id) if file_id else {}
+        split_users_raw = env_config.get("split_users", "")
+        split_users = [u.strip() for u in split_users_raw.split(",") if u.strip()]
+        base_contributor = env_config.get("base_contributor", "Mikhail")
+        if not split_users:
+            split_users = [base_contributor]
+
+        all_txns = sheets.get_transactions(file_id)
+        # Filter out soft-deleted
+        active_txns = [t for t in all_txns if str(t.get("Deleted", "")).upper() != "TRUE"]
+
+        # Find all months that have at least one transaction
+        months_with_txns = sorted({
+            str(t.get("Date", ""))[:7] for t in active_txns
+            if len(str(t.get("Date", ""))) >= 7
+        })
+
+        if not months_with_txns:
+            return {
+                "status": "ok", "currency": currency, "split_users": split_users,
+                "months_counted": 0, "first_month": None,
+                "cumulative_balances": {u: 0.0 for u in split_users},
+                "cumulative_obligations": {u: 0.0 for u in split_users},
+                "cumulative_contributions": {u: 0.0 for u in split_users},
+            }
+
+        # Accumulate balance per user across all months
+        cumulative_obligations: dict[str, float] = defaultdict(float)
+        cumulative_contributions: dict[str, float] = defaultdict(float)
+
+        for month in months_with_txns:
+            snap = compute_contribution_status(sheets, envelope_id, month)
+            if snap.get("status") != "ok":
+                continue
+            for u in split_users:
+                obligation = safe_float(snap.get("user_shares", {}).get(u, 0))
+                contribution = safe_float(snap.get("assets", {}).get(u, 0))
+                cumulative_obligations[u] += obligation
+                cumulative_contributions[u] += contribution
+
+        # Cumulative balance = sum of monthly credits = -(obligations)
+        # Positive = overpaid overall, negative = owes overall
+        cumulative_balances: dict[str, float] = {
+            u: round(cumulative_contributions[u] - cumulative_obligations[u], 2)
+            for u in split_users
+        }
+
+        return {
+            "status": "ok",
+            "currency": currency,
+            "split_users": split_users,
+            "months_counted": len(months_with_txns),
+            "first_month": months_with_txns[0],
+            "last_month": months_with_txns[-1],
+            "cumulative_balances": dict(cumulative_balances),
+            "cumulative_obligations": {u: round(v, 2) for u, v in cumulative_obligations.items()},
+            "cumulative_contributions": {u: round(v, 2) for u, v in cumulative_contributions.items()},
+        }
+
+    except Exception as e:
+        logger.error(f"compute_cumulative_balance failed: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
 def format_snapshot_for_prompt(snap: dict) -> str:
     """
     Format the intelligence snapshot as a compact text block
