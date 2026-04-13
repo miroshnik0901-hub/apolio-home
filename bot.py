@@ -2925,85 +2925,118 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     text=i18n.ts("dup_cancelled", lang),
                     reply_markup=_with_menu_btn(lang=lang),
                 )
-                return
-
-            from tools.transactions import tool_add_transaction, tool_enrich_transaction
-            await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-
-            if dup_action == "update" and existing_tx_id and receipt:
-                enrich_params = {"tx_id": existing_tx_id}
-                # Only include non-empty fields to avoid overwriting existing data
-                if receipt.get("merchant"):
-                    enrich_params["note"] = receipt["merchant"]
-                if receipt.get("category"):
-                    enrich_params["category"] = receipt["category"]
-                if receipt.get("subcategory"):
-                    enrich_params["subcategory"] = receipt["subcategory"]
-                if receipt.get("who"):
-                    enrich_params["who"] = receipt["who"]
-                if dup_account:
-                    enrich_params["account"] = dup_account
-                result = await tool_enrich_transaction(
-                    enrich_params, session, sheets, auth,
-                )
-                tx_id = existing_tx_id
-            elif dup_action == "add_new" and dup_add_params:
-                dup_add_params["force_add"] = True
-                result = await tool_add_transaction(dup_add_params, session, sheets, auth)
-                tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
+                # T-192: no early return — fall through to present next queued dup
             else:
-                await ctx.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="⚠️ Context lost — try again.",
-                    reply_markup=_with_menu_btn(lang=lang),
-                )
-                return
+                # ── Update / Add-new ─────────────────────────────────────────
+                from tools.transactions import tool_add_transaction, tool_enrich_transaction
+                await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
 
-            msg = result.get("message", "") if isinstance(result, dict) else str(result)
+                if dup_action == "update" and existing_tx_id and receipt:
+                    enrich_params = {"tx_id": existing_tx_id}
+                    # Only include non-empty fields to avoid overwriting existing data
+                    if receipt.get("merchant"):
+                        enrich_params["note"] = receipt["merchant"]
+                    if receipt.get("category"):
+                        enrich_params["category"] = receipt["category"]
+                    if receipt.get("subcategory"):
+                        enrich_params["subcategory"] = receipt["subcategory"]
+                    if receipt.get("who"):
+                        enrich_params["who"] = receipt["who"]
+                    if dup_account:
+                        enrich_params["account"] = dup_account
+                    result = await tool_enrich_transaction(
+                        enrich_params, session, sheets, auth,
+                    )
+                    tx_id = existing_tx_id
+                elif dup_action == "add_new" and dup_add_params:
+                    dup_add_params["force_add"] = True
+                    result = await tool_add_transaction(dup_add_params, session, sheets, auth)
+                    tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
+                else:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text="⚠️ Context lost — try again.",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                    return
 
-            # Save receipt to PostgreSQL
-            if receipt:
+                msg = result.get("message", "") if isinstance(result, dict) else str(result)
+
+                # Save receipt to PostgreSQL
+                if receipt:
+                    try:
+                        await agent._tool_save_receipt(
+                            {
+                                "transaction_id": tx_id,
+                                "merchant": receipt.get("merchant", ""),
+                                "date": receipt.get("date", ""),
+                                "total_amount": receipt.get("total_amount", 0),
+                                "currency": receipt.get("currency", "EUR"),
+                                "items": receipt.get("items", []),
+                                "ai_summary": receipt.get("ai_summary", ""),
+                                "raw_text": receipt.get("raw_text", ""),
+                                "tg_file_id": receipt.get("tg_file_id", ""),
+                            },
+                            session, sheets, auth,
+                        )
+                    except Exception:
+                        pass
+
+                # Log
                 try:
-                    await agent._tool_save_receipt(
-                        {
-                            "transaction_id": tx_id,
-                            "merchant": receipt.get("merchant", ""),
-                            "date": receipt.get("date", ""),
-                            "total_amount": receipt.get("total_amount", 0),
-                            "currency": receipt.get("currency", "EUR"),
-                            "items": receipt.get("items", []),
-                            "ai_summary": receipt.get("ai_summary", ""),
-                            "raw_text": receipt.get("raw_text", ""),
-                            "tg_file_id": receipt.get("tg_file_id", ""),
-                        },
-                        session, sheets, auth,
+                    action_name = "enrich_transaction" if dup_action == "update" else "add_transaction"
+                    await appdb.log_message(
+                        user_id=session.user_id, direction="bot",
+                        message_type="tool",
+                        raw_text=f"[tool:{action_name}] {msg}",
+                        tool_called=action_name,
+                        result_short=msg[:200] if msg else "",
+                        session_id=session.session_id,
+                        envelope_id=session.current_envelope_id or "",
                     )
                 except Exception:
                     pass
 
-            # Log
-            try:
-                action_name = "enrich_transaction" if dup_action == "update" else "add_transaction"
-                await appdb.log_message(
-                    user_id=session.user_id, direction="bot",
-                    message_type="tool",
-                    raw_text=f"[tool:{action_name}] {msg}",
-                    tool_called=action_name,
-                    result_short=msg[:200] if msg else "",
-                    session_id=session.session_id,
-                    envelope_id=session.current_envelope_id or "",
+                bal_line = _quick_balance_line(session, lang)
+                full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
+
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=full_msg,
+                    reply_markup=_with_menu_btn(lang=lang),
                 )
-            except Exception:
-                pass
 
-            bal_line = _quick_balance_line(session, lang)
-            full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
-
-            await ctx.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=full_msg,
-                reply_markup=_with_menu_btn(lang=lang),
-            )
+            # T-192: present next queued cross-currency dup (if any)
+            _cdq = getattr(session, "_pending_cross_dups", None) or []
+            if _cdq:
+                _cdn = _cdq[0]
+                session._pending_cross_dups = _cdq[1:]
+                session._dup_receipt = _cdn["receipt"]
+                session._dup_account = _cdn["account"]
+                session._dup_existing_tx_id = _cdn["existing_tx_id"]
+                session._dup_add_params = _cdn["add_params"]
+                _cdn_ex_note = _cdn.get("existing_note", "")
+                _cdn_ex_eur = float(_cdn.get("existing_eur") or 0)
+                _cdn_ex_date = _cdn.get("existing_date", "")
+                _cdn_new_note = _cdn["receipt"]["merchant"]
+                _cdn_new_amt = _cdn["add_params"]["amount"]
+                _cdn_new_cur = _cdn["add_params"]["currency"]
+                _cdn_msg = (
+                    f"⚠️ Можливий дублікат:\n"
+                    f"  Нова: {_cdn_new_note} · {_cdn_new_amt:,.2f} {_cdn_new_cur}\n"
+                    f"  Є: {_cdn_ex_note or ''} · {_cdn_ex_eur:.2f} EUR · {_cdn_ex_date}\n\n"
+                    f"Оновити існуючий запис або додати нову транзакцію?"
+                )
+                _cdn_btns = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(i18n.ts("dup_update", lang), callback_data="cb_dup_update")],
+                    [InlineKeyboardButton(i18n.ts("dup_add_new", lang), callback_data="cb_dup_add_new")],
+                    [InlineKeyboardButton(i18n.ts("dup_cancel", lang), callback_data="cb_dup_cancel")],
+                ])
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=_cdn_msg,
+                    reply_markup=_cdn_btns,
+                )
         except Exception as e:
             logger.error(f"Duplicate decision handler failed: {e}", exc_info=True)
             await ctx.bot.send_message(
@@ -3361,6 +3394,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         items = receipt.get("items") or []
         from tools.transactions import tool_add_transaction
         added, failed = [], []
+        _pending_cross_dups: list[dict] = []   # T-192: cross-cur dup queue
         _file_id = None
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         # T-186: load known users to detect who from item note
@@ -3478,14 +3512,31 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             _bt_ex = set(_bex_note.split())
                             if not _bt_in & _bt_ex:
                                 continue
-                        # Match found — probable cross-currency duplicate
+                        # Match found — queue for enrichment prompt (T-192)
                         _is_cross_dup = True
-                        failed.append(
-                            f"⚠️ {item_name} · {item_amount:,.2f} {_batch_currency}"
-                            f" — ймовірний дублікат ({_bex_eur:.2f} EUR"
-                            f"{(' · ' + _bex.get('Note','')) if _bex.get('Note') else ''})"
-                            f", пропущено. Для примусового додавання: force add."
-                        )
+                        _pending_cross_dups.append({
+                            "receipt": {
+                                "merchant": item_name,
+                                "category": item_cat,
+                                "subcategory": item.get("subcategory", ""),
+                                "who": item_who,
+                            },
+                            "account": account,
+                            "existing_tx_id": _bex.get("ID", ""),
+                            "existing_note": _bex.get("Note", ""),
+                            "existing_eur": _bex_eur,
+                            "existing_date": str(_bex.get("Date", "")),
+                            "add_params": {
+                                "amount": item_amount,
+                                "currency": _batch_currency,
+                                "category": item_cat,
+                                "who": item_who,
+                                "date": item_date,
+                                "note": item_name,
+                                "account": account,
+                                "type": item_type,
+                            },
+                        })
                         break
             if _is_cross_dup:
                 continue
@@ -3538,6 +3589,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         total_added = len(added)
         total_items = len([i for i in items if safe_float(i.get("amount") or i.get("price") or 0) > 0])
         summary_lines = [f"✅ Додано {total_added}/{total_items}:"] + added
+        if _pending_cross_dups:
+            summary_lines.append(
+                f"\n⚠️ Потенційних дублікатів: {len(_pending_cross_dups)} — питання нижче"
+            )
         if failed:
             summary_lines += [f"\n⚠️ Не вдалося ({len(failed)}):"] + failed
         bal_line = _quick_balance_line(session, lang)
@@ -3548,6 +3603,36 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text="\n".join(summary_lines),
             reply_markup=_with_menu_btn(lang=lang),
         )
+        # T-192: present cross-currency dup enrichment prompts one by one
+        if _pending_cross_dups:
+            _cd0 = _pending_cross_dups[0]
+            session._dup_receipt = _cd0["receipt"]
+            session._dup_account = _cd0["account"]
+            session._dup_existing_tx_id = _cd0["existing_tx_id"]
+            session._dup_add_params = _cd0["add_params"]
+            session._pending_cross_dups = _pending_cross_dups[1:]
+            _cd0_ex_note = _cd0.get("existing_note", "")
+            _cd0_ex_eur = float(_cd0.get("existing_eur") or 0)
+            _cd0_ex_date = _cd0.get("existing_date", "")
+            _cd0_new_note = _cd0["receipt"]["merchant"]
+            _cd0_new_amt = _cd0["add_params"]["amount"]
+            _cd0_new_cur = _cd0["add_params"]["currency"]
+            _cd0_msg = (
+                f"⚠️ Можливий дублікат:\n"
+                f"  Нова: {_cd0_new_note} · {_cd0_new_amt:,.2f} {_cd0_new_cur}\n"
+                f"  Є: {_cd0_ex_note or ''} · {_cd0_ex_eur:.2f} EUR · {_cd0_ex_date}\n\n"
+                f"Оновити існуючий запис або додати нову транзакцію?"
+            )
+            _cd0_btns = InlineKeyboardMarkup([
+                [InlineKeyboardButton(i18n.ts("dup_update", lang), callback_data="cb_dup_update")],
+                [InlineKeyboardButton(i18n.ts("dup_add_new", lang), callback_data="cb_dup_add_new")],
+                [InlineKeyboardButton(i18n.ts("dup_cancel", lang), callback_data="cb_dup_cancel")],
+            ])
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=_cd0_msg,
+                reply_markup=_cd0_btns,
+            )
         return
 
     # ── T-168: cb_split_single — add as one merged transaction ────────────────
