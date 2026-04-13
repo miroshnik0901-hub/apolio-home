@@ -189,15 +189,15 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     subcategory = params.get("subcategory", "")
     who = params.get("who", session.user_name)
 
-    # ── Duplicate detection (T-030 / T-182) ─────────────────────────────
-    # Checks: same date + same currency + amount within tolerance + category + who + note.
-    # Tolerance:
+    # ── Duplicate detection (T-030 / T-182 / T-192) ──────────────────────
+    # Checks: same date + amount within tolerance + note overlap.
+    # Same-currency tolerance:
     #   EUR  → strict: abs diff < 0.01 (rounding only)
-    #   other → ±5%: covers FX rate fluctuation between when the receipt was
-    #           photographed and the rate stored in FX_Rates sheet.
+    #   other → ±5%: covers FX rate fluctuation.
+    # Cross-currency (T-192): compare Amount_EUR from existing vs pre-computed
+    #   EUR equivalent of new tx.  Handles UAH bank stmt vs EUR manual entry.
     # Note/merchant: if both sides have a non-empty note, strings that share
     #   no common tokens are treated as different transactions (not duplicate).
-    # Currency must match — prevents cross-currency false positives.
     if not params.get("force_add"):
         try:
             existing = sheets.get_transactions(
@@ -211,13 +211,65 @@ async def tool_add_transaction(params: dict, session: SessionContext,
             in_note = str(params.get("note", "")).strip().lower()
             in_cur = currency.upper()
 
-            for ex in existing:
-                # ── Currency must match ──────────────────────────────────
-                ex_cur = str(ex.get("Currency_Orig", "EUR")).upper()
-                if ex_cur != in_cur:
-                    continue
+            # T-192: pre-compute EUR equivalent of new tx for cross-currency check.
+            # Reuses FX_Rates sheet (same read done later for Amount_EUR column).
+            _pre_eur: float | None = None
+            if in_cur == "EUR":
+                _pre_eur = in_amount
+            else:
+                try:
+                    _fx_ws2 = sheets._env_sheets(envelope["file_id"])._ws("FX_Rates")
+                    _fx_rows2 = _fx_ws2.get_all_records()
+                    _fx_row2 = next(
+                        (r for r in _fx_rows2 if r.get("Month") == date[:7]), None
+                    )
+                    if _fx_row2:
+                        _col2 = f"EUR_{in_cur}"
+                        _rate2 = float(_fx_row2.get(_col2, 0) or 0)
+                        if _rate2:
+                            _pre_eur = round(in_amount / _rate2, 2)
+                except Exception:
+                    pass  # leave _pre_eur = None; cross-currency check skipped
 
-                # ── Amount tolerance ─────────────────────────────────────
+            for ex in existing:
+                ex_cur = str(ex.get("Currency_Orig", "EUR")).upper()
+
+                if ex_cur != in_cur:
+                    # ── T-192: cross-currency check via Amount_EUR ───────
+                    if _pre_eur is None or _pre_eur <= 0:
+                        continue
+                    try:
+                        ex_eur = float(ex.get("Amount_EUR") or 0)
+                    except (ValueError, TypeError):
+                        ex_eur = 0.0
+                    if ex_eur <= 0:
+                        continue
+                    eur_tol = max(_pre_eur * 0.05, 0.5)
+                    if abs(ex_eur - _pre_eur) > eur_tol:
+                        continue
+                    # EUR amounts match — check note overlap before flagging
+                    ex_note_x = str(ex.get("Note", "")).strip().lower()
+                    if in_note and ex_note_x:
+                        in_toks_x = set(in_note.split())
+                        ex_toks_x = set(ex_note_x.split())
+                        if not in_toks_x & ex_toks_x:
+                            continue
+                    return {
+                        "status": "confirm_required",
+                        "type": "duplicate",
+                        "message": (
+                            f"⚠️ Похожая запись уже есть за {date}: "
+                            f"{ex.get('Category', '')} · {ex_eur:.2f} EUR"
+                            f" (оригінал: {ex.get('Amount_Orig', '')} {ex_cur})"
+                            + (f" · {ex.get('Note', '')}" if ex.get("Note") else "")
+                            + f" · {ex.get('Who', '')} (cross-currency ±5% EUR match)"
+                        ),
+                        "existing_tx_id": ex.get("ID", ""),
+                        "hint_for_agent": "Ask user: is this a duplicate? If not, call add_transaction again with force_add=true.",
+                    }
+                    # end cross-currency branch — continue to next existing tx
+
+                # ── Same-currency amount tolerance ───────────────────────
                 try:
                     ex_amount = float(ex.get("Amount_Orig") or 0)
                 except (ValueError, TypeError):

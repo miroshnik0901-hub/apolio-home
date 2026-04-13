@@ -3372,6 +3372,42 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # T-184: receipt-level type ("income"/"expense") applies to all items
         # unless overridden per-item. Income receipts (bank top-ups) need type="income".
         receipt_type = receipt.get("type", "expense")
+
+        # T-192: pre-fetch existing transactions for cross-currency dup detection.
+        # batch_mode=True bypasses per-item dup checks (force_add=True), so we do
+        # a single pre-fetch here and check in-memory before each add.
+        _batch_existing: list = []
+        _batch_fx_rate: float | None = None
+        _batch_currency = str(receipt.get("currency", "EUR")).upper()
+        try:
+            _bd_dates = [
+                i.get("date") or receipt.get("date") or ""
+                for i in items if i
+            ]
+            _bd_dates = [d for d in _bd_dates if d]
+            if _bd_dates:
+                _bd_min, _bd_max = min(_bd_dates), max(_bd_dates)
+                _bd_envs = sheets.get_envelopes()
+                _bd_eid = session.current_envelope_id or "MM_BUDGET"
+                _bd_env = next((e for e in _bd_envs if e.get("ID") == _bd_eid), None)
+                if _bd_env:
+                    _batch_existing = sheets.get_transactions(
+                        _bd_env["file_id"],
+                        {"date_from": _bd_min, "date_to": _bd_max, "limit": 300},
+                    )
+                    if _batch_currency != "EUR" and _batch_existing:
+                        _bd_fx_ws = sheets._env_sheets(_bd_env["file_id"])._ws("FX_Rates")
+                        _bd_fx_rows = _bd_fx_ws.get_all_records()
+                        _bd_fx_row = next(
+                            (r for r in _bd_fx_rows if r.get("Month") == _bd_min[:7]), None
+                        )
+                        if _bd_fx_row:
+                            _bd_col = f"EUR_{_batch_currency}"
+                            _bd_r = float(_bd_fx_row.get(_bd_col, 0) or 0)
+                            if _bd_r:
+                                _batch_fx_rate = _bd_r
+        except Exception as _bd_e:
+            logger.warning(f"T-192: pre-batch dup fetch failed: {_bd_e}")
         # T-185: fallback — if AI forgot to set type but category is "Income", auto-correct
         _INCOME_CATS = {"income", "доход", "доходи", "поповнення", "пополнение", "top-up", "topup", "salary", "зарплата"}
         if receipt_type == "expense":
@@ -3407,6 +3443,53 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if item_amount <= 0:
                 failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
+
+            # T-192: cross-currency dup pre-check using pre-fetched existing txns.
+            # batch_mode disables per-item dup detection; we compensate here.
+            _is_cross_dup = False
+            if _batch_existing and item_amount > 0:
+                _bie_eur: float | None = None
+                if _batch_currency == "EUR":
+                    _bie_eur = float(item_amount)
+                elif _batch_fx_rate:
+                    _bie_eur = round(float(item_amount) / _batch_fx_rate, 2)
+                if _bie_eur and _bie_eur > 0:
+                    _bie_note = item_name.lower()
+                    for _bex in _batch_existing:
+                        _bex_cur = str(_bex.get("Currency_Orig", "EUR")).upper()
+                        _bex_date = str(_bex.get("Date", ""))
+                        if _bex_date != item_date:
+                            continue
+                        if _bex_cur == _batch_currency:
+                            continue  # same-currency dup handled by tool internally
+                        try:
+                            _bex_eur = float(_bex.get("Amount_EUR") or 0)
+                        except (ValueError, TypeError):
+                            _bex_eur = 0.0
+                        if _bex_eur <= 0:
+                            continue
+                        _btol = max(_bie_eur * 0.05, 0.5)
+                        if abs(_bex_eur - _bie_eur) > _btol:
+                            continue
+                        # Note overlap check
+                        _bex_note = str(_bex.get("Note", "")).strip().lower()
+                        if _bie_note and _bex_note:
+                            _bt_in = set(_bie_note.split())
+                            _bt_ex = set(_bex_note.split())
+                            if not _bt_in & _bt_ex:
+                                continue
+                        # Match found — probable cross-currency duplicate
+                        _is_cross_dup = True
+                        failed.append(
+                            f"⚠️ {item_name} · {item_amount:,.2f} {_batch_currency}"
+                            f" — ймовірний дублікат ({_bex_eur:.2f} EUR"
+                            f"{(' · ' + _bex.get('Note','')) if _bex.get('Note') else ''})"
+                            f", пропущено. Для примусового додавання: force add."
+                        )
+                        break
+            if _is_cross_dup:
+                continue
+
             params = {
                 "amount": item_amount,
                 "currency": receipt.get("currency", "EUR"),
