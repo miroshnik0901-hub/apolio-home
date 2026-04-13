@@ -850,31 +850,32 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
 
         top_up = snap.get("top_up_joint", {})
         pers_exp = snap.get("personal_exp", {})
+        per_user_min = snap.get("per_user_min", {})
 
         lines = [i18n.tu("contrib_title", lang, label=label), ""]
 
-        # Total expenses
+        # Total expenses — no global min pool line (shown per user below)
         lines.append(i18n.tu("contrib_total_exp", lang, total=total_exp, cur=cur))
-        if threshold > 0:
-            lines.append(f"📋 Min pool: {threshold:,.0f} {cur}")
         lines.append("")
 
-        # Per-user breakdown: top_up, personal, obligation, credit
+        # Per-user breakdown: min pool, top_up, personal, status (Переплата / Борг / Баланс)
         for u in split_users:
             tu = safe_float(top_up.get(u, 0))
             pe = safe_float(pers_exp.get(u, 0))
-            obl = safe_float(user_shares.get(u, 0))
+            u_min = safe_float(per_user_min.get(u, 0))
             credit = safe_float(balances.get(u, 0))
             lines.append(f"👤 <b>{u}</b>")
+            if u_min > 0:
+                lines.append(f"  📋 {i18n.ts('bal_min_pool', lang)}: {u_min:,.0f} {cur}")
             if tu > 0:
                 lines.append(f"  💳 {i18n.ts('bal_joint_topup', lang)}: {tu:,.0f} {cur}")
             if pe > 0:
                 lines.append(f"  🛒 {i18n.ts('bal_personal_exp', lang)}: {pe:,.0f} {cur}")
-            lines.append(f"  📊 {i18n.ts('bal_obligation', lang)}: {obl:,.0f} {cur}")
+            # Status: Переплата / Борг / Баланс — no Зобов'язання (redundant)
             if credit > 0:
-                lines.append(f"  ✅ {i18n.ts('bal_credit', lang)}: <b>+{credit:,.0f} {cur}</b> ({i18n.ts('bal_overpaid', lang)})")
+                lines.append(f"  ✅ <b>{i18n.ts('bal_surplus', lang)}: +{credit:,.0f} {cur}</b>")
             elif credit < 0:
-                lines.append(f"  ⚠️ {i18n.ts('bal_debt', lang)}: <b>{credit:,.0f} {cur}</b>")
+                lines.append(f"  ⚠️ <b>{i18n.ts('bal_debt', lang)}: {credit:,.0f} {cur}</b>")
             else:
                 lines.append(f"  ➖ {i18n.ts('bal_zero', lang)}: 0 {cur}")
             lines.append("")
@@ -2972,12 +2973,25 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             receipt = session.pending_receipt
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
 
-            # T-168: if receipt has 3+ items (bank statement or multi-item receipt),
-            # ask split vs single BEFORE adding. Store account choice in session.
-            # Merchant check removed: bank statements set merchant="Bank Statement Ukraine"
-            # etc. — any non-empty string would block the question. Check items count only.
+            # T-168/T-178: ask split vs single for bank statements and multi-item receipts.
+            # Detection: 2+ items AND (per-item merchant OR per-item date differs across items).
+            # Bank statements: each item has its own merchant/date → detected.
+            # Restaurant receipts: items share same date and have no per-item merchant → skip.
             items = receipt.get("items") or []
-            _is_multi_merchant = len(items) >= 3
+            if len(items) >= 2:
+                _item_merchants = {
+                    str(it.get("merchant", "")).strip().lower()
+                    for it in items
+                    if str(it.get("merchant", "")).strip()
+                }
+                _item_dates = {
+                    str(it.get("date", "")).strip()
+                    for it in items
+                    if str(it.get("date", "")).strip()
+                }
+                _is_multi_merchant = (len(_item_merchants) > 1) or (len(_item_dates) > 1)
+            else:
+                _is_multi_merchant = False
             if _is_multi_merchant and not getattr(session, "_split_mode_chosen", False):
                 # Store account so we can use it after user picks split mode
                 session._pending_split_account = account
@@ -2987,10 +3001,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except BadRequest:
                     pass
                 _split_q = {
-                    "ru": f"📋 Найдено {len(items)} операций. Как записать?",
-                    "uk": f"📋 Знайдено {len(items)} операцій. Як записати?",
-                    "en": f"📋 Found {len(items)} transactions. How to record?",
-                    "it": f"📋 Trovate {len(items)} operazioni. Come registrare?",
+                    "ru": f"📋 Выписка: {len(items)} операц. Как записать?",
+                    "uk": f"📋 Виписка: {len(items)} операц. Як записати?",
+                    "en": f"📋 Statement: {len(items)} transactions. How to record?",
+                    "it": f"📋 Estratto: {len(items)} operazioni. Come registrare?",
                 }
                 _btn_separate = {
                     "ru": "📋 Каждую отдельно", "uk": "📋 Кожну окремо",

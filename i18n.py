@@ -648,6 +648,12 @@ SYS: dict[str, dict[str, str]] = {
     "bal_credit": {
         "ru": "Кредит", "uk": "Кредит", "en": "Credit", "it": "Credito",
     },
+    "bal_surplus": {
+        "ru": "Переплата", "uk": "Переплата", "en": "Surplus", "it": "Eccedenza",
+    },
+    "bal_min_pool": {
+        "ru": "Min взнос", "uk": "Min внесок", "en": "Min contribution", "it": "Contributo min",
+    },
     "bal_debt": {
         "ru": "Долг", "uk": "Борг", "en": "Debt", "it": "Debito",
     },
@@ -851,10 +857,10 @@ UI: dict[str, dict[str, str]] = {
     },
     # ── Contribution ───────────────────────────────────────────────────────
     "contrib_title": {
-        "ru": "💸 <b>Взносы — {label}</b>",
-        "uk": "💸 <b>Внески — {label}</b>",
-        "en": "💸 <b>Contributions — {label}</b>",
-        "it": "💸 <b>Contributi — {label}</b>",
+        "ru": "💸 <b>РАСЧЁТЫ — {label}</b>",
+        "uk": "💸 <b>РОЗРАХУНКИ — {label}</b>",
+        "en": "💸 <b>SETTLEMENTS — {label}</b>",
+        "it": "💸 <b>CALCOLI — {label}</b>",
     },
     "contrib_unavailable": {
         "ru": "Данные о взносах недоступны.",

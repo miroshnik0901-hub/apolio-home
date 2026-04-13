@@ -380,6 +380,10 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             "balances": balances,                   # credit per user (-obligation)
             "excess_amount": round(excess_amount, 2),
             "excess_per_user": round(excess_per_user, 2),
+            # per-user min pool contributions (non-zero only if per_user_min model active)
+            "per_user_min": {
+                u: safe_float(env_config.get(f"min_{u}", 0)) for u in split_users
+            } if _has_per_user_min else {},
         }
 
     except Exception as e:
