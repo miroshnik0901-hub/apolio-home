@@ -21,3 +21,4 @@
 2026-04-13 23:18 | ACTION  | TEST Transactions відсортовано по Date asc вручну (17 рядків); авто-сортування після add тепер активне (T-176)
 2026-04-13 23:18 | ACTION  | TEST Dashboard оновлено: [HISTORY] 2026-03 + 2026-04 + TOTAL, обидва юзери (T-175); дублікат 03824543 (Maryna exp_joint=2027) все ще є в TEST
 2026-04-13 23:18 | STATE   | dev at f5db016. Staging повинен бути актуальним. Pending GO від Mikhail для push main.
+2026-04-13 23:23 | ACTION  | T-178 DISCUSSION: T-168 split-choice не спрацьовував для банківських виписок — merchant="Bank Statement Ukraine" не проходив умову "multiple"/"merchants"; виправлено на len(items)>=3; Commit d29ab72
