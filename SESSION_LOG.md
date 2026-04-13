@@ -30,3 +30,5 @@
 2026-04-13 23:41 | ACTION  | T-178 reworked: items preview (merchant/amount/date) + split/single choice. Commit ac4cdf4, pushed dev.
 2026-04-13 23:50 | ACTION  | T-180: skip category+subcategory validation for income txs; strip AI-set subcategory="Top-up". tools/transactions.py. Commit b92e5f9.
 2026-04-13 23:50 | STATE   | dev at b92e5f9. T-172–T-180 all DISCUSSION+READY. Waiting GO from Mikhail.
+2026-04-13 23:55 | ACTION  | T-181: echo account+split choices fixed; amount field total_amount added to lookup (was causing 4/7). Commit 3524255.
+2026-04-13 23:55 | STATE   | dev at 3524255. T-172–T-181 DISCUSSION+READY. Waiting GO від Mikhail.

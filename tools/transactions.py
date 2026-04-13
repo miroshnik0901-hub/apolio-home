@@ -178,8 +178,15 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     subcategory = params.get("subcategory", "")
     who = params.get("who", session.user_name)
 
-    # ── Duplicate detection (T-030) ──────────────────────────────────────
-    # get_transactions already filters out deleted rows
+    # ── Duplicate detection (T-030 / T-182) ─────────────────────────────
+    # Checks: same date + same currency + amount within tolerance + category + who + note.
+    # Tolerance:
+    #   EUR  → strict: abs diff < 0.01 (rounding only)
+    #   other → ±5%: covers FX rate fluctuation between when the receipt was
+    #           photographed and the rate stored in FX_Rates sheet.
+    # Note/merchant: if both sides have a non-empty note, strings that share
+    #   no common tokens are treated as different transactions (not duplicate).
+    # Currency must match — prevents cross-currency false positives.
     if not params.get("force_add"):
         try:
             existing = sheets.get_transactions(
@@ -190,27 +197,61 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                 in_amount = float(amount)
             except (ValueError, TypeError):
                 in_amount = 0.0
+            in_note = str(params.get("note", "")).strip().lower()
+            in_cur = currency.upper()
+
             for ex in existing:
+                # ── Currency must match ──────────────────────────────────
+                ex_cur = str(ex.get("Currency_Orig", "EUR")).upper()
+                if ex_cur != in_cur:
+                    continue
+
+                # ── Amount tolerance ─────────────────────────────────────
                 try:
                     ex_amount = float(ex.get("Amount_Orig") or 0)
                 except (ValueError, TypeError):
                     ex_amount = 0.0
+                if in_cur == "EUR":
+                    same_amount = abs(ex_amount - in_amount) < 0.01
+                else:
+                    # ±5% for non-EUR: covers FX rounding and rate differences
+                    tolerance = max(in_amount * 0.05, 0.5)
+                    same_amount = abs(ex_amount - in_amount) <= tolerance
+
+                if not same_amount:
+                    continue
+
+                # ── Category + who ───────────────────────────────────────
                 ex_cat = str(ex.get("Category", "")).lower()
                 ex_who = str(ex.get("Who", "")).lower()
-                same_amount = abs(ex_amount - in_amount) < 0.01
                 same_cat = (ex_cat == category.lower()) if category else True
                 same_who = (ex_who == who.lower()) if who else True
-                if same_amount and same_cat and same_who:
-                    return {
-                        "status": "confirm_required",
-                        "type": "duplicate",
-                        "message": (
-                            f"⚠️ Похожая запись уже есть за {date}: "
-                            f"{ex.get('Category', '')} · {ex_amount} {ex.get('Currency_Orig', currency)} · {ex.get('Who', '')}."
-                        ),
-                        "existing_tx_id": ex.get("ID", ""),
-                        "hint_for_agent": "Ask user: is this a duplicate? If not, call add_transaction again with force_add=true.",
-                    }
+
+                if not (same_cat and same_who):
+                    continue
+
+                # ── Note / merchant: reject if both present and no overlap ──
+                ex_note = str(ex.get("Note", "")).strip().lower()
+                if in_note and ex_note:
+                    in_tokens = set(in_note.split())
+                    ex_tokens = set(ex_note.split())
+                    if not in_tokens & ex_tokens:
+                        # No common words → different merchants, not a duplicate
+                        continue
+
+                return {
+                    "status": "confirm_required",
+                    "type": "duplicate",
+                    "message": (
+                        f"⚠️ Похожая запись уже есть за {date}: "
+                        f"{ex.get('Category', '')} · {ex_amount:,.2f} {ex_cur}"
+                        + (f" · {ex.get('Note', '')}" if ex.get('Note') else "")
+                        + f" · {ex.get('Who', '')}"
+                        + (f" (±5% FX tolerance)" if in_cur != "EUR" else "")
+                    ),
+                    "existing_tx_id": ex.get("ID", ""),
+                    "hint_for_agent": "Ask user: is this a duplicate? If not, call add_transaction again with force_add=true.",
+                }
         except Exception:
             pass  # duplicate check is best-effort; don't block the write
     account = params.get("account", "")
