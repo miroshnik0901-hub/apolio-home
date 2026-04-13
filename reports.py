@@ -92,8 +92,9 @@ def format_report(data: dict, envelope_id: str = "", cap: float = 0) -> str:
         lines.append(f"Всего: *{total:,.2f}* из *{cap:,.0f} EUR* ({pct_total:.0f}%)")
         lines.append("")
 
-    # Sort categories by amount descending
-    sorted_cats = sorted(categories.items(), key=lambda x: x[1], reverse=True)
+    # Sort categories by amount descending (normalize to float first)
+    cat_amounts = {cat: safe_float(v) for cat, v in categories.items()}
+    sorted_cats = sorted(cat_amounts.items(), key=lambda x: x[1], reverse=True)
     for cat, amt in sorted_cats:
         if amt <= 0:
             continue
@@ -106,10 +107,11 @@ def format_report(data: dict, envelope_id: str = "", cap: float = 0) -> str:
 
     # By who section (if multiple people)
     by_who = data.get("by_who", {})
-    if len(by_who) > 1:
+    by_who_f = {who: safe_float(v) for who, v in by_who.items()}
+    if len(by_who_f) > 1:
         lines.append("")
         lines.append("*По кому:*")
-        for who, amt in sorted(by_who.items(), key=lambda x: x[1], reverse=True):
+        for who, amt in sorted(by_who_f.items(), key=lambda x: x[1], reverse=True):
             pct = round(amt / total * 100) if total > 0 else 0
             lines.append(f"  {who}: {amt:,.2f} EUR ({pct}%)")
 
