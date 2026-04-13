@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.6 | Updated: 2026-04-08
+# Version: 1.7 | Updated: 2026-04-13
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -52,17 +52,22 @@ bot.py              — entry point; handlers, keyboards, routing, callbacks
 agent.py            — agentic loop, 20 tools, system prompt, context build
 db.py               — PostgreSQL: conversation_log, sessions, agent_learning; learning context
 sheets.py           — SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets + get_reference_data
+                      _sheets_retry(): exponential backoff (5/10/20s) for gspread 429/503 — wraps
+                      get_transactions() and hard_delete_by_tx_id() calls (T-172)
 auth.py             — SessionContext, get_session, AuthManager
+                      SessionContext uses self.lang (not self.language) — always use session.lang
 i18n.py             — KB_LABELS, MENU_LABELS, SYS, ADD_PROMPT, START_MSG
 menu_config.py      — DEFAULT_MENU, _DEFAULT_ROWS, BotMenu sheet loader
 intelligence.py     — IntelligenceEngine: budget snapshot, trends, anomalies
-user_context.py     — UserContextManager: user goals (UserContext sheet)
+                      compute_contribution_history(): iterates ACTUAL transaction months only
+                      (not months_back from today); data-driven, skips empty months (T-175)
 ApolioHome_Prompt.md — agent system prompt (read at startup)
 DEV_CHECKLIST.md    — checklist BEFORE and AFTER every change
 CLAUDE_WORKING_GUIDE.md — this file
 
 tools/
   transactions.py   — add / edit / delete / find; _fuzzy_suggest; _validate_transaction_params
+                      tool_add_transaction() calls sort_transactions_by_date() after every add (T-176)
   summary.py        — get_summary, get_budget_status
   wise.py           — Wise CSV import (DO NOT TOUCH without explicit instruction)
   envelope_tools.py — create_envelope, list_envelopes
@@ -266,8 +271,27 @@ It reads active users from Admin/Users and sets `min_<user>=0` (non-admin) or th
 **Detection in intelligence.py:** If any `min_<user>` key exists in Config → per-user model.
 Otherwise falls back to legacy `split_rule` model.
 
-**Dashboard tab:** Formulas use `LET()` + `VLOOKUP(Config)` to pull min/split values live.
-No Python needed for display — agent reads from Dashboard or computes via `get_contribution_status`.
+**Dashboard tab (T-174 redesign, 2026-04-13):**
+
+Layout: 2 sections only (SNAPSHOT + HISTORY).
+Previous sections [CUMULATIVE_BALANCE], [USER_BALANCE], [CATEGORIES] removed.
+
+```
+[SNAPSHOT]           — key-value: month, budget, spent, remaining, pct_used, pace, ...
+                       All Sheets formulas keyed on B2 (current month text).
+
+[HISTORY]            — one row per month that has ≥1 transaction (data-driven)
+  Columns: Month | Spent | Budget | Pct | {u}_min | {u}_topup | {u}_exp_joint | {u}_exp_personal | {u}_balance
+  Per-user group of 5 columns, one group per user in split_users.
+  TOTAL row at bottom = SUM across all months (cumulative balance).
+  All values are Sheets SUMPRODUCT formulas keyed on A-column (month text) — self-updating.
+  Months: written as text with ' prefix (e.g. '2026-03) to avoid date serial interpretation.
+```
+
+Written by: `sheets.update_dashboard()` called from `agent.refresh_dashboard()`.
+`compute_contribution_history()` passes all months with transactions (T-175).
+Agent reads [SNAPSHOT] section via `read_dashboard_snapshot()` for quick budget answers.
+No Python needed for per-month values — all live in Sheets formulas.
 
 ### Transactions column order (STRICTLY FOLLOW)
 ```
