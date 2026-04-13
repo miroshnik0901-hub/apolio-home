@@ -271,11 +271,18 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             pass
 
         # ── Collect per-user data from transactions ─────────────────────────
-        # top_up_joint: income/transfer to Joint account (or no account = Joint)
-        # personal_exp: expenses from Personal account
-        # All used in the xlsx obligation formula.
+        # top_up_joint:    income/transfer to Joint account (or no account = Joint)
+        # personal_exp:    expenses from Personal account
+        # joint_exp_paid:  expenses from Joint account paid by a specific user
+        #                  (e.g. user paid a joint bill from their own card but
+        #                   recorded as Account=Joint rather than Personal).
+        #                  These are credited back to that user — same as personal_exp —
+        #                  because the user covered a joint obligation out of their own pocket.
+        #                  Without this credit the user would pay twice: once in cash and
+        #                  once again via their split-% share of the inflated split_base.
         top_up_joint: dict[str, float] = defaultdict(float)
         personal_exp: dict[str, float] = defaultdict(float)
+        joint_exp_paid: dict[str, float] = defaultdict(float)
         for t in month_txns:
             who_raw = t.get("Who", "Unknown")
             who = _normalize_who(who_raw, known_who) or who_raw
@@ -289,12 +296,18 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
                 acct_type = acct
             else:
                 acct_type = account_type_map.get(acct, "")
+            # Also treat any account whose name contains "joint" as Joint type
+            # (handles "Joint Account", "Joint Savings", etc.)
+            if not acct_type and "joint" in acct.lower():
+                acct_type = "Joint"
             if txn_type in ("income", "transfer"):
                 if acct_type == "Joint" or not acct_type:
                     top_up_joint[who] += amt
             elif txn_type == "expense":
                 if acct_type == "Personal":
                     personal_exp[who] += amt
+                elif acct_type == "Joint":
+                    joint_exp_paid[who] += amt
 
         # Total expenses (all expense transactions regardless of account)
         total_expenses = sum(
@@ -302,7 +315,7 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         )
 
         # ── Per-user model (xlsx formula: ApolioHome_UserBalance_formula) ──
-        # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp
+        # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp - joint_exp_paid
         # credit = -obligation  (positive = overpaid, negative = owes)
         if _has_per_user_min and split_users:
             total_min_pool = sum(
@@ -313,10 +326,11 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             for u in split_users:
                 u_min   = safe_float(env_config.get(f"min_{u}", 0))
                 u_split = safe_float(env_config.get(f"split_{u}", 0))
-                from_min = u_min - top_up_joint.get(u, 0.0)
-                from_split = max(0.0, split_base) * u_split / 100
+                from_min      = u_min - top_up_joint.get(u, 0.0)
+                from_split    = max(0.0, split_base) * u_split / 100
                 from_personal = -personal_exp.get(u, 0.0)
-                obligation = from_min + from_split + from_personal
+                from_joint    = -joint_exp_paid.get(u, 0.0)  # credit for joint bills paid directly
+                obligation = from_min + from_split + from_personal + from_joint
                 user_shares[u] = round(obligation, 2)
             threshold       = total_min_pool
             excess_amount   = max(0.0, split_base)
@@ -347,10 +361,16 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         for u in split_users:
             balances[u] = round(-safe_float(user_shares.get(u, 0.0)), 2)
 
-        # Build per-user top_up + personal for display
+        # Build per-user total contribution for display:
+        # top_up (income to joint) + personal expenses paid + joint bills paid directly
         assets: dict[str, float] = {}
         for u in split_users:
-            assets[u] = round(top_up_joint.get(u, 0.0) + personal_exp.get(u, 0.0), 2)
+            assets[u] = round(
+                top_up_joint.get(u, 0.0)
+                + personal_exp.get(u, 0.0)
+                + joint_exp_paid.get(u, 0.0),
+                2,
+            )
 
         return {
             "status": "ok",
@@ -362,9 +382,10 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             "split_users": split_users,
             "total_expenses": round(total_expenses, 2),
             "contributions": assets,                # backward compat key
-            "assets": assets,                       # top_up + personal per user
-            "top_up_joint": dict(top_up_joint),     # per-user top-up to joint
-            "personal_exp": dict(personal_exp),     # per-user personal expenses
+            "assets": assets,                       # top_up + personal + joint_paid per user
+            "top_up_joint": dict(top_up_joint),     # per-user income transfers to joint
+            "personal_exp": dict(personal_exp),     # per-user expenses from Personal account
+            "joint_exp_paid": dict(joint_exp_paid), # per-user expenses from Joint account (direct pay)
             "has_account_types": has_account_types,
             "user_shares": user_shares,             # obligation per user
             "balances": balances,                   # credit per user (-obligation)

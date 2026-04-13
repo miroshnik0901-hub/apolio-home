@@ -717,7 +717,7 @@ class EnvelopeSheets:
                 for u in split_users:
                     f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
                     f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
-                    # top_up = income to joint by this user
+                    # top_up = income/transfer to joint by this user
                     f_top_up = (
                         f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_CM}*{_H})'
                     )
@@ -725,11 +725,18 @@ class EnvelopeSheets:
                     f_pers_exp = (
                         f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_CM}*{_H})'
                     )
-                    # obligation = (min - top_up) + max(0, split_base) * split%/100 - personal_exp
+                    # joint_exp_paid = expenses from Joint account paid directly by this user
+                    # (non-empty, non-Personal account — covers "Joint", "Joint Account", etc.)
+                    # These are credited back: user paid a joint bill from their own pocket.
+                    f_joint_paid = (
+                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}<>"Personal")*({_J}<>"")*{_ND}*{_CM}*{_H})'
+                    )
+                    # obligation = (min - top_up) + max(0, split_base) * split%/100 - personal_exp - joint_paid
                     f_obligation = (
                         f"=({f_min_u}-{f_top_up})"
                         f"+MAX(0,{f_split_base})*{f_split_u}/100"
                         f"-{f_pers_exp}"
+                        f"-{f_joint_paid}"
                     )
                     # Row number must be dynamic — computed from actual rows list length,
                     # not hardcoded, since sections above can shift row positions.
@@ -836,10 +843,14 @@ class EnvelopeSheets:
                         f_pers_exp = (
                             f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_HM}*{_H})'
                         )
+                        f_joint_paid = (
+                            f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}<>"Personal")*({_J}<>"")*{_ND}*{_HM}*{_H})'
+                        )
                         f_obligation = (
                             f"=({f_min_u}-{f_top_up})"
                             f"+MAX(0,{f_split_base})*{f_split_u}/100"
                             f"-{f_pers_exp}"
+                            f"-{f_joint_paid}"
                         )
                         u_col_idx = 4 + all_users.index(u) * 2  # E=4, G=6, etc.
                         u_col_letter = chr(65 + u_col_idx)
