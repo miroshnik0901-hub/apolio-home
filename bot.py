@@ -1,5 +1,6 @@
 """Apolio Home — Telegram Bot Entry Point — v2.1.0"""
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -3656,6 +3657,23 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         media_data = bytes(await file_obj.download_as_bytearray())
         media_file_id = msg.photo[-1].file_id
         caption = msg.caption or ""
+
+        # ── T-162: Dedup — skip photos already processed in this session ─────────
+        _photo_hash = hashlib.md5(media_data).hexdigest()
+        _processed_hashes = getattr(session, "_processed_photo_hashes", set())
+        session._processed_photo_hashes = _processed_hashes
+
+        if _photo_hash in _processed_hashes:
+            _already_msg = {
+                "ru": "📋 Эти транзакции уже были обработаны ранее в этой сессии.",
+                "uk": "📋 Ці транзакції вже були оброблені раніше в цій сесії.",
+                "en": "📋 This photo was already processed in this session.",
+                "it": "📋 Questa foto è già stata elaborata in questa sessione.",
+            }
+            await update.message.reply_text(_already_msg.get(lang, _already_msg["ru"]))
+            return
+
+        _processed_hashes.add(_photo_hash)
 
         # ── Photo batching: collect photos arriving within 4s, process all at once ──
         # This prevents 3 separate responses for 3 receipt photos.

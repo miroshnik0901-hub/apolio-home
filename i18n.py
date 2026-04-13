@@ -502,10 +502,10 @@ SYS: dict[str, dict[str, str]] = {
         "it": "Comando non supportato.",
     },
     "unsupported_media": {
-        "ru": "Тип файла не поддерживается.",
-        "uk": "Тип файлу не підтримується.",
-        "en": "Unsupported media type.",
-        "it": "Tipo di file non supportato.",
+        "ru": "Это изображение не похоже на чек или выписку. Отправьте фото чека, слипа или скриншот банковского приложения.",
+        "uk": "Це зображення не схоже на чек або виписку. Надішліть фото чека, сліпу або скріншот банківського додатку.",
+        "en": "This doesn't look like a receipt or bank statement. Please send a photo of a receipt, card slip, or a screenshot of your banking app.",
+        "it": "Questa immagine non sembra uno scontrino o estratto conto. Invia una foto di uno scontrino, uno slip o uno screenshot della tua app bancaria.",
     },
     "undo_nothing": {
         "ru": "Нет действий для отмены.",
