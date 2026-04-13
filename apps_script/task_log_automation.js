@@ -5,11 +5,18 @@
 //   1. Open Apolio Home — Task Log in Google Sheets
 //   2. Extensions → Apps Script
 //   3. Paste this entire file, replacing any existing code
-//   4. Save (Ctrl+S), then run onOpen() once to install the custom menu
-//   5. The onEdit trigger activates automatically (no extra setup needed)
+//   4. Save (Ctrl+S)
+//   5. Run onOpen() once manually: click Run → onOpen
+//   6. Refresh the spreadsheet — you'll see the 🏠 Apolio menu
+//   Note: onEdit trigger installs automatically when the script is saved.
+//         No manual trigger setup needed.
 
 const SHEET_NAME = 'task_log';
 const COL = { ID: 1, DATE: 2, TASK: 3, STATUS: 4, COMMENT: 5, BRANCH: 6, RESOLVED: 7, TOPIC: 8, DEPLOY: 9, CONFIRM: 10 };
+
+const VALID_STATUSES = ['OPEN', 'IN PROCESS', 'ON HOLD', 'DISCUSSION', 'BLOCKED', 'CLOSED'];
+const VALID_TOPICS   = ['AI', 'Interface', 'Infrastructure', 'Data', 'Features', 'Docs'];
+const VALID_DEPLOY   = ['READY', 'DEPLOYED', 'N/A'];
 
 // ─── onEdit trigger: fires when a user manually edits the sheet ───────────────
 // Note: does NOT fire when the Python bot writes via Sheets API
@@ -25,7 +32,7 @@ function onEdit(e) {
   if (col === COL.TASK && e.value) {
     const idCell = sheet.getRange(row, COL.ID);
     if (!idCell.getValue()) {
-      idCell.setValue(nextId(sheet));  // plain text "T-001" — consistent with Python bot
+      idCell.setValue(nextId(sheet));  // "T-001" format — consistent with Python bot
     }
     const dateCell = sheet.getRange(row, COL.DATE);
     if (!dateCell.getValue()) {
@@ -38,38 +45,53 @@ function onEdit(e) {
     }
   }
 
-  // When Status changes → manage Resolved At
+  // When Status changes → manage Resolved At and Deploy
   if (col === COL.STATUS) {
     const val = String(e.value || '').toUpperCase();
     const resolvedCell = sheet.getRange(row, COL.RESOLVED);
+    const deployCell   = sheet.getRange(row, COL.DEPLOY);
+
     if (val === 'CLOSED' || val === 'BLOCKED' || val === 'DISCUSSION') {
       if (!resolvedCell.getValue()) {
         resolvedCell.setValue(new Date());
         resolvedCell.setNumberFormat('yyyy-mm-dd hh:mm');
       }
-      // T-117/T-129: auto-set Deploy=READY when moving to DISCUSSION (if empty)
-      if (val === 'DISCUSSION') {
-        const deployCell = sheet.getRange(row, COL.DEPLOY);
-        if (!deployCell.getValue()) {
-          deployCell.setValue('READY');
-        }
-      }
-      // T-117/T-129: auto-set Deploy=READY when moving to DISCUSSION (if empty)
-      if (val === 'DISCUSSION') {
-        const deployCell = sheet.getRange(row, COL.DEPLOY);
-        if (!deployCell.getValue()) {
-          deployCell.setValue('READY');
-        }
+      // T-117: auto-set Deploy=READY when moving to DISCUSSION (if empty)
+      if (val === 'DISCUSSION' && !deployCell.getValue()) {
+        deployCell.setValue('READY');
       }
     } else if (val === 'OPEN' || val === 'IN PROCESS' || val === 'ON HOLD') {
       resolvedCell.clearContent();
+    }
+
+    // Warn on invalid status value
+    if (val && !VALID_STATUSES.includes(val)) {
+      SpreadsheetApp.getActiveSpreadsheet().toast(
+        `⚠️ Invalid status: "${e.value}". Valid: ${VALID_STATUSES.join(', ')}`, 'Status Warning', 5
+      );
+    }
+  }
+
+  // Warn on invalid Topic value
+  if (col === COL.TOPIC && e.value) {
+    if (!VALID_TOPICS.includes(e.value)) {
+      SpreadsheetApp.getActiveSpreadsheet().toast(
+        `⚠️ Invalid topic: "${e.value}". Valid: ${VALID_TOPICS.join(', ')}`, 'Topic Warning', 5
+      );
+    }
+  }
+
+  // Warn on invalid Deploy value
+  if (col === COL.DEPLOY && e.value) {
+    if (!VALID_DEPLOY.includes(e.value)) {
+      SpreadsheetApp.getActiveSpreadsheet().toast(
+        `⚠️ Invalid deploy: "${e.value}". Valid: ${VALID_DEPLOY.join(', ')}`, 'Deploy Warning', 5
+      );
     }
   }
 }
 
 // ─── Get next sequential task ID as formatted string "T-NNN" ─────────────────
-// Works whether IDs were written by the Python bot ("T-001") or a previous
-// onEdit run (also "T-001").  Never stores IDs as bare numbers.
 function nextId(sheet) {
   const data = sheet.getDataRange().getValues();
   let max = 0;
@@ -77,36 +99,29 @@ function nextId(sheet) {
     const raw = data[i][COL.ID - 1];
     let n = 0;
     if (typeof raw === 'number') {
-      n = raw;                                    // legacy bare number
+      n = raw;
     } else if (typeof raw === 'string') {
       const m = raw.match(/\d+/);
-      if (m) n = parseInt(m[0], 10);             // "T-001" → 1
+      if (m) n = parseInt(m[0], 10);
     }
     if (n > max) max = n;
   }
   const next = max + 1;
-  return 'T-' + String(next).padStart(3, '0');   // returns "T-002", "T-042", etc.
+  return 'T-' + String(next).padStart(3, '0');
 }
 
-// ─── Sort task_log: active tasks first, then by Date desc ─────────────────────
+// ─── Sort task_log: by Date descending ───────────────────────────────────────
 function sortTaskLog() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
   const lastRow = sheet.getLastRow();
   if (lastRow < 3) return;
   const range = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn());
-  // Sort by Status (alphabetical puts BLOCKED/CLOSED at top, OPEN further down — reverse)
-  // then by Date descending
-  range.sort([
-    { column: COL.DATE, ascending: false }
-  ]);
-  SpreadsheetApp.getActiveSpreadsheet().toast('Sorted by Date (newest first)');
+  range.sort([{ column: COL.DATE, ascending: false }]);
+  ss.toast('Sorted by Date (newest first)');
 }
 
-// ─── Sort by Status priority: OPEN > IN PROCESS > ON HOLD > BLOCKED > CLOSED ──
-// Uses a hidden helper column (last column + 1) to write a numeric priority,
-// sorts by that column via native Sheets sort (safe for dates/numbers),
-// then clears the helper column.
+// ─── Sort by Status priority: OPEN > IN PROCESS > ON HOLD > DISCUSSION > BLOCKED > CLOSED ──
 function sortByStatus() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
@@ -116,27 +131,21 @@ function sortByStatus() {
   const statusOrder = { 'OPEN': 1, 'IN PROCESS': 2, 'ON HOLD': 3, 'DISCUSSION': 4, 'BLOCKED': 5, 'CLOSED': 6 };
   const helperCol = sheet.getLastColumn() + 1;
 
-  // Write priority numbers into helper column
   const statusVals = sheet.getRange(2, COL.STATUS, lastRow - 1, 1).getValues();
   const priorities = statusVals.map(r => [statusOrder[String(r[0]).toUpperCase()] || 99]);
   sheet.getRange(2, helperCol, lastRow - 1, 1).setValues(priorities);
 
-  // Sort by helper col asc, then by Date desc
   const dataRange = sheet.getRange(2, 1, lastRow - 1, helperCol);
   dataRange.sort([
     { column: helperCol, ascending: true },
     { column: COL.DATE, ascending: false }
   ]);
 
-  // Clear helper column
   sheet.getRange(2, helperCol, lastRow - 1, 1).clearContent();
-
-  SpreadsheetApp.getActiveSpreadsheet().toast('Sorted: OPEN → IN PROCESS → ON HOLD → DISCUSSION → BLOCKED → CLOSED');
+  ss.toast('Sorted: OPEN → IN PROCESS → ON HOLD → DISCUSSION → BLOCKED → CLOSED');
 }
 
 // ─── Archive CLOSED: push all CLOSED rows to the bottom ──────────────────────
-// Active tasks stay at top, CLOSED rows sink to bottom sorted by Date desc.
-// Uses helper column approach (safe for dates/numbers).
 function archiveClosed() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
@@ -145,7 +154,6 @@ function archiveClosed() {
 
   const helperCol = sheet.getLastColumn() + 1;
   const statusVals = sheet.getRange(2, COL.STATUS, lastRow - 1, 1).getValues();
-  // 0 = active (stays on top), 1 = CLOSED (sinks to bottom)
   const flags = statusVals.map(r => [String(r[0]).toUpperCase() === 'CLOSED' ? 1 : 0]);
   sheet.getRange(2, helperCol, lastRow - 1, 1).setValues(flags);
 
@@ -156,18 +164,58 @@ function archiveClosed() {
   ]);
 
   sheet.getRange(2, helperCol, lastRow - 1, 1).clearContent();
-  SpreadsheetApp.getActiveSpreadsheet().toast('CLOSED tasks moved to bottom');
+  ss.toast('CLOSED tasks moved to bottom');
 }
 
-// ─── Setup filter row (run once) ─────────────────────────────────────────────
+// ─── Audit: highlight tasks with missing Topic or Deploy ─────────────────────
+function auditTaskLog() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  let issues = 0;
+
+  // Clear previous highlights
+  sheet.getRange(2, COL.TOPIC, lastRow - 1, 1).setBackground(null);
+  sheet.getRange(2, COL.DEPLOY, lastRow - 1, 1).setBackground(null);
+
+  for (let i = 0; i < data.length; i++) {
+    const row = i + 2;
+    const status = String(data[i][COL.STATUS - 1] || '').toUpperCase();
+    const topic  = String(data[i][COL.TOPIC - 1] || '').trim();
+    const deploy = String(data[i][COL.DEPLOY - 1] || '').trim();
+
+    if (status === 'CLOSED') continue; // skip closed for deploy check
+
+    if (!topic) {
+      sheet.getRange(row, COL.TOPIC).setBackground('#FFF3CD');
+      issues++;
+    }
+    if (!deploy) {
+      sheet.getRange(row, COL.DEPLOY).setBackground('#FFF3CD');
+      issues++;
+    }
+    if (deploy === 'DEPLOYED' && !data[i][COL.CONFIRM - 1]) {
+      sheet.getRange(row, COL.DEPLOY).setBackground('#F8D7DA');
+      sheet.getRange(row, COL.CONFIRM).setBackground('#F8D7DA');
+      issues++;
+    }
+  }
+
+  ss.toast(issues === 0 ? '✅ No issues found' : `⚠️ ${issues} field(s) need attention (yellow=missing, red=DEPLOYED without GO)`);
+}
+
+// ─── Setup filter row ─────────────────────────────────────────────────────────
 function setupFilter() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet.getFilter()) {
     sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).createFilter();
-    SpreadsheetApp.getActiveSpreadsheet().toast('Filter row added. Use Status (D) and Topic (H) dropdowns to filter.');
+    ss.toast('Filter row added. Use Status (D) and Topic (H) dropdowns to filter.');
   } else {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Filter already exists.');
+    ss.toast('Filter already exists.');
   }
 }
 
@@ -179,6 +227,7 @@ function onOpen() {
     .addItem('Sort by Status priority', 'sortByStatus')
     .addItem('Archive CLOSED → move to bottom', 'archiveClosed')
     .addSeparator()
+    .addItem('Audit: check missing fields', 'auditTaskLog')
     .addItem('Setup filter row', 'setupFilter')
     .addToUi();
 }
