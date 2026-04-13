@@ -668,10 +668,15 @@ TOOLS = [
                 "category": {"type": "string"},
                 "subcategory": {"type": "string"},
                 "who": {"type": "string"},
+                "type": {
+                    "type": "string",
+                    "enum": ["expense", "income", "transfer"],
+                    "description": "Transaction type. REQUIRED for income: set to 'income' for bank top-ups, salary, transfers received. Default 'expense'.",
+                },
                 "items": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Parsed line items from receipt",
+                    "description": "Parsed line items from receipt. Each item may include: name, amount, date, who, type, category.",
                 },
                 "ai_summary": {"type": "string"},
                 "raw_text": {"type": "string", "description": "Raw OCR text from receipt"},

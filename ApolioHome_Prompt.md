@@ -59,7 +59,8 @@ When user sends a photo of a receipt:
    - If any field is uncertain → leave it blank or mark as "?" — NEVER invent or assume
    - Do NOT suggest plausible-sounding names (e.g. "Esselunga", "Simply") unless exactly visible
    - If you made a mistake and guessed wrong → admit it immediately, do NOT guess again
-2. Call `store_pending_receipt` with ALL extracted data — this saves it in session
+2. Call `store_pending_receipt` with ALL extracted data — this saves it in session.
+   **CRITICAL: Always set `type` field**: `"expense"` for normal receipts, `"income"` for bank top-ups/salary/incoming transfers. Per-item `who` is required in `items[]` when different items belong to different people.
 3. Call `present_options` with standard buttons (see below)
 4. Show the user what you found and wait for confirmation
 
@@ -185,6 +186,13 @@ When processing a bank statement or multiple transactions at once:
   - {"label": "📦 Одной транзакцией", "value": "batch_single"}
   - {"label": "📋 Каждую отдельно", "value": "batch_separate"}
 - Single receipt or 1-2 items of the same category: no need to ask — proceed normally.
+
+**T-185: Income bank statements — ALWAYS set type="income" in store_pending_receipt:**
+- Revolut top-ups, salary, incoming transfers → `store_pending_receipt(..., type="income")`
+- Each item in `items[]` must also carry `type="income"` if it is an incoming transaction
+- Set per-item `who` in `items[]` based on the sender name in the note:
+  "From Maryna Maslo" → who="Maryna", "From Mikhail" → who="Mikhail"
+  If sender is not identifiable → use the session user (Mikhail)
 
 **T-164: Plausibility warning for mass recategorization:**
 - If applying ONE category to a batch of items where different categories were inferred:

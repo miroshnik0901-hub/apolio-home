@@ -3363,9 +3363,22 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         added, failed = [], []
         _file_id = None
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        # T-186: load known users to detect who from item note
+        _known_users: list[str] = []
+        try:
+            _known_users = sheets._admin.get_user_names()
+        except Exception:
+            _known_users = []
         # T-184: receipt-level type ("income"/"expense") applies to all items
         # unless overridden per-item. Income receipts (bank top-ups) need type="income".
         receipt_type = receipt.get("type", "expense")
+        # T-185: fallback — if AI forgot to set type but category is "Income", auto-correct
+        _INCOME_CATS = {"income", "доход", "доходи", "поповнення", "пополнение", "top-up", "topup", "salary", "зарплата"}
+        if receipt_type == "expense":
+            _receipt_cat_l = str(receipt.get("category") or "").lower()
+            if any(kw in _receipt_cat_l for kw in _INCOME_CATS):
+                receipt_type = "income"
+                logger.info(f"T-185: auto-corrected receipt_type to 'income' based on category='{_receipt_cat_l}'")
         for item in items:
             item_name = item.get("name") or item.get("merchant") or item.get("description") or "?"
             # T-181: check all amount field variants AI may use
@@ -3376,8 +3389,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             item_cat = item.get("category") or receipt.get("category") or "Other"
             # T-184: per-item who (e.g. "Maryna" vs "Mikhail" in bank statements);
             # fall back to receipt-level who, then session user
-            item_who = (item.get("who") or receipt.get("who") or session.user_name)
+            item_who = item.get("who") or receipt.get("who") or session.user_name
+            # T-186: if no explicit who, detect from item note using known user list
+            # e.g. "From Maryna Maslo" → "Maryna", "From Mikhail" → "Mikhail"
+            if not item.get("who") and _known_users:
+                _note_lc = item_name.lower()
+                for _u in _known_users:
+                    if _u.lower() in _note_lc:
+                        item_who = _u
+                        break
             item_type = item.get("type") or receipt_type
+            # T-185: per-item category fallback for income type
+            if item_type == "expense":
+                _item_cat_l = str(item_cat).lower()
+                if any(kw in _item_cat_l for kw in _INCOME_CATS):
+                    item_type = "income"
             if item_amount <= 0:
                 failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
@@ -3465,6 +3491,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Fall through to standard single-transaction add
         from tools.transactions import tool_add_transaction
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        # T-185: use receipt type; fallback to category-based detection
+        _single_type = receipt.get("type", "expense")
+        _INCOME_CATS_S = {"income", "доход", "доходи", "поповнення", "пополнение", "top-up", "topup", "salary", "зарплата"}
+        if _single_type == "expense":
+            _cat_l = str(receipt.get("category") or "").lower()
+            if any(kw in _cat_l for kw in _INCOME_CATS_S):
+                _single_type = "income"
         add_params = {
             "amount": receipt.get("total_amount", 0),
             "currency": receipt.get("currency", "EUR"),
@@ -3473,7 +3506,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "date": receipt.get("date", ""),
             "note": receipt.get("merchant") or "Multiple merchants",
             "account": account,
-            "type": "expense",
+            "type": _single_type,
         }
         result = await tool_add_transaction(add_params, session, sheets, auth)
         tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
