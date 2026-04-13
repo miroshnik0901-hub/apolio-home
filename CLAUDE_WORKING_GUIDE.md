@@ -34,22 +34,12 @@ Part of the Apolio product family. Current interface: Telegram (@ApolioHomeBot).
 
 ---
 
-## 3. PRODUCTION IDs
+## 3. IDs & ENV VARS
 
-| Resource | ID |
-|----------|-----|
-| MM_BUDGET file_id | `1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ` |
-| Admin sheet | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
-| Test Budget file_id | `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788` |
-| Test Admin sheet | `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` |
-| Mikhail Telegram ID | `360466156` |
-| Railway project ID | `55240cdd-2cbc-4451-b6c9-ca97ce595c18` |
-| Railway service ID (bot) | `8ec97839-6d49-4cdd-a012-1f6d54853454` |
-| Railway production env ID | `08e40bf3-cbe4-4a80-be54-1f291c21fe0d` |
-| Railway staging env ID | `1e6973d7-2c9c-48a3-8197-b61fd4174ba4` |
-| @ApolioHomeTestBot token | `8298458285:AAHm8doTLplljbrErzCo9FAMhhwnhvamaP8` |
+All Google Sheets IDs, Railway IDs, and environment rules → **see CLAUDE.md** (single source of truth).
 
-Env vars: `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+This section only lists env vars for reference:
+`TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GOOGLE_SERVICE_ACCOUNT`, `ADMIN_SHEETS_ID`, `DATABASE_URL`,
 `MM_BUDGET_FILE_ID` (fallback only — budget file_id resolves from Admin → Envelopes)
 
@@ -67,6 +57,7 @@ i18n.py             — KB_LABELS, MENU_LABELS, SYS, ADD_PROMPT, START_MSG
 menu_config.py      — DEFAULT_MENU, _DEFAULT_ROWS, BotMenu sheet loader
 intelligence.py     — IntelligenceEngine: budget snapshot, trends, anomalies
 user_context.py     — UserContextManager: user goals (UserContext sheet)
+ApolioHome_Prompt.md — agent system prompt (read at startup)
 DEV_CHECKLIST.md    — checklist BEFORE and AFTER every change
 CLAUDE_WORKING_GUIDE.md — this file
 
@@ -93,7 +84,7 @@ tools/
 ### How context is built (agent.py → `_build_context()`)
 
 ```
-System Prompt = hardcoded in agent.py (self._build_system_prompt())
+System Prompt = ApolioHome_Prompt.md
               + {intelligence_context}   ← budget snapshot, trends, anomalies
               + {goals_context}          ← user goals (UserContext sheet)
               + {learning_context}       ← learned patterns from agent_learning
@@ -321,7 +312,7 @@ Col 10 J: Confirm          — GO / HOLD / (empty)
 
 ### Topic values (pick exactly one — from config sheet)
 Valid topics are loaded dynamically from the `config` tab (col B) in Task Log sheet.
-Current values: `Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs` | `Bug Fix` | `Process`
+Current values: `Interface` | `Features` | `Data` | `Infrastructure` | `AI` | `Docs`
 
 Both Status and Topic have dropdown validation in the sheet.
 `task_log.py` reads col B from `config` tab at init — no hardcoded list in Python code.
@@ -383,6 +374,25 @@ For each open task, read ALL fields fully:
 > **MANDATORY: As soon as work is done and pushed to dev → set Status = DISCUSSION immediately.**
 > IN PROCESS is a TEMPORARY status. Never leave it after the session ends.
 > Workflow: OPEN → IN PROCESS (while working) → DISCUSSION (done, on staging) → CLOSED (Mikhail only)
+
+### Self-contained comments — mandatory rule
+
+Every comment written to the Task Log (field E — "Apolio Comment") must be **self-contained**.
+Assume the reader (next Claude session) has zero prior context from the current chat.
+
+A good comment includes:
+- **What** the problem is — exact symptom, not just "fix X"
+- **Why** it happens — root cause if known
+- **Which files/functions** are involved
+- **What was tried** (if anything) and what the result was
+- **What the next step is** — concrete, actionable
+
+Bad: `[2026-04-13] Fixed topic validation`
+Good: `[2026-04-13] Empty topic string passed validation because "if topic and ..." is falsy for "". Fixed: changed to "if not topic or topic not in VALID_TOPICS" in add_task(). Also added validation in update_task(). Deployed to prod. Verify: try add_task with topic="" → should raise ValueError.`
+
+This rule applies to ALL comment updates — initial creation, progress updates, and DISCUSSION notes.
+
+---
 
 **Step 3 — Write updates via task_log.py API**
 ```python
@@ -556,8 +566,9 @@ All testing is done by Claude without asking the user:
 ### MANDATORY: keep test files current
 **Every time a bug is fixed or feature is added**, update `test_regression.py`:
 1. Add a new test (section 1 static check OR section 2 unit test) that would have caught the bug
-2. If a new tool is added → add a test for its error path (what happens if Sheets fails?)
-3. If a new prompt rule is added → add a static check for it
+2. Add the bug to the "Known bugs fixed" table in `QA_CHECKLIST.md`
+3. If a new tool is added → add a test for its error path (what happens if Sheets fails?)
+4. If a new prompt rule is added → add a static check that the rule is present in `ApolioHome_Prompt.md`
 
 This ensures regressions are caught immediately and the test suite grows with the product.
 
@@ -639,35 +650,7 @@ Update after any of these events:
 - IDs or env vars changed → section 3
 ---
 
-## 14. MANDATORY DEV RULES
-
-### No hardcoding
-Never hardcode buttons, labels, choices, or UI elements. If a method or tool already exists — USE IT.
-
-Examples of what NOT to do:
-- Hardcode `session.pending_choice = [...]` in tool code → use `present_options` tool instead
-- Hardcode button labels → use `i18n.ts()` / `i18n.t()`
-- Hardcode category/account/who values → read from Google Sheets reference data
-
-Before writing any UI code: **grep the codebase** for existing patterns.
-
-### Regression testing after every push
-After every push to `dev`, test ALL affected flows — not just the one changed:
-
-1. **Photo: new receipt** — single photo → analysis + Joint/Personal/Edit/Cancel buttons
-2. **Photo: duplicate** — photo matching existing tx → enrich/cancel buttons
-3. **Photo: enrichment** — second photo of same tx → items shown + parsed_data updated
-4. **Photo: batch** — 2-3 photos within 4s → ONE combined response
-5. **Text command** — "coffee 3.50" → transaction added, buttons work
-6. **Language** — bot responds in the language of user's message
-7. **Adjacent flows** — test flows that SHARE CODE with the changed flow
-
-### Why this matters
-Fixing one flow repeatedly breaks another. A prompt change that fixes enrichment can break fresh receipt buttons. A hardcoded button set can miss Edit/Cancel options. Test everything, not just what you touched.
-
----
-
-## 15. REGRESSION ANALYSIS STUDIO
+## 14. REGRESSION ANALYSIS STUDIO
 
 **File:** `regression_studio.html` — standalone tool, no dependencies outside of cdnjs (Chart.js).
 Open directly in any browser.
