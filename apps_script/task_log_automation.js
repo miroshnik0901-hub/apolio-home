@@ -54,6 +54,13 @@ function onEdit(e) {
           deployCell.setValue('READY');
         }
       }
+      // T-117/T-129: auto-set Deploy=READY when moving to DISCUSSION (if empty)
+      if (val === 'DISCUSSION') {
+        const deployCell = sheet.getRange(row, COL.DEPLOY);
+        if (!deployCell.getValue()) {
+          deployCell.setValue('READY');
+        }
+      }
     } else if (val === 'OPEN' || val === 'IN PROCESS' || val === 'ON HOLD') {
       resolvedCell.clearContent();
     }

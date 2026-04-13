@@ -1,23 +1,22 @@
 **Start of every session — read in this order:**
-1. `SESSION_LOG.md` — recent action history (what was done and when)
-2. `CLAUDE_SESSION.md` — current state snapshot (pending decisions, in-progress work)
-3. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
-4. Run relevant tests before every push
+1. `SESSION_LOG.md` — full history: actions, decisions, pending, state
+2. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
+3. Run relevant tests before every push
 
 ## Session Memory — mandatory
 
 **After every reply** — append one line to `SESSION_LOG.md`. No exceptions. Claude doesn't know when the context window ends, so every message could be the last.
 
 ```
-YYYY-MM-DD HH:MM | CHAT | what was discussed / decided
-YYYY-MM-DD HH:MM | ACTION | what was done + result
-YYYY-MM-DD HH:MM | NEXT | concrete next step if mid-task
+YYYY-MM-DD HH:MM | CHAT    | what was discussed
+YYYY-MM-DD HH:MM | ACTION  | what was done + result
+YYYY-MM-DD HH:MM | DECISION| key technical or product decision
+YYYY-MM-DD HH:MM | PENDING | waiting on Mikhail — what exactly
+YYYY-MM-DD HH:MM | STATE   | current system state snapshot
+YYYY-MM-DD HH:MM | NEXT    | concrete next step if mid-task
 ```
 
 Never rewrite past entries. Just append.
-No friction: one line, no formatting, no sections to find.
-
-`CLAUDE_SESSION.md` — update when **state** changes: new pending decisions, blocked tasks, deployed features. Not after every message — SESSION_LOG.md handles continuity.
 
 ## Languages
 

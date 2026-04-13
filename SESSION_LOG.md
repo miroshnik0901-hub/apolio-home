@@ -1,11 +1,16 @@
 # Session Log — append only, never edit past entries
-# Format: YYYY-MM-DD HH:MM | ACTION | RESULT / STATE
+# Types: CHAT | ACTION | DECISION | PENDING | STATE | NEXT
+# Format: YYYY-MM-DD HH:MM | TYPE | content
 
-2026-04-13 | topic validation fix in add_task() | empty string now raises ValueError; Bug Fix + Process removed from _FALLBACK_TOPICS
-2026-04-13 | Dashboard format reset in sheets.py | added repeatCell+numberFormat clear via batch_update before writing — fixes % and date corruption after ws.clear()
-2026-04-13 | Config write via USER_ENTERED | write_config() must use value_input_option='USER_ENTERED'; direct ws.update() creates text cells with ' prefix
-2026-04-13 | bot_version stays string '2.0' | written with text prefix in Sheets, not numeric — do not convert
-2026-04-13 | ~20 obsolete files deleted | active docs: CLAUDE.md, CLAUDE_WORKING_GUIDE.md, CLAUDE_SESSION.md, SESSION_LOG.md, ApolioHome_Prompt.md, SELF_LEARNING_ALGORITHM.md
-2026-04-13 | CLAUDE.md rewritten in English | all operational rules live here; Project Instructions (Claude UI) is a pointer only
-2026-04-13 | CLAUDE_SESSION.md created | live state file; replaces scattered context files
-2026-04-13 | SESSION_LOG.md created | this file; append-only action log
+2026-04-13 | ACTION | topic validation fix in add_task() — empty string raises ValueError; Bug Fix + Process removed from _FALLBACK_TOPICS
+2026-04-13 | ACTION | Dashboard format reset in sheets.py — repeatCell+numberFormat clear via batch_update before writing; fixes % and date corruption after ws.clear()
+2026-04-13 | DECISION | Config write must use write_config() with value_input_option='USER_ENTERED'; direct ws.update() creates text cells with ' prefix
+2026-04-13 | DECISION | bot_version stays string '2.0' — written with text prefix in Sheets, not numeric
+2026-04-13 | ACTION | ~20 obsolete files deleted; active docs: CLAUDE.md, CLAUDE_WORKING_GUIDE.md, SESSION_LOG.md, ApolioHome_Prompt.md, SELF_LEARNING_ALGORITHM.md
+2026-04-13 | ACTION | CLAUDE.md rewritten in English — all operational rules live here; Project Instructions (Claude UI) is a pointer only
+2026-04-13 | PENDING | Budget Config (prod) — monthly_cap and split_rule overwritten with test values (3500, 50/50); Mikhail edits manually in Sheets, then refresh Dashboard
+2026-04-13 | PENDING | Apps Script — manual update: Task Log → Extensions → Apps Script → paste task_log_automation.js → Save → run setupTriggers()
+2026-04-13 | STATE | sandbox init: load_dotenv('.env'), sys.path.insert(0, repo_root), from sheets import SheetsClient (NOT SheetManager)
+2026-04-13 | CHAT | обсуждаем механизм памяти: пишем в SESSION_LOG после каждого ответа
+2026-04-13 | DECISION | CLAUDE_SESSION.md избыточен — удалён; SESSION_LOG.md единственный файл памяти
+2026-04-13 | ACTION | CLAUDE_SESSION.md deleted, SESSION_LOG.md updated with types CHAT/ACTION/DECISION/PENDING/STATE
