@@ -6,15 +6,18 @@
 
 ## Session Memory — mandatory
 
-After every significant action (push, file creation/deletion, schema change, key decision, bug fix):
-→ Append one line to `SESSION_LOG.md`:
+**After every reply** — append one line to `SESSION_LOG.md`. No exceptions. Claude doesn't know when the context window ends, so every message could be the last.
+
 ```
-YYYY-MM-DD | ACTION | RESULT / STATE
+YYYY-MM-DD HH:MM | CHAT | what was discussed / decided
+YYYY-MM-DD HH:MM | ACTION | what was done + result
+YYYY-MM-DD HH:MM | NEXT | concrete next step if mid-task
 ```
+
 Never rewrite past entries. Just append.
 No friction: one line, no formatting, no sections to find.
 
-`CLAUDE_SESSION.md` — update when current **state** changes: new pending decisions, blocked tasks, deployed features. Not after every action — SESSION_LOG.md handles that.
+`CLAUDE_SESSION.md` — update when **state** changes: new pending decisions, blocked tasks, deployed features. Not after every message — SESSION_LOG.md handles continuity.
 
 ## Languages
 
