@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import time
+import logging as _log_module
 import gspread
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
@@ -9,6 +10,30 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build as google_build
 from datetime import datetime
 from typing import Optional
+
+_sheets_logger = _log_module.getLogger(__name__)
+
+# T-172: retry wrapper for Google Sheets API 429 / 503 transient errors.
+# Applied to any sheets read or write call that can hit quota limits.
+def _sheets_retry(fn, *args, max_attempts: int = 3, base_delay: float = 5.0, **kwargs):
+    """Call fn(*args, **kwargs) with exponential backoff on gspread APIError 429/503."""
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            status = e.response.status_code if hasattr(e, "response") else 0
+            if status in (429, 503) and attempt < max_attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                _sheets_logger.warning(
+                    f"Sheets API {status} on attempt {attempt+1}/{max_attempts}, "
+                    f"retrying in {delay:.0f}s"
+                )
+                time.sleep(delay)
+                last_exc = e
+            else:
+                raise
+    raise last_exc
 
 
 class SheetsCache:
@@ -418,7 +443,7 @@ class EnvelopeSheets:
 
     def get_transactions(self, filters: dict = None) -> list[dict]:
         ws = self._ws("Transactions")
-        all_values = ws.get_all_values()
+        all_values = _sheets_retry(ws.get_all_values)
         if not all_values:
             return []
         headers = all_values[0]
@@ -470,7 +495,7 @@ class EnvelopeSheets:
         Raises on Sheets API error.
         """
         ws = self._ws("Transactions")
-        all_values = ws.get_all_values()
+        all_values = _sheets_retry(ws.get_all_values)
         if not all_values:
             return False
         headers = all_values[0]
@@ -493,7 +518,7 @@ class EnvelopeSheets:
         if target_row is None:
             return False
 
-        ws.delete_rows(target_row)
+        _sheets_retry(ws.delete_rows, target_row)
 
         # Post-delete verification: confirm the row is actually gone
         # (gspread delete_rows can fail silently on quota errors)
@@ -676,121 +701,12 @@ class EnvelopeSheets:
             rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section B1: CUMULATIVE_BALANCE — static values from compute_cumulative_balance ──
-            # Written as static values (Python-computed) because cross-all-time
-            # aggregation can't be expressed as per-month Sheets formulas.
-            # Refreshed every time /dashboard is called.
-            rows.append(["[CUMULATIVE_BALANCE]", "", "", "", ""])
-            if cumulative and cumulative.get("status") == "ok":
-                first_month = cumulative.get("first_month", "?")
-                months_counted = cumulative.get("months_counted", 0)
-                cum_cur = cumulative.get("currency", "EUR")
-                rows.append(["since", "'" + first_month, "", "", ""])
-                rows.append(["months_counted", months_counted, "", "", ""])
-                rows.append(["User", "Total_Obligation", "Total_Contribution", "Net_Balance", "Status"])
-                for u in cumulative.get("split_users", []):
-                    oblig = round(cumulative.get("cumulative_obligations", {}).get(u, 0), 2)
-                    contrib = round(cumulative.get("cumulative_contributions", {}).get(u, 0), 2)
-                    balance = round(cumulative.get("cumulative_balances", {}).get(u, 0), 2)
-                    status = "surplus" if balance >= 0 else "deficit"
-                    rows.append([u, oblig, contrib, balance, status])
-            else:
-                rows.append(["(cumulative data not available)", "", "", "", ""])
-            rows.append(["", "", "", "", ""])
-
-            # ── Section B2: USER_BALANCE — xlsx formula model ─────────────
-            # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp
-            # credit = -obligation (positive = overpaid, negative = owes)
-            rows.append(["[USER_BALANCE]", "", "", "", ""])      # row 14
-            if contrib_snap and contrib_snap.get("status") == "ok":
-                rows.append(["split_rule", '=VLOOKUP("split_rule",Config!A:B,2,FALSE)', "", "", ""])  # row 15
-                rows.append(["threshold", '=VLOOKUP("split_threshold",Config!A:B,2,FALSE)', "", "", ""])  # row 16
-                rows.append(["User", "Obligation", "Credit", "", "Status"])  # row 17
-                # Per-user formulas (row 18+)
-                split_users = contrib_snap.get("split_users", [])
-                # total_min_pool formula
-                f_total_min = "+".join(
-                    f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in split_users
-                )
-                # split_base = total_expenses - total_min_pool (B4 = spent)
-                f_split_base = f"B4-({f_total_min})"
-                for u in split_users:
-                    f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
-                    f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
-                    # top_up = income/transfer to joint by this user
-                    f_top_up = (
-                        f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_CM}*{_H})'
-                    )
-                    # personal_exp = expenses from Personal account by this user
-                    f_pers_exp = (
-                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_CM}*{_H})'
-                    )
-                    # joint_exp_paid = expenses from Joint account paid directly by this user
-                    # (non-empty, non-Personal account — covers "Joint", "Joint Account", etc.)
-                    # These are credited back: user paid a joint bill from their own pocket.
-                    f_joint_paid = (
-                        f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}<>"Personal")*({_J}<>"")*{_ND}*{_CM}*{_H})'
-                    )
-                    # obligation = (min - top_up) + max(0, split_base) * split%/100 - personal_exp - joint_paid
-                    f_obligation = (
-                        f"=({f_min_u}-{f_top_up})"
-                        f"+MAX(0,{f_split_base})*{f_split_u}/100"
-                        f"-{f_pers_exp}"
-                        f"-{f_joint_paid}"
-                    )
-                    # Row number must be dynamic — computed from actual rows list length,
-                    # not hardcoded, since sections above can shift row positions.
-                    u_row = len(rows) + 1  # 1-indexed row this entry will occupy
-                    # credit = -obligation
-                    f_credit = f"=-B{u_row}"
-                    f_status = f'=IF(C{u_row}>=0,"surplus","deficit")'
-
-                    rows.append([u, f_obligation, f_credit, "", f_status])
-            else:
-                rows.append(["(solo budget — no split)", "", "", "", ""])
-            rows.append(["", "", "", "", ""])
-
-            # ── Section C: CATEGORIES — formulas via SUMPRODUCT ──────────
-            # Write ALL main expense categories (from Categories sheet),
-            # not just those with data. Formulas evaluate to 0 for empty cats.
-            rows.append(["[CATEGORIES]", "", "", "", ""])
-            # Collect unique top-level expense categories from Categories sheet
-            all_expense_cats: list[str] = []
-            try:
-                cat_ws = self._ws("Categories")
-                cat_rows = cat_ws.get_all_values()
-                for cr_row in cat_rows[1:]:  # skip header
-                    cat_name = cr_row[0].strip() if cr_row else ""
-                    cat_type = cr_row[2].strip().lower() if len(cr_row) > 2 else ""
-                    if cat_name and cat_type == "expense" and cat_name not in all_expense_cats:
-                        all_expense_cats.append(cat_name)
-            except Exception:
-                pass
-            # Fallback: if Categories sheet read failed, use top_categories from snap
-            if not all_expense_cats:
-                top_cats = snap.get("top_categories", {})
-                all_expense_cats = list(top_cats.keys()) if top_cats else []
-
-            if all_expense_cats:
-                rows.append(["Category", "Amount", "Pct", "Count", ""])
-                cat_start_row = len(rows) + 1
-                for cat_idx, cat in enumerate(all_expense_cats):
-                    cr = cat_start_row + cat_idx
-                    f_cat_amt = (
-                        f'=SUMPRODUCT(({_D}=A{cr})*({_I}="expense")*{_ND}*{_CM}*{_H})'
-                    )
-                    f_cat_pct = f'=IF(B$4>0,B{cr}/B$4*100,0)'
-                    f_cat_cnt = (
-                        f'=SUMPRODUCT(({_D}=A{cr})*({_I}="expense")*{_ND}*{_CM}*1)'
-                    )
-                    rows.append([cat, f_cat_amt, f_cat_pct, f_cat_cnt, ""])
-            else:
-                rows.append(["(no expense categories found)", "", "", "", ""])
-            rows.append(["", "", "", "", ""])
-
-            # ── Section D: HISTORY — formulas per month ───────────────
-            # Each row uses SUMPRODUCT formulas parameterized by its own
-            # A-column (month text), so values stay fresh automatically.
+            # ── Section B: HISTORY — unified per-user per-month table ──────────
+            # Replaces CUMULATIVE_BALANCE + USER_BALANCE + CATEGORIES + HISTORY.
+            # Base columns: Month | Spent | Budget | Pct
+            # Per-user group (5 cols each): {u}_min | {u}_topup | {u}_exp_joint | {u}_exp_personal | {u}_balance
+            # TOTAL row at bottom = cumulative SUM across all months.
+            # All values are Sheets formulas keyed on A-column (month text) — self-updating.
             rows.append(["[HISTORY]", "", "", "", ""])
             if contrib_history:
                 all_users: list = []
@@ -799,85 +715,94 @@ class EnvelopeSheets:
                         if u not in all_users:
                             all_users.append(u)
 
+                # Header row
                 h_header = ["Month", "Spent", "Budget", "Pct"]
                 for u in all_users:
-                    h_header += [f"{u}_obligation", f"{u}_credit"]
-                # Pad to max_cols
-                while len(h_header) < 8:
-                    h_header.append("")
+                    h_header += [
+                        f"{u}_min",
+                        f"{u}_topup",
+                        f"{u}_exp_joint",
+                        f"{u}_exp_personal",
+                        f"{u}_balance",
+                    ]
                 rows.append(h_header)
 
                 # Helper: month-match for a given row referencing A{row}
                 def _month_match(row_n: int) -> str:
                     return f'(TEXT({_R},"yyyy-mm")=A{row_n})'
 
+                # total_min_pool formula (sum of all users' min from Config)
+                f_total_min_cfg = "+".join(
+                    f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in all_users
+                )
+
                 ok_months = [h for h in contrib_history if h.get("status") == "ok"]
+                first_data_row: int | None = None
 
-                for h_idx, h in enumerate(ok_months):
+                for h in ok_months:
                     h_month = "'" + h.get("month", "") if h.get("month") else ""
-                    r = len(rows) + 1  # 1-indexed row number for this data row
-                    _HM = _month_match(r)  # month filter for this row
+                    r = len(rows) + 1  # 1-indexed row this entry will occupy in the sheet
+                    if first_data_row is None:
+                        first_data_row = r
+                    _HM = _month_match(r)
 
-                    # Spent: sum of expenses for this month
-                    f_spent = f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_HM}*{_H})'
-                    # Budget: from Config
+                    # Base columns
+                    f_spent  = f'=SUMPRODUCT(({_I}="expense")*{_ND}*{_HM}*{_H})'
                     f_budget = '=VLOOKUP("monthly_cap",Config!A:B,2,FALSE)'
-                    # Pct: spent/budget
-                    f_pct = f'=IF(C{r}>0,B{r}/C{r}*100,0)'
+                    f_pct    = f'=IF(C{r}>0,B{r}/C{r}*100,0)'
 
                     data_row = [h_month, f_spent, f_budget, f_pct]
 
-                    # Per-user obligation and credit formulas
-                    # (same logic as USER_BALANCE but with row-specific month match)
-                    f_total_min = "+".join(
-                        f'VLOOKUP("min_{uu}",Config!A:B,2,FALSE)' for uu in all_users
-                    )
-                    f_split_base = f"B{r}-({f_total_min})"
+                    # split_base for this row = spent_this_month - total_min_pool
+                    f_split_base = f"B{r}-({f_total_min_cfg})"
 
-                    for u in all_users:
-                        f_min_u = f'VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
+                    for u_idx, u in enumerate(all_users):
+                        # Column indices (0-based): base=4, per-user stride=5
+                        col_base = 4 + u_idx * 5
+                        # Note: chr(65+n) works for up to 26 cols (Z). For >26, use _col_letter() below.
+                        c_min   = chr(65 + col_base)
+                        c_topup = chr(65 + col_base + 1)
+                        # c_joint = chr(65 + col_base + 2)  # informational only
+                        c_pers  = chr(65 + col_base + 3)
+                        # c_bal   = chr(65 + col_base + 4)  # balance column itself
+
                         f_split_u = f'VLOOKUP("split_{u}",Config!A:B,2,FALSE)'
-                        f_top_up = (
-                            f'SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_HM}*{_H})'
-                        )
-                        f_pers_exp = (
-                            f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_HM}*{_H})'
-                        )
-                        f_joint_paid = (
-                            f'SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}<>"Personal")*({_J}<>"")*{_ND}*{_HM}*{_H})'
-                        )
-                        f_obligation = (
-                            f"=({f_min_u}-{f_top_up})"
-                            f"+MAX(0,{f_split_base})*{f_split_u}/100"
-                            f"-{f_pers_exp}"
-                            f"-{f_joint_paid}"
-                        )
-                        u_col_idx = 4 + all_users.index(u) * 2  # E=4, G=6, etc.
-                        u_col_letter = chr(65 + u_col_idx)
-                        f_credit = f"=-{u_col_letter}{r}"
-                        data_row += [f_obligation, f_credit]
 
-                    # Pad
-                    while len(data_row) < 8:
-                        data_row.append("")
+                        f_min_u   = f'=VLOOKUP("min_{u}",Config!A:B,2,FALSE)'
+                        f_topup_u = (
+                            f'=SUMPRODUCT(({_G}="{u}")*({_I}="income")*{_ND}*{_HM}*{_H})'
+                        )
+                        f_exp_joint_u = (
+                            f'=SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Joint")*{_ND}*{_HM}*{_H})'
+                        )
+                        f_exp_pers_u = (
+                            f'=SUMPRODUCT(({_G}="{u}")*({_I}="expense")*({_J}="Personal")*{_ND}*{_HM}*{_H})'
+                        )
+                        # balance = -obligation = topup - min - max(0, split_base)*split%/100 + personal_exp
+                        # References own row cells for topup/min/personal so TOTAL SUM works correctly.
+                        f_balance_u = (
+                            f"={c_topup}{r}-{c_min}{r}"
+                            f"-MAX(0,{f_split_base})*{f_split_u}/100"
+                            f"+{c_pers}{r}"
+                        )
+
+                        data_row += [f_min_u, f_topup_u, f_exp_joint_u, f_exp_pers_u, f_balance_u]
+
                     rows.append(data_row)
 
-                # YTD totals row — SUM formulas
-                first_data = len(rows) - len(ok_months) + 1
-                last_data = len(rows)
-                ytd_row_cells: list = ["YTD"]
-                ytd_row_cells.append(f"=SUM(B{first_data}:B{last_data})")
-                ytd_row_cells.append("")  # Budget — no YTD sum
-                ytd_row_cells.append("")  # Pct — no YTD sum
-                col_offset = 4
-                for u in all_users:
-                    for ci in range(2):
-                        c_letter = chr(65 + col_offset + ci)
-                        ytd_row_cells.append(f"=SUM({c_letter}{first_data}:{c_letter}{last_data})")
-                    col_offset += 2
-                while len(ytd_row_cells) < 8:
-                    ytd_row_cells.append("")
-                rows.append(ytd_row_cells)
+                # TOTAL row — SUM across all data rows
+                if ok_months and first_data_row is not None:
+                    last_data = len(rows)
+                    total_row: list = ["TOTAL"]
+                    total_row.append(f"=SUM(B{first_data_row}:B{last_data})")   # Spent total
+                    total_row.append(f"=SUM(C{first_data_row}:C{last_data})")   # Budget total (n*monthly_cap)
+                    total_row.append("")                                          # Pct — not meaningful for TOTAL
+                    for u_idx in range(len(all_users)):
+                        col_base = 4 + u_idx * 5
+                        for ci in range(5):
+                            c = chr(65 + col_base + ci)
+                            total_row.append(f"=SUM({c}{first_data_row}:{c}{last_data})")
+                    rows.append(total_row)
             else:
                 rows.append(["(no history data)", "", "", "", ""])
 
