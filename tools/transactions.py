@@ -130,7 +130,8 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
 
 
 async def tool_add_transaction(params: dict, session: SessionContext,
-                                sheets: SheetsClient, auth: AuthManager) -> Any:
+                                sheets: SheetsClient, auth: AuthManager,
+                                skip_sort: bool = False) -> Any:
     if not auth.can_write(session.user_id):
         return {"error": "Permission denied."}
 
@@ -310,11 +311,12 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         return {"error": f"TRANSACTION FAILED to save: {e}", "tx_id": tx_id}
 
     # T-176: sort Transactions sheet by Date (asc) after every add.
-    # Backdated or late entries would otherwise appear at the bottom.
-    try:
-        sheets.sort_transactions_by_date(envelope["file_id"], order="asc")
-    except Exception as _sort_err:
-        logger.warning(f"sort_transactions_by_date failed (non-fatal): {_sort_err}")
+    # T-183: skip_sort=True in batch mode (cb_split_separate) — caller sorts once at end.
+    if not skip_sort:
+        try:
+            sheets.sort_transactions_by_date(envelope["file_id"], order="asc")
+        except Exception as _sort_err:
+            logger.warning(f"sort_transactions_by_date failed (non-fatal): {_sort_err}")
 
     # Update session last_action for undo
     session.last_action = LastAction(

@@ -3309,6 +3309,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         items = receipt.get("items") or []
         from tools.transactions import tool_add_transaction
         added, failed = [], []
+        _file_id = None
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         for item in items:
             item_name = item.get("name") or item.get("merchant") or item.get("description") or "?"
@@ -3332,14 +3333,31 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "type": "expense",
             }
             try:
-                result = await tool_add_transaction(params, session, sheets, auth)
-                if isinstance(result, dict) and result.get("tx_id"):
+                # T-183: skip_sort in batch — sort once after all items written
+                result = await tool_add_transaction(params, session, sheets, auth, skip_sort=True)
+                # T-183: tx_id can be present even on error — check error field explicitly
+                if isinstance(result, dict) and result.get("tx_id") and not result.get("error"):
                     added.append(f"✓ {item_name} · {item_amount:,.2f} {receipt.get('currency','EUR')}")
+                    if not _file_id:
+                        try:
+                            _envs = sheets.get_envelopes()
+                            _eid = session.current_envelope_id or "MM_BUDGET"
+                            _env = next((e for e in _envs if e.get("ID") == _eid), None)
+                            _file_id = _env.get("file_id") if _env else None
+                        except Exception:
+                            pass
                 else:
-                    err = result.get("error", "?") if isinstance(result, dict) else str(result)
+                    err = result.get("error", str(result)) if isinstance(result, dict) else str(result)
                     failed.append(f"✗ {item_name}: {err}")
             except Exception as e:
                 failed.append(f"✗ {item_name}: {e}")
+
+        # T-183: one sort after batch, not N sorts during batch
+        if _file_id:
+            try:
+                sheets.sort_transactions_by_date(_file_id, order="asc")
+            except Exception as _se:
+                logger.warning(f"batch sort failed (non-fatal): {_se}")
 
         cur = receipt.get("currency", "EUR")
         total_added = len(added)

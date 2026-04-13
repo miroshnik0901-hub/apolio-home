@@ -32,3 +32,5 @@
 2026-04-13 23:50 | STATE   | dev at b92e5f9. T-172–T-180 all DISCUSSION+READY. Waiting GO from Mikhail.
 2026-04-13 23:55 | ACTION  | T-181: echo account+split choices fixed; amount field total_amount added to lookup (was causing 4/7). Commit 3524255.
 2026-04-13 23:55 | STATE   | dev at 3524255. T-172–T-181 DISCUSSION+READY. Waiting GO від Mikhail.
+2026-04-14 00:05 | ACTION  | T-182: dup detection — currency match + ±5% non-EUR + note token check. tools/transactions.py. Commit d78f2ca.
+2026-04-14 00:05 | STATE   | dev at d78f2ca. T-172–T-182 DISCUSSION+READY. Waiting GO.

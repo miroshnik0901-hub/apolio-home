@@ -1099,7 +1099,8 @@ class SheetsClient:
         self._cache.invalidate(f"txns_{sheet_id}")
         if isinstance(row, list):
             env = self._env_sheets(sheet_id)
-            env._ws("Transactions").append_row(row)
+            # T-183: wrap with retry — batch writes trigger 429 after ~4 rapid requests
+            _sheets_retry(env._ws("Transactions").append_row, row)
             return row[10]  # tx_id is at index 10 (col K) in new column order
         return self._env_sheets(sheet_id).add_transaction(row)
 
