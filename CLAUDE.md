@@ -1,4 +1,9 @@
-Read CLAUDE_WORKING_GUIDE.md before any change. Run DEV_CHECKLIST.md checklist before every push.
+**Начало каждой сессии — читать в этом порядке:**
+1. `CLAUDE_SESSION.md` — живой журнал: что сделано, что в процессе, отложенные вопросы
+2. `CLAUDE_WORKING_GUIDE.md` — архитектура и схемы (перед любым изменением кода)
+3. `DEV_CHECKLIST.md` — релевантные секции перед каждым push
+
+`CLAUDE_SESSION.md` обновлять в конце каждой сессии.
 
 ## Languages
 
