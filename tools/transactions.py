@@ -131,13 +131,23 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
 
 async def tool_add_transaction(params: dict, session: SessionContext,
                                 sheets: SheetsClient, auth: AuthManager,
-                                skip_sort: bool = False) -> Any:
+                                skip_sort: bool = False,
+                                batch_mode: bool = False) -> Any:
+    """batch_mode=True: skip validation + dup check to avoid N×2 Sheets read
+    calls that exhaust the 60 req/min quota when adding items in a loop."""
     if not auth.can_write(session.user_id):
         return {"error": "Permission denied."}
 
     envelope = _resolve_envelope(params, session, sheets)
     if not auth.can_access_envelope(session.user_id, envelope["ID"]):
         return {"error": "You don't have access to this envelope."}
+
+    # batch_mode: inject flags that skip validation and duplicate detection.
+    # User already reviewed and confirmed the item list — no need for per-item checks.
+    if batch_mode:
+        params = dict(params)       # don't mutate caller's dict
+        params["force_new"] = True  # skip category/who validation
+        params["force_add"] = True  # skip duplicate detection
 
     # ── Validation against reference data ────────────────────────────────
     try:

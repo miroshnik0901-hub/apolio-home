@@ -3311,6 +3311,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         added, failed = [], []
         _file_id = None
         await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        # T-184: receipt-level type ("income"/"expense") applies to all items
+        # unless overridden per-item. Income receipts (bank top-ups) need type="income".
+        receipt_type = receipt.get("type", "expense")
         for item in items:
             item_name = item.get("name") or item.get("merchant") or item.get("description") or "?"
             # T-181: check all amount field variants AI may use
@@ -3319,6 +3322,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             item_date = item.get("date") or receipt.get("date") or ""
             item_cat = item.get("category") or receipt.get("category") or "Other"
+            # T-184: per-item who (e.g. "Maryna" vs "Mikhail" in bank statements);
+            # fall back to receipt-level who, then session user
+            item_who = (item.get("who") or receipt.get("who") or session.user_name)
+            item_type = item.get("type") or receipt_type
             if item_amount <= 0:
                 failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
@@ -3326,15 +3333,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "amount": item_amount,
                 "currency": receipt.get("currency", "EUR"),
                 "category": item_cat,
-                "who": receipt.get("who") or session.user_name,
+                "who": item_who,
                 "date": item_date,
                 "note": item_name,
                 "account": account,
-                "type": "expense",
+                "type": item_type,
             }
             try:
-                # T-183: skip_sort in batch — sort once after all items written
-                result = await tool_add_transaction(params, session, sheets, auth, skip_sort=True)
+                # T-183: skip_sort; T-185: batch_mode skips per-item validation+dup reads
+                result = await tool_add_transaction(params, session, sheets, auth,
+                                                    skip_sort=True, batch_mode=True)
                 # T-183: tx_id can be present even on error — check error field explicitly
                 if isinstance(result, dict) and result.get("tx_id") and not result.get("error"):
                     added.append(f"✓ {item_name} · {item_amount:,.2f} {receipt.get('currency','EUR')}")
@@ -3347,7 +3355,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             pass
                 else:
-                    err = result.get("error", str(result)) if isinstance(result, dict) else str(result)
+                    # Surface real error: "error" field, or status/type for confirm_required
+                    if isinstance(result, dict):
+                        err = (result.get("error")
+                               or result.get("message")
+                               or f"status={result.get('status')} type={result.get('type')}")
+                    else:
+                        err = str(result)
                     failed.append(f"✗ {item_name}: {err}")
             except Exception as e:
                 failed.append(f"✗ {item_name}: {e}")
