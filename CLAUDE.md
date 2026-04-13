@@ -3,6 +3,8 @@
 2. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
 3. Run relevant tests before every push
 
+**After every reply** — append one line to `SESSION_LOG.md`. No exceptions.
+
 ## Session Memory — mandatory
 
 **After every reply** — append one line to `SESSION_LOG.md`. No exceptions. Claude doesn't know when the context window ends, so every message could be the last.
