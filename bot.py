@@ -2973,38 +2973,43 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             receipt = session.pending_receipt
             account = "Joint" if chosen_value == "yes_joint" else "Personal"
 
-            # T-168/T-178: ask split vs single for bank statements and multi-item receipts.
-            # Detection: 2+ items AND (per-item merchant OR per-item date differs across items).
-            # Bank statements: each item has its own merchant/date → detected.
-            # Restaurant receipts: items share same date and have no per-item merchant → skip.
+            # T-168/T-178: if receipt has 2+ items, ALWAYS show list + ask split vs single.
+            # No heuristic detection — user sees the items and decides.
+            # Works for bank statements (2+ rows) and multi-dish restaurant receipts alike.
             items = receipt.get("items") or []
-            if len(items) >= 2:
-                _item_merchants = {
-                    str(it.get("merchant", "")).strip().lower()
-                    for it in items
-                    if str(it.get("merchant", "")).strip()
-                }
-                _item_dates = {
-                    str(it.get("date", "")).strip()
-                    for it in items
-                    if str(it.get("date", "")).strip()
-                }
-                _is_multi_merchant = (len(_item_merchants) > 1) or (len(_item_dates) > 1)
-            else:
-                _is_multi_merchant = False
-            if _is_multi_merchant and not getattr(session, "_split_mode_chosen", False):
-                # Store account so we can use it after user picks split mode
+            if len(items) >= 2 and not getattr(session, "_split_mode_chosen", False):
+                # Store account choice so we can use it after user picks split mode
                 session._pending_split_account = account
                 session._split_mode_chosen = False
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except BadRequest:
                     pass
-                _split_q = {
-                    "ru": f"📋 Выписка: {len(items)} операц. Как записать?",
-                    "uk": f"📋 Виписка: {len(items)} операц. Як записати?",
-                    "en": f"📋 Statement: {len(items)} transactions. How to record?",
-                    "it": f"📋 Estratto: {len(items)} operazioni. Come registrare?",
+
+                # Build items preview: "• merchant/name  amount  [date]"
+                cur_r = receipt.get("currency", "")
+                _item_lines = []
+                for it in items:
+                    merchant = str(it.get("merchant") or it.get("name") or "").strip()
+                    amt = it.get("amount") or it.get("total_amount") or 0
+                    date_it = str(it.get("date") or "").strip()
+                    amt_str = f"{float(amt):,.0f} {cur_r}" if amt else ""
+                    parts = [f"• {merchant}" if merchant else "•", amt_str]
+                    if date_it:
+                        parts.append(f"({date_it})")
+                    _item_lines.append("  ".join(p for p in parts if p))
+
+                _header = {
+                    "ru": f"📋 <b>Найдено {len(items)} позиций:</b>",
+                    "uk": f"📋 <b>Знайдено {len(items)} позицій:</b>",
+                    "en": f"📋 <b>Found {len(items)} items:</b>",
+                    "it": f"📋 <b>Trovate {len(items)} voci:</b>",
+                }
+                _question = {
+                    "ru": "Как записать?",
+                    "uk": "Як записати?",
+                    "en": "How to record?",
+                    "it": "Come registrare?",
                 }
                 _btn_separate = {
                     "ru": "📋 Каждую отдельно", "uk": "📋 Кожну окремо",
@@ -3014,9 +3019,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "ru": "📦 Одной транзакцией", "uk": "📦 Однією транзакцією",
                     "en": "📦 As one transaction", "it": "📦 Come una transazione",
                 }
+                _msg_parts = [
+                    _header.get(lang, _header["ru"]),
+                    "\n".join(_item_lines),
+                    "",
+                    _question.get(lang, _question["ru"]),
+                ]
                 await ctx.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=_split_q.get(lang, _split_q["ru"]),
+                    text="\n".join(_msg_parts),
+                    parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton(_btn_separate.get(lang, _btn_separate["ru"]),
                                               callback_data="cb_split_separate")],
