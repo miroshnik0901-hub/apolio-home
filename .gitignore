@@ -1,5 +1,7 @@
 .env
 *.env.*
+.test_write
+fix_git_and_push.command
 __pycache__/
 *.pyc
 *.pyo
