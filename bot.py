@@ -370,6 +370,37 @@ def _strip_markdown(text: str) -> str:
     return text
 
 
+def _sanitize_agent_response(response: str, fallback_lang: str = "ru") -> str:
+    """T-155: Strip leaked tool internals from agent response before sending to user.
+
+    Removes:
+    - [tool:xyz] log lines (Claude mimics these from conversation history)
+    - <invoke name="...">...</invoke> XML blocks (tool call dispatch failure)
+    - <parameter ...>...</parameter> orphaned tags
+
+    If the response is empty after stripping, returns a safe error message.
+    """
+    if not isinstance(response, str):
+        response = str(response) if response else ""
+    # Strip [tool:xyz] log lines
+    response = re.sub(
+        r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=re.MULTILINE
+    ).strip()
+    # Strip <invoke ...>...</invoke> XML blocks (multi-line)
+    response = re.sub(
+        r"<invoke\b[^>]*>.*?</invoke>", "", response,
+        flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+    # Strip orphaned <parameter ...>...</parameter> tags
+    response = re.sub(
+        r"<parameter\b[^>]*>.*?</parameter>", "", response,
+        flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+    # Collapse multiple blank lines left by stripping
+    response = re.sub(r"\n{3,}", "\n\n", response).strip()
+    return response or "⚠️ Что-то пошло не так. Попробуй ещё раз."
+
+
 async def _safe_reply(message, text: str, reply_markup=None, **kwargs):
     """Send agent text: try MARKDOWN, fall back to plain if parse error."""
     try:
@@ -3153,7 +3184,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 text=f"✅ {echo_label}",
             )
             await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-            response = await agent.run(chosen_value, session)
+            response = _sanitize_agent_response(
+                await agent.run(chosen_value, session), session.language or "ru"
+            )
             pending_ch2 = getattr(session, "pending_choice", None)
             if pending_ch2:
                 session.pending_choice = None
@@ -3510,13 +3543,15 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
                 else:
                     # Pass to agent — it understands "февраль", "march", etc.
-                    response = await agent.run(f"покажи отчёт за {text}", session)
+                    response = _sanitize_agent_response(
+                        await agent.run(f"покажи отчёт за {text}", session), lang
+                    )
                     await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
                 return
 
             elif pending == "transactions:search":
-                response = await agent.run(
-                    f"найди записи по запросу: {text}", session
+                response = _sanitize_agent_response(
+                    await agent.run(f"найди записи по запросу: {text}", session), lang
                 )
                 await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
                 return
@@ -3739,13 +3774,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 timeout=90.0,  # hard cap — prevents indefinite hangs
             )
 
-            # Strip leaked tool-log lines from response (defense in depth).
-            # Claude sometimes mimics "[tool:xyz] ..." lines from conversation
-            # history — these are internal and must never reach the user.
-            import re as _re
-            response = _re.sub(
-                r"^\[?tool:\w+\]?\s+[^\n]*\n?", "", response, flags=_re.MULTILINE
-            ).strip()
+            # T-155: Strip leaked tool internals (XML invoke, tool-log lines)
+            response = _sanitize_agent_response(response, session.language or "ru")
 
         # Log bot response after agent call
         try:
