@@ -1,9 +1,9 @@
-**Начало каждой сессии — читать в этом порядке:**
-1. `CLAUDE_SESSION.md` — живой журнал: что сделано, что в процессе, отложенные вопросы
-2. `CLAUDE_WORKING_GUIDE.md` — архитектура и схемы (перед любым изменением кода)
-3. `DEV_CHECKLIST.md` — релевантные секции перед каждым push
+**Start of every session — read in this order:**
+1. `CLAUDE_SESSION.md` — live journal: what was done, what's in progress, pending decisions
+2. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
+3. Run relevant tests before every push
 
-`CLAUDE_SESSION.md` обновлять в конце каждой сессии.
+`CLAUDE_SESSION.md` — update immediately after every significant action (deploy, data change, key decision, unfinished task).
 
 ## Languages
 
@@ -11,25 +11,25 @@ Mikhail writes in RU / UK / EN / IT freely, in any order, mixed in one message.
 All new user-facing strings go through `i18n.ts()` / `i18n.t()` — all 4 languages required.
 Never hardcode UI strings. Match Mikhail's language in replies.
 
-## Task Log — правило комментариев
+## Task Log — comment rule
 
-Каждый комментарий в поле "Apolio Comment" должен быть **самодостаточным**.
-Следующий Claude с нулевым контекстом чата должен прочитать комментарий и понять всё.
+Every comment written to "Apolio Comment" field must be **self-contained**.
+The next Claude session has zero chat context — the comment must be enough to understand everything.
 
-Обязательно включать:
-- **Что** за проблема — точный симптом
-- **Почему** — причина, если известна
-- **Какие файлы/функции** затронуты
-- **Что пробовал** и результат
-- **Следующий шаг** — конкретный
+Required:
+- **What** — exact symptom, not just "fix X"
+- **Why** — root cause if known
+- **Files/functions** involved
+- **What was tried** and result
+- **Next step** — concrete and actionable
 
-❌ `[2026-04-13] Починил валидацию топика`
-✅ `[2026-04-13] Пустой topic проходил валидацию т.к. "if topic and ..." falsy для "". Исправил: "if not topic or topic not in VALID_TOPICS" в add_task(). То же в update_task(). Задеплоено. Проверить: add_task с topic="" → должен ValueError.`
+❌ `[2026-04-13] Fixed topic validation`
+✅ `[2026-04-13] Empty topic passed validation because "if topic and ..." is falsy for "". Fixed: changed to "if not topic or topic not in VALID_TOPICS" in add_task(). Same fix in update_task(). Deployed to prod. Verify: add_task with topic="" should raise ValueError.`
 
 ## Git & Deploy
 
 - Git: push to `main` for production, `dev` for staging. Never `master`.
-- Railway deploys automatically: `main` → production, `dev` → staging.
+- Railway auto-deploys: `main` → production, `dev` → staging.
 - Never push to `main` without Confirm=GO from Mikhail. Staging (`dev`) needs no confirmation.
 
 ## Dev Workflow (mandatory sequence)
@@ -58,8 +58,8 @@ Check Railway production logs. Spot-check bot on @ApolioHomeBot.
 
 ## After Every Code Change
 
-- If architecture changed → update CLAUDE_WORKING_GUIDE.md (file map, tools, schemas).
-- New agent tool → add to TOOLS schema + dispatch dict + section 6 of CLAUDE_WORKING_GUIDE.md.
+- If architecture changed → update `CLAUDE_WORKING_GUIDE.md` (file map, tools, schemas).
+- New agent tool → add to TOOLS schema + dispatch dict + section 6 of `CLAUDE_WORKING_GUIDE.md`.
 
 ## Google Sheets IDs
 
@@ -90,7 +90,7 @@ Check Railway production logs. Spot-check bot on @ApolioHomeBot.
 
 ## Testing
 
-- **Claude is QA. Never ask Mikhail to test.** After every push to `dev`, Claude must verify the staging bot works — check deploy logs, query staging DB, test bot responses.
+- **Claude is QA. Never ask Mikhail to test.** After every push to `dev`, Claude must verify staging works — check deploy logs, query staging DB, test bot responses.
 - All dev/testing happens on staging (@ApolioHomeTestBot, `dev` branch).
 - Staging DB: maglev.proxy.rlwy.net:17325
 - Production DB: interchange.proxy.rlwy.net:19732

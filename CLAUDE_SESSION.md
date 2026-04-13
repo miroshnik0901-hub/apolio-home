@@ -1,84 +1,82 @@
-# CLAUDE_SESSION.md — Рабочий контекст
+# CLAUDE_SESSION.md — Live Work Context
 
-> **Читать первым в начале каждого чата.**
-> Обновлять сразу после каждого значимого действия — не "в конце сессии",
-> а после деплоя, после правки данных, после принятого решения, после незавершённой задачи.
-> Написано для "следующего Claude" с нулевым контекстом чата.
-
----
-
-## Последнее обновление
-
-**Дата:** 2026-04-13
-**Что произошло:** Очистка проекта, фиксы T-150, форматирование Sheets, реструктуризация документации
+> **Read this first at the start of every chat.**
+> Update immediately after every significant action — not "at end of session",
+> but after every deploy, data change, key decision, or unfinished task.
+> Written for the next Claude with zero chat context.
 
 ---
 
-## Текущее состояние
+## Last Updated
+
+**Date:** 2026-04-13
+**What happened:** Project cleanup, T-150 fixes, Sheets formatting fixes, documentation restructure
+
+---
+
+## Current State
 
 | | |
 |---|---|
-| Prod бот | @ApolioHomeBot — работает |
-| Staging бот | @ApolioHomeTestBot — работает |
-| Ветки | `main` = `dev` = `fe89a2b` |
-| Активных задач | 0 |
-| Prod Sheets | синхронизированы с тестом |
+| Prod bot | @ApolioHomeBot — running |
+| Staging bot | @ApolioHomeTestBot — running |
+| Branches | `main` = `dev` = `541062d` |
+| Active tasks | 0 |
+| Prod Sheets | Synced with test |
 
 ---
 
-## Незавершённое / In Progress
+## In Progress
 
-*Ничего. Всё завершено.*
+*Nothing. All work completed.*
 
-Если здесь что-то написано — это главный приоритет для следующего чата.
-Формат:
+If anything is written here — it is the top priority for the next chat.
+Format:
 ```
-**[T-NNN] Название задачи**
-Что сделано: ...
-Что осталось: конкретный следующий шаг
-Файлы: bot.py:строка, sheets.py:функция
-Почему остановился: ...
+**[T-NNN] Task name**
+Done: ...
+Remaining: concrete next step
+Files: bot.py:line, sheets.py:function
+Stopped because: ...
 ```
 
 ---
 
-## Ожидает Mikhail
+## Pending — Mikhail's decision
 
-1. **Budget Config (prod)** — `monthly_cap` и `split_rule` перезаписаны тестовыми значениями (3500, 50_50). Mikhail правит вручную. После правки запустить:
+1. **Budget Config (prod)** — `monthly_cap` and `split_rule` were overwritten with test values (3500, 50_50). Mikhail edits manually. After edit, refresh Dashboard:
    ```python
    sc.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history)
    ```
-   чтобы Dashboard пересчитался.
 
-2. **Apps Script** — обновить вручную: Task Log → Extensions → Apps Script → вставить `apps_script/task_log_automation.js` → Save → `setupTriggers()`. Формат Resolved At изменён на `yyyy-mm-dd hh:mm`.
-
----
-
-## Ключевые решения (нетривиальные)
-
-- **`value_input_option='USER_ENTERED'`** при записи в Sheets — иначе числа пишутся строками с `'` префиксом. Проявляется когда записываю Config через `ws.update()` напрямую, а не через `write_config()`.
-
-- **Сброс форматирования Dashboard** — `ws.clear()` не сбрасывает форматы ячеек. Нужен `repeatCell` с пустым `numberFormat` через `batch_update` перед записью. Без этого старые форматы (дата, %) портят результаты формул.
-
-- **Topic** — 6 значений: Interface, Features, Data, Infrastructure, AI, Docs. Bug Fix и Process удалены из config sheet и из fallback в коде.
-
-- **CLAUDE.md** — единственный источник правды для операционных правил. Project Instructions в Claude UI — только pointer к нему.
+2. **Apps Script** — manual update required: Task Log → Extensions → Apps Script → paste `apps_script/task_log_automation.js` → Save → run `setupTriggers()`. Change: Resolved At format is now `yyyy-mm-dd hh:mm`.
 
 ---
 
-## Нереализованное (есть спека, нет кода)
+## Key Technical Decisions
 
-- **`SELF_LEARNING_ALGORITHM.md`** — спека самообучения агента. Не реализована. Файл в папке проекта.
+- **`value_input_option='USER_ENTERED'`** when writing to Sheets — otherwise numbers are stored as strings with `'` prefix. Happens when writing Config via `ws.update()` directly instead of `write_config()`.
+
+- **Dashboard formatting reset** — `ws.clear()` does not clear cell formats. Need `repeatCell` with empty `numberFormat` via `batch_update` before writing. Without this, old formats (date, %) corrupt formula results.
+
+- **Topic values** — 6 only: Interface, Features, Data, Infrastructure, AI, Docs. Bug Fix and Process removed from config sheet and from fallback in code.
+
+- **CLAUDE.md** — single source of truth for operational rules. Project Instructions in Claude UI — pointer only.
 
 ---
 
-## Структура документации (как ориентироваться)
+## Not Yet Implemented (spec exists)
 
-| Файл | Назначение |
-|------|-----------|
-| `CLAUDE_SESSION.md` | Этот файл. Текущий контекст, незавершённое, решения |
-| `CLAUDE.md` | Операционные правила: deploy, git, тесты, языки |
-| `CLAUDE_WORKING_GUIDE.md` | Архитектура, схемы, инструменты агента, Task Log API |
-| `DEV_CHECKLIST.md` | QA чеклист по секциям. Запускать релевантные секции перед push |
-| `ApolioHome_Prompt.md` | Системный промпт бота |
-| `SELF_LEARNING_ALGORITHM.md` | Спека самообучения — нужно реализовать |
+- **`SELF_LEARNING_ALGORITHM.md`** — agent self-learning spec. Not implemented. File is in project folder.
+
+---
+
+## File Map (quick reference)
+
+| File | Purpose |
+|------|---------|
+| `CLAUDE_SESSION.md` | This file. Current context, in-progress work, decisions |
+| `CLAUDE.md` | Operational rules: deploy, git, tests, languages, comment rules |
+| `CLAUDE_WORKING_GUIDE.md` | Architecture, schemas, agent tools, Task Log API |
+| `ApolioHome_Prompt.md` | Bot system prompt |
+| `SELF_LEARNING_ALGORITHM.md` | Self-learning spec — needs implementation |
