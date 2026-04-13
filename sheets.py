@@ -914,12 +914,21 @@ class SheetsClient:
     """Unified facade over AdminSheets + EnvelopeSheets.
 
     Single object passed through bot -> agent -> tools.
+
+    T-152: TTL strategy to avoid 429 ReadRequestsPerMinutePerUser.
+    - Static admin data (envelopes, users, dashboard config): 300s
+    - Envelope config (monthly_cap, split_rule): 120s
+    - Transactions: 60s (invalidated on every add/edit/delete)
+    - Snapshots from intelligence.py: 30s (via separate snapshot_cache)
     """
 
     def __init__(self):
         self._gc = get_sheets_client()
         self._admin = AdminSheets(self._gc)
-        self._cache = SheetsCache(ttl_seconds=60)
+        self._cache = SheetsCache(ttl_seconds=60)          # default TTL
+        self._static_cache = SheetsCache(ttl_seconds=300)  # envelopes/users/dashcfg
+        self._cfg_cache = SheetsCache(ttl_seconds=120)     # env configs
+        self.snapshot_cache = SheetsCache(ttl_seconds=30)  # intelligence snapshots
 
     @property
     def admin(self):
@@ -928,11 +937,11 @@ class SheetsClient:
 
     # Admin pass-throughs (with TTL cache to avoid 429 rate-limit errors)
     def get_envelopes(self) -> list:
-        cached = self._cache.get("admin_envelopes")
+        cached = self._static_cache.get("admin_envelopes")
         if cached is not None:
             return cached
         result = self._admin.get_envelopes()
-        self._cache.set("admin_envelopes", result)
+        self._static_cache.set("admin_envelopes", result)
         return result
 
     def list_envelopes_with_links(self) -> list[dict]:
@@ -967,11 +976,11 @@ class SheetsClient:
         return result
 
     def get_users(self) -> list:
-        cached = self._cache.get("admin_users")
+        cached = self._static_cache.get("admin_users")
         if cached is not None:
             return cached
         result = self._admin.get_users()
-        self._cache.set("admin_users", result)
+        self._static_cache.set("admin_users", result)
         return result
 
     def read_config(self) -> dict:
@@ -997,12 +1006,12 @@ class SheetsClient:
         if not file_id:
             return {}
         cache_key = f"env_config_{file_id}"
-        cached = self._cache.get(cache_key)
+        cached = self._cfg_cache.get(cache_key)
         if cached is not None:
             return cached
         try:
             result = self._env_sheets(file_id).read_config()
-            self._cache.set(cache_key, result)
+            self._cfg_cache.set(cache_key, result)
             return result
         except Exception as e:
             import logging as _logging
@@ -1079,7 +1088,7 @@ class SheetsClient:
 
             # Invalidate envelope config cache if we wrote new keys
             if written:
-                self._cache.invalidate(f"env_config_{file_id}")
+                self._cfg_cache.invalidate(f"env_config_{file_id}")
             return {"written": written, "skipped": skipped, "error": None}
 
         except Exception as e:
@@ -1112,7 +1121,7 @@ class SheetsClient:
             "Created_At": datetime.utcnow().isoformat(),
         }
         self._admin.register_envelope(data)
-        self._cache.invalidate("admin_envelopes")
+        self._static_cache.invalidate("admin_envelopes")
 
     def write_audit(self, user_id: int, user_name: str, action: str,
                     envelope_id: str, details: str = ""):

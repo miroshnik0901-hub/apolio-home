@@ -48,10 +48,18 @@ class IntelligenceEngine:
         self.sheets = sheets
 
     def compute_snapshot(self, envelope_id: str) -> dict:
-        """
-        Compute a full intelligence snapshot for the given envelope.
+        """Compute a full intelligence snapshot for the given envelope.
+
+        T-152: Result is cached on sheets.snapshot_cache for 30s to avoid
+        recomputing on every agent turn (each call costs 3 Sheets reads).
+        Cache is NOT invalidated on transaction writes — the 30s stale window
+        is acceptable for context injection (not for balance display).
         Returns a dict ready to be formatted into the system prompt.
         """
+        cache_key = f"snapshot_{envelope_id}"
+        cached = self.sheets.snapshot_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
             envelopes = self.sheets.get_envelopes()
             env = next((e for e in envelopes if e.get("ID") == envelope_id), None)
@@ -171,7 +179,7 @@ class IntelligenceEngine:
                         "note": r.get("Note", ""),
                     })
 
-            return {
+            snap = {
                 "status": "ok",
                 "month": month,
                 "currency": currency,
@@ -192,6 +200,9 @@ class IntelligenceEngine:
                 "large_recent": large_recent[:3],
                 "transaction_count": len(cur_expenses),
             }
+            # T-152: cache snapshot for 30s to reduce Sheets reads per minute
+            self.sheets.snapshot_cache.set(cache_key, snap)
+            return snap
 
         except Exception as e:
             logger.error(f"Intelligence snapshot failed: {e}", exc_info=True)
