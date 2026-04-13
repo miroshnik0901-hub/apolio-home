@@ -1733,9 +1733,25 @@ class ApolioAgent:
         # (prevents LLM from fabricating success without calling the tool).
         has_confirm_delete = any(c.get("value") == "confirm_delete" for c in choices)
         tx_id = params.get("tx_id", "")
+
+        # T-189: if user pre-specified multiple IDs in their message, use those
+        # regardless of what the agent passed in tx_id — agent often only passes one.
+        _pre_ids = getattr(session, "_user_bulk_delete_ids", None)
+        if has_confirm_delete and _pre_ids and len(_pre_ids) > 1:
+            tx_id = ",".join(_pre_ids)
+            session._user_bulk_delete_ids = None  # consume
+            logger.info(f"T-189: overriding agent tx_id with pre-parsed {len(_pre_ids)} IDs: {tx_id[:40]}...")
+            session.pending_delete_tx = tx_id
+            return {"status": "ok", "message": f"{len(choices)} options queued. Bulk delete: {len(_pre_ids)} IDs pre-loaded."}
+
         if has_confirm_delete and tx_id:
             # BUG-011: Validate tx_id exists in Sheets before storing.
             # LLM often pulls stale/fabricated tx_ids from conversation history.
+            # Skip validation for bulk (comma/space-separated) IDs — too many reads.
+            _is_bulk_tx = "," in tx_id or (len(tx_id.split()) > 1)
+            if _is_bulk_tx:
+                session.pending_delete_tx = tx_id
+                return {"status": "ok", "message": f"{len(choices)} options queued as inline buttons"}
             try:
                 env_id = session.current_envelope_id or "MM_BUDGET"
                 env_list = sheets.get_envelopes()

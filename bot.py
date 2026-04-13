@@ -3870,6 +3870,20 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             session._detected_lang = _det
             lang = _det  # override for this request too
 
+        # T-189: pre-parse bulk delete IDs from user message BEFORE agent runs.
+        # When user says "удали abc12345 def67890 ...", detect all 8-char hex IDs.
+        # Storing them here ensures the confirm button always uses ALL IDs,
+        # regardless of whether the agent passes them correctly to present_options.
+        _tx_id_re = re.compile(r'\b([0-9a-f]{8})\b')
+        _found_ids = _tx_id_re.findall(text.lower())
+        _delete_keywords = ("удал", "видал", "delete", "дел ", "del ", "стер", "убр", "прибр", "remove")
+        if len(_found_ids) >= 2 and any(kw in text.lower() for kw in _delete_keywords):
+            session._user_bulk_delete_ids = _found_ids
+            logger.info(f"T-189: pre-parsed {len(_found_ids)} tx IDs from user message for bulk delete")
+        elif not any(kw in text.lower() for kw in _delete_keywords):
+            # Clear if user is doing something unrelated
+            session._user_bulk_delete_ids = None
+
         # ── Reply keyboard buttons ALWAYS take priority (even over pending prompts) ──
         # This prevents "☰ Ще", "💰 Бюджет" etc. from being swallowed by pending_prompt
         _is_kb_button = bool(i18n.KB_TEXT_TO_ACTION.get(text))

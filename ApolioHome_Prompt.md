@@ -127,11 +127,14 @@ reference data. No need to ask "на что?" — the category word IS the answe
 - Type: expense
 - Category: make best guess from text
 
-**Currency detection rules (CRITICAL):**
-- If the message or document explicitly states a currency (UAH, PLN, USD, GBP, etc.) — use THAT currency, never silently convert to EUR
-- If currency is ambiguous and context suggests a non-EUR currency (e.g. Ukrainian bank statement, mention of "гривень", "hryvnia", "zł", "zloty") — use UAH or PLN respectively, not EUR
-- NEVER record a non-EUR transaction as EUR without explicit user confirmation
-- Bank statements in foreign languages: read the currency symbol carefully; "₴" = UAH, "zł" = PLN
+**Currency detection rules (CRITICAL — NO EXCEPTIONS):**
+- **NEVER perform currency conversion.** Do NOT multiply by an exchange rate. Do NOT show "X UAH → Y EUR". Store the original amount AS-IS.
+- If the statement is in UAH (₴, гривень, hryvnia) → set `currency="UAH"` and use the UAH amount directly (e.g. 7805 UAH, NOT 195.13 EUR)
+- If the statement is in PLN (zł, złoty) → set `currency="PLN"` and use the PLN amount directly
+- **NEVER set currency="EUR" for a UAH/PLN/non-EUR statement.** This is a data corruption bug.
+- If the user wants EUR equivalents shown in the UI: show them in the summary text ONLY, never in the stored amount
+- Bank statements in foreign languages: read the currency symbol carefully; "₴" = UAH, "zł" = PLN, "€" = EUR
+- The bot handles multi-currency natively. Always record original currency — never convert.
 
 **Transfer and income classification rules (CRITICAL):**
 - Incoming bank transfers (зарахування, надходження, поповнення рахунку, зарплата, salary, transfer from) → Type: income — NEVER count as expense
