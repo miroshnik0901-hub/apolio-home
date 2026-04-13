@@ -583,14 +583,16 @@ class EnvelopeSheets:
     # ── Dashboard writer ─────────────────────────────────────────────────
 
     def update_dashboard(self, snap: dict, contrib_snap: dict = None,
-                          contrib_history: list = None) -> None:
+                          contrib_history: list = None,
+                          cumulative: dict = None) -> None:
         """
         Dashboard v2 — structured key-value format.
         Both humans (Google Sheets) and bot (get_dashboard_snapshot) can read it.
 
         Layout:
           Section A (rows 1-12):  SNAPSHOT — key-value pairs
-          Section B (rows 14+):   USER_BALANCE — table with headers
+          Section B1 (rows 14+):  CUMULATIVE_BALANCE — static, all-time per-user balance
+          Section B2 (rows after): USER_BALANCE — current month obligation/credit
           Section C (rows after): CATEGORIES — table with headers
           Section D (rows after): HISTORY — monthly table
         """
@@ -674,7 +676,29 @@ class EnvelopeSheets:
             rows.append(["updated_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "", "", ""])
             rows.append(["", "", "", "", ""])
 
-            # ── Section B: USER_BALANCE — xlsx formula model ─────────────
+            # ── Section B1: CUMULATIVE_BALANCE — static values from compute_cumulative_balance ──
+            # Written as static values (Python-computed) because cross-all-time
+            # aggregation can't be expressed as per-month Sheets formulas.
+            # Refreshed every time /dashboard is called.
+            rows.append(["[CUMULATIVE_BALANCE]", "", "", "", ""])
+            if cumulative and cumulative.get("status") == "ok":
+                first_month = cumulative.get("first_month", "?")
+                months_counted = cumulative.get("months_counted", 0)
+                cum_cur = cumulative.get("currency", "EUR")
+                rows.append(["since", "'" + first_month, "", "", ""])
+                rows.append(["months_counted", months_counted, "", "", ""])
+                rows.append(["User", "Total_Obligation", "Total_Contribution", "Net_Balance", "Status"])
+                for u in cumulative.get("split_users", []):
+                    oblig = round(cumulative.get("cumulative_obligations", {}).get(u, 0), 2)
+                    contrib = round(cumulative.get("cumulative_contributions", {}).get(u, 0), 2)
+                    balance = round(cumulative.get("cumulative_balances", {}).get(u, 0), 2)
+                    status = "surplus" if balance >= 0 else "deficit"
+                    rows.append([u, oblig, contrib, balance, status])
+            else:
+                rows.append(["(cumulative data not available)", "", "", "", ""])
+            rows.append(["", "", "", "", ""])
+
+            # ── Section B2: USER_BALANCE — xlsx formula model ─────────────
             # obligation = (min - top_up) + max(0, split_base) * split% - personal_exp
             # credit = -obligation (positive = overpaid, negative = owes)
             rows.append(["[USER_BALANCE]", "", "", "", ""])      # row 14
@@ -1245,9 +1269,10 @@ class SheetsClient:
 
     def update_dashboard_sheet(self, sheet_id: str, snap: dict,
                                 contrib_snap: dict = None,
-                                contrib_history: list = None) -> None:
+                                contrib_history: list = None,
+                                cumulative: dict = None) -> None:
         """Write computed budget + contribution data to the Dashboard tab."""
-        self._env_sheets(sheet_id).update_dashboard(snap, contrib_snap, contrib_history)
+        self._env_sheets(sheet_id).update_dashboard(snap, contrib_snap, contrib_history, cumulative)
 
     def read_dashboard_snapshot(self, sheet_id: str) -> dict:
         """Read the [SNAPSHOT] section from Dashboard tab as a key-value dict.

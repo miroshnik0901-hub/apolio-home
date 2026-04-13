@@ -1340,7 +1340,7 @@ class ApolioAgent:
         month = params.get("month") or datetime.utcnow().strftime("%Y-%m")
 
         from intelligence import (IntelligenceEngine, compute_contribution_status,
-                                   compute_contribution_history)
+                                   compute_contribution_history, compute_cumulative_balance)
 
         # Budget snapshot
         try:
@@ -1377,8 +1377,15 @@ class ApolioAgent:
             except Exception as e:
                 logger.warning(f"refresh_dashboard: contrib_history failed: {e}")
 
+        # T-170: cumulative balance from first transaction (all-time per-user)
+        cumulative = None
         try:
-            sheets.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history)
+            cumulative = compute_cumulative_balance(sheets, envelope_id)
+        except Exception as e:
+            logger.warning(f"refresh_dashboard: cumulative failed: {e}")
+
+        try:
+            sheets.update_dashboard_sheet(file_id, snap, contrib_snap, contrib_history, cumulative)
         except Exception as e:
             return {"error": f"Не удалось обновить Dashboard: {e}"}
 
