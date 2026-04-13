@@ -1,7 +1,12 @@
 **Start of every session — read in this order:**
 1. `SESSION_LOG.md` — full history: actions, decisions, pending, state
-2. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
-3. Run relevant tests before every push
+2. `DEV_PROD_STATE.md` — what's on dev vs main, what's waiting GO, test/prod resource table
+3. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
+4. Run relevant tests before every push
+
+**After every `git push`** — update `DEV_PROD_STATE.md`:
+- `git push dev` → add row to DEV table with commit hash + task + description
+- `git push main` → move DEV rows to MAIN section, update "last commit on main"
 
 **After every reply** — append one line to `SESSION_LOG.md`. No exceptions.
 

@@ -1,5 +1,5 @@
 # Apolio Home — Claude Working Guide
-# Version: 1.7 | Updated: 2026-04-13
+# Version: 1.8 | Updated: 2026-04-14
 
 This document is the technical reference for Claude when working on this project.
 Read it BEFORE writing or modifying any code.
@@ -49,25 +49,37 @@ This section only lists env vars for reference:
 
 ```
 bot.py              — entry point; handlers, keyboards, routing, callbacks
-agent.py            — agentic loop, 20 tools, system prompt, context build
+                      cb_split_separate: batch add with T-192 cross-currency dup pre-check
+                      cb_dup_*: enrichment buttons (Update/Add new/Cancel); T-192 queue for batch dups
+                      cb_del_bulk: batch delete using T-194 batch_hard_delete_transactions (1 read)
+agent.py            — agentic loop, 27 tools, system prompt, context build
+                      store_pending_receipt schema: includes type field (T-185) + per-item who (T-186)
 db.py               — PostgreSQL: conversation_log, sessions, agent_learning; learning context
 sheets.py           — SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets + get_reference_data
-                      _sheets_retry(): exponential backoff (5/10/20s) for gspread 429/503 — wraps
-                      get_transactions() and hard_delete_by_tx_id() calls (T-172)
+                      _sheets_retry(): exponential backoff (5/10/20s) for gspread 429/503
+                      EnvelopeSheets.batch_hard_delete_by_tx_ids(): 1 read + N deletes (T-194)
+                      SheetsClient.batch_hard_delete_transactions(sheet_id, tx_ids) → {deleted, not_found}
 auth.py             — SessionContext, get_session, AuthManager
                       SessionContext uses self.lang (not self.language) — always use session.lang
+                      Session state fields: pending_receipt, _bulk_delete_ids, _user_bulk_delete_ids,
+                        _pending_cross_dups (T-192 queue), _dup_receipt, _dup_existing_tx_id, _dup_add_params
 i18n.py             — KB_LABELS, MENU_LABELS, SYS, ADD_PROMPT, START_MSG
 menu_config.py      — DEFAULT_MENU, _DEFAULT_ROWS, BotMenu sheet loader
 intelligence.py     — IntelligenceEngine: budget snapshot, trends, anomalies
                       compute_contribution_history(): iterates ACTUAL transaction months only
                       (not months_back from today); data-driven, skips empty months (T-175)
 ApolioHome_Prompt.md — agent system prompt (read at startup)
+                       Currency rules (T-188): NEVER convert, store original amount AS-IS
+                       T-161: atomic batch — ONE pass, ONE summary, NEVER ask Продолжить?
 DEV_CHECKLIST.md    — checklist BEFORE and AFTER every change
+DEV_PROD_STATE.md   — live dev vs main state: what's deployed, what's pending GO, test/prod IDs
 CLAUDE_WORKING_GUIDE.md — this file
 
 tools/
   transactions.py   — add / edit / delete / find; _fuzzy_suggest; _validate_transaction_params
-                      tool_add_transaction() calls sort_transactions_by_date() after every add (T-176)
+                      tool_add_transaction(): calls sort_transactions_by_date() after every add (T-176)
+                      Dup detection (T-030/T-182/T-192): same-currency + cross-currency via Amount_EUR ±5%
+                      Cross-currency: pre-computes _pre_eur via FX lookup, compares existing Amount_EUR
   summary.py        — get_summary, get_budget_status
   wise.py           — Wise CSV import (DO NOT TOUCH without explicit instruction)
   envelope_tools.py — create_envelope, list_envelopes
