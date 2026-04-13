@@ -18,3 +18,4 @@
 2026-04-13 | ACTION | CLAUDE.md updated: "after every reply" rule moved into session start block; pushed dev 3497e2e
 2026-04-13 | ACTION | Project Instructions (Claude UI) updated — DEV_CHECKLIST removed, SESSION_LOG read trigger + after-every-reply rule added
 2026-04-13 14:48 | CHAT | исправлен формат записей: время обязательно; получать через date '+%Y-%m-%d %H:%M'
+2026-04-13 14:49 | ACTION | правило date+append добавлено в CLAUDE.md; нужно также добавить в Project Instructions вручную
