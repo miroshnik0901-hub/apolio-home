@@ -3532,6 +3532,18 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 _item_cat_l = str(item_cat).lower()
                 if any(kw in _item_cat_l for kw in _INCOME_CATS):
                     item_type = "income"
+            # T-195: Hardcode income category — never trust agent for this.
+            # LLM defaults to "Other"; we classify by note keywords in code.
+            if item_type == "income":
+                _ic_note = item_name.lower()
+                if any(kw in _ic_note for kw in ("top-up", "top up", "topup", "family account", "поповн", "пополн", "family top")):
+                    item_cat = "Top-up"
+                elif any(kw in _ic_note for kw in ("salary", "зарплат", "зарп")):
+                    item_cat = "Salary"
+                elif any(kw in _ic_note for kw in ("transfer", "перевод", "переказ")):
+                    item_cat = "Top-up"
+                elif item_cat in ("Other", "other", "OTHER", ""):
+                    item_cat = "Top-up"  # safe default for unclassified income
             if item_amount <= 0:
                 failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
@@ -3724,10 +3736,22 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             _cat_l = str(receipt.get("category") or "").lower()
             if any(kw in _cat_l for kw in _INCOME_CATS_S):
                 _single_type = "income"
+        # T-195: Hardcode income category for single-mode too
+        _single_cat = receipt.get("category", "Other")
+        if _single_type == "income":
+            _sn_note = str(receipt.get("merchant") or "").lower()
+            if any(kw in _sn_note for kw in ("top-up", "top up", "topup", "family account", "поповн", "пополн")):
+                _single_cat = "Top-up"
+            elif any(kw in _sn_note for kw in ("salary", "зарплат")):
+                _single_cat = "Salary"
+            elif any(kw in _sn_note for kw in ("transfer", "перевод", "переказ")):
+                _single_cat = "Top-up"
+            elif _single_cat in ("Other", "other", "OTHER", ""):
+                _single_cat = "Top-up"
         add_params = {
             "amount": receipt.get("total_amount", 0),
             "currency": receipt.get("currency", "EUR"),
-            "category": receipt.get("category", "Other"),
+            "category": _single_cat,
             "who": receipt.get("who") or session.user_name,
             "date": receipt.get("date", ""),
             "note": receipt.get("merchant") or "Multiple merchants",
@@ -4516,6 +4540,35 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ]
             session.pending_choice = pending_ch
             session._receipt_buttons_shown = True  # prevent BUG-010 on next photo
+
+        # T-195: If agent set account-selection buttons (yes_joint/yes_personal),
+        # override agent's response text with localized question — agent often
+        # picks wrong language or is too verbose. This is fully code-controlled.
+        _pc_acct = getattr(session, "pending_choice", None)
+        if _pc_acct and any(c.get("value") in ("yes_joint", "yes_personal") for c in _pc_acct):
+            _pr_acct = getattr(session, "pending_receipt", None)
+            if _pr_acct:
+                _n_items = len(_pr_acct.get("items") or [])
+                _cur_acct = _pr_acct.get("currency", "EUR")
+                _total_acct = sum(
+                    safe_float(it.get("amount") or it.get("total_amount") or 0)
+                    for it in (_pr_acct.get("items") or [])
+                ) or safe_float(_pr_acct.get("total_amount") or 0)
+                if _n_items > 1:
+                    _acct_q = {
+                        "ru": f"На какой счёт записать эти {_n_items} операции ({_total_acct:,.0f} {_cur_acct})?",
+                        "uk": f"На який рахунок записати ці {_n_items} операції ({_total_acct:,.0f} {_cur_acct})?",
+                        "en": f"Which account for these {_n_items} transactions ({_total_acct:,.0f} {_cur_acct})?",
+                        "it": f"Su quale conto per queste {_n_items} operazioni ({_total_acct:,.0f} {_cur_acct})?",
+                    }
+                else:
+                    _acct_q = {
+                        "ru": f"На какой счёт записать ({_total_acct:,.0f} {_cur_acct})?",
+                        "uk": f"На який рахунок записати ({_total_acct:,.0f} {_cur_acct})?",
+                        "en": f"Which account ({_total_acct:,.0f} {_cur_acct})?",
+                        "it": f"Su quale conto ({_total_acct:,.0f} {_cur_acct})?",
+                    }
+                response = _acct_q.get(lang, _acct_q["uk"])
 
         # ── Post-response inline buttons ──────────────────────────────────
         pending_ch = getattr(session, "pending_choice", None)
