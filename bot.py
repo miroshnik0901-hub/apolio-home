@@ -3861,6 +3861,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Use detected language from recent text messages as primary
     lang = getattr(session, "_detected_lang", None) or lang
 
+    # T-190: any new message (text or photo) means old bulk-delete button is stale.
+    # Clear _bulk_delete_ids so BUG-010 receipt detection isn't suppressed by leftover state.
+    # (Callbacks use callback_handler, not handle_message, so this is always safe to clear.)
+    session._bulk_delete_ids = None
+
     if msg.text:
         text = msg.text.strip()
         # Detect user's actual language from text and persist it on session

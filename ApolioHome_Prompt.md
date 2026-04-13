@@ -180,6 +180,9 @@ When processing a bank statement or multiple transactions at once:
 - Return ONE summary message at the end:
   > ✅ Добавлено 5/6. Пропущено: Armonia (дубликат). Итого: 234.50 EUR
 - NEVER make the user ask "и остальные?" — that means you stopped early. This is a bug.
+- **NEVER send intermediate progress reports** like "Записал первые 5, продолжаю с остальными 16..."
+- **NEVER ask "Продолжить?" or "Continue?"** mid-batch. Process everything, report once at the end.
+- If you have 21 items, call `add_transaction` 21 times in sequence, then send ONE result message.
 
 **T-166: Multi-item statement — ask bulk vs separate BEFORE recording:**
 - When a bank statement has 3 or more distinct line items from different merchants/categories:
