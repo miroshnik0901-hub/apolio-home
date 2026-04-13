@@ -25,9 +25,10 @@ Never rewrite past entries. Just append.
 
 ### Rotation (triggered when SESSION_LOG.md > 16384 bytes)
 
+**Order is critical — write new file FIRST, then archive old. Never the reverse.**
+
 1. Get timestamp: `TS=$(date '+%Y-%m-%d_%H-%M')`
-2. Move log to archive: `mv SESSION_LOG.md logs/SESSION_LOG_ARCHIVE_${TS}.md`
-3. Create new `SESSION_LOG.md` with mechanical summary — no interpretation, verbatim copy:
+2. Create `SESSION_LOG_NEW.md` with mechanical summary — no interpretation, verbatim copy:
 
 ```
 # Session Log — append only, never edit past entries
@@ -36,18 +37,21 @@ Never rewrite past entries. Just append.
 # Time: always run `date '+%Y-%m-%d %H:%M'` before writing an entry
 # ROTATED from: logs/SESSION_LOG_ARCHIVE_${TS}.md
 
-YYYY-MM-DD HH:MM | STATE    | [last STATE entry from archive — verbatim]
-YYYY-MM-DD HH:MM | DECISION | [each DECISION from archive — one line each, verbatim]
-YYYY-MM-DD HH:MM | PENDING  | [all unclosed PENDING from archive — verbatim]
-YYYY-MM-DD HH:MM | NEXT     | [last NEXT entry from archive — verbatim]
+YYYY-MM-DD HH:MM | STATE    | [last STATE entry from current log — verbatim]
+YYYY-MM-DD HH:MM | DECISION | [each DECISION from current log — one line each, verbatim]
+YYYY-MM-DD HH:MM | PENDING  | [all unclosed PENDING from current log — verbatim]
+YYYY-MM-DD HH:MM | NEXT     | [last NEXT entry from current log — verbatim]
 ```
 
+3. Move old log to archive: `mv SESSION_LOG.md logs/SESSION_LOG_ARCHIVE_${TS}.md`
+4. Rename new: `mv SESSION_LOG_NEW.md SESSION_LOG.md`
+5. Append the current entry that triggered the rotation to the new `SESSION_LOG.md`
+
 Rules for summary:
-- Extract by type only — `grep "| STATE\|DECISION\|PENDING\|NEXT"` from archive
+- Extract by type only — `grep "| STATE\|DECISION\|PENDING\|NEXT"` from current log
 - For STATE and NEXT: take only the last occurrence
 - For DECISION and PENDING: take all occurrences
 - No paraphrasing, no omissions, no interpretation
-- Then append the current entry that triggered the rotation
 
 ## Languages
 

@@ -36,4 +36,7 @@
 2026-04-13 16:31 | ACTION | plugin.json version fixed 1.4.4→1.4.5, plugin repackaged and re-presented to user
 2026-04-13 16:41 | ACTION | chmod +x fix_git_and_push.command — was not executable, now fixed
 2026-04-13 16:43 | ACTION | git push confirmed dev b4e2586 — CLAUDE.md (16KB threshold) + .gitignore (.test_write, fix_git_and_push.command ignored)
-2026-04-13 16:XX | ACTION | found bug: rotation header said 8192 not 16384; fixed CLAUDE.md; push pending (lock again)
+2026-04-13 16:45 | ACTION | found bug: rotation header said 8192 not 16384; fixed CLAUDE.md; push pending (lock again)
+2026-04-13 16:45 | STATE | все изменения проверены: CLAUDE.md (16384 везде), git dev 4f81bd9, plugin v1.4.5 (Step 0.5 ✅), SESSION_LOG 5.3KB
+2026-04-13 16:48 | STATE | plugin v1.4.5 ✅ установлен (Step 0.5 active); Project Instructions ❌ не обновлены — ротация не в system prompt
+2026-04-13 16:49 | STATE | всё готово: CLAUDE.md ✅ git dev 4f81bd9 ✅ plugin v1.4.5 ✅ Project Instructions ✅ SESSION_LOG rotation mechanism fully deployed
