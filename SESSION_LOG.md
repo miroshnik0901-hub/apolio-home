@@ -26,3 +26,5 @@
 2026-04-13 23:32 | ACTION  | T-179 done: РОЗРАХУНКИ header, per-user min pool per block, no Зобов'язання, consistent Переплата/Борг/Баланс. i18n.py+intelligence.py+bot.py. Commit 125eb5e
 2026-04-13 23:32 | ACTION  | T-178+T-179 Task Log → DISCUSSION, Deploy=READY
 2026-04-13 23:32 | STATE   | dev at 125eb5e. T-172–T-179 all DISCUSSION+READY. Waiting GO from Mikhail for main push.
+2026-04-13 23:41 | DECISION| T-178: no heuristic — always show items list for len>=2 + two buttons. User sees context, decides themselves.
+2026-04-13 23:41 | ACTION  | T-178 reworked: items preview (merchant/amount/date) + split/single choice. Commit ac4cdf4, pushed dev.

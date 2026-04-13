@@ -80,29 +80,37 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
     unknown = {}
     suggestions = {}
 
-    # Validate category — auto-correct if fuzzy match finds exactly one hit
-    category = params.get("category", "")
-    known_cats = ref.get("categories", [])
-    if category and known_cats:
-        if not any(k.lower() == category.lower() for k in known_cats):
-            similar = _fuzzy_suggest(category, known_cats)
-            if len(similar) == 1:
-                params["category"] = similar[0]  # auto-correct
-            else:
-                unknown["category"] = category
-                suggestions["category"] = similar
+    # Income transactions: category/subcategory are not from the expense taxonomy.
+    # Strip subcategory silently (AI often sets "Top-up" which doesn't exist in expense list).
+    # Skip category/subcategory validation entirely for income — validate only who/account.
+    tx_type_for_val = params.get("type", "expense")
+    if tx_type_for_val == "income":
+        params["subcategory"] = ""  # strip — income has no subcategory
+        # Leave category as-is (e.g. "Income") but don't validate it against expense list
+    else:
+        # Validate category — auto-correct if fuzzy match finds exactly one hit
+        category = params.get("category", "")
+        known_cats = ref.get("categories", [])
+        if category and known_cats:
+            if not any(k.lower() == category.lower() for k in known_cats):
+                similar = _fuzzy_suggest(category, known_cats)
+                if len(similar) == 1:
+                    params["category"] = similar[0]  # auto-correct
+                else:
+                    unknown["category"] = category
+                    suggestions["category"] = similar
 
-    # Validate subcategory (only if parent category is known) — auto-correct
-    subcategory = params.get("subcategory", "")
-    known_subs = ref.get("subcategories", [])
-    if subcategory and known_subs and "category" not in unknown:
-        if not any(k.lower() == subcategory.lower() for k in known_subs):
-            similar = _fuzzy_suggest(subcategory, known_subs)
-            if len(similar) == 1:
-                params["subcategory"] = similar[0]  # auto-correct
-            else:
-                unknown["subcategory"] = subcategory
-                suggestions["subcategory"] = similar
+        # Validate subcategory (only if parent category is known) — auto-correct
+        subcategory = params.get("subcategory", "")
+        known_subs = ref.get("subcategories", [])
+        if subcategory and known_subs and "category" not in unknown:
+            if not any(k.lower() == subcategory.lower() for k in known_subs):
+                similar = _fuzzy_suggest(subcategory, known_subs)
+                if len(similar) == 1:
+                    params["subcategory"] = similar[0]  # auto-correct
+                else:
+                    unknown["subcategory"] = subcategory
+                    suggestions["subcategory"] = similar
 
     # Validate who — with auto-normalization for full names (T-034)
     who = params.get("who", "")
