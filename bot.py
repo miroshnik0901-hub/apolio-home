@@ -4659,72 +4659,76 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return
 
             elif pending == "contrib:custom_period":
-                # Parse YYYY-MM or YYYY-MM:YYYY-MM from user input
-                import datetime as _cpdt
-                _cp_text = text.strip()
-                _cp_match = re.match(r'(\d{4}-\d{2})(?:[:\s]+(\d{4}-\d{2}))?', _cp_text)
-                if _cp_match:
-                    _cp_from = _cp_match.group(1)
-                    _cp_to = _cp_match.group(2) or _cp_from
-                    from intelligence import compute_contribution_history, compute_contribution_status
-                    env_id = session.current_envelope_id or "MM_BUDGET"
-                    if _cp_from == _cp_to:
-                        # Single month — use the specified month, not current
-                        # (old code called _build_contribution_html which ignores _cp_from)
-                        html = await _build_contribution_html(session, lang, month=_cp_from)
-                    else:
-                        try:
-                            _all_s = compute_contribution_history(sheets, env_id)
-                            _filt_s = [s for s in _all_s if _cp_from <= s.get("month", "") <= _cp_to]
-                            if not _filt_s:
-                                _nd = {"ru": "Нет данных за этот период.",
-                                       "uk": "Немає даних за цей період.",
-                                       "en": "No data for this period.",
-                                       "it": "Nessun dato per questo periodo."}
-                                html = _nd.get(lang, _nd["uk"])
-                            else:
-                                _pl = f"{_month_abbr(_cp_from, lang)} – {_month_abbr(_cp_to, lang)}"
-                                _lns = [f"<b>📊 {_pl}</b>", ""]
-                                _users = _filt_s[0].get("split_users", [])
-                                _cum_e = 0.0
-                                _cum_b = {u: 0.0 for u in _users}
-                                for _ss in _filt_s:
-                                    _mo = _ss.get("month", "")
-                                    _te = safe_float(_ss.get("total_expenses") or 0)
-                                    _tup_s = _ss.get("top_up_joint", {})
-                                    _ia = not any(safe_float(_tup_s.get(_u, 0)) > 0 for _u in _users) and _te == 0
-                                    _ia_tag = {
-                                        "ru": " (нет активности)", "uk": " (без активності)",
-                                        "en": " (no activity)", "it": " (nessuna attività)"
-                                    }.get(lang, "") if _ia else ""
-                                    _cum_e += _te
-                                    _lns.append(f"📅 <b>{_month_abbr(_mo, lang)}</b>{_ia_tag}  {_te:,.0f} EUR")
-                                    _balances_s = _ss.get("balances", {})
+                # T-219: wrap entire handler in try/except — missing caused silent failures
+                html = ""
+                try:
+                    _cp_text = text.strip()
+                    _cp_match = re.match(r'(\d{4}-\d{2})(?:[:\s]+(\d{4}-\d{2}))?', _cp_text)
+                    if _cp_match:
+                        _cp_from = _cp_match.group(1)
+                        _cp_to = _cp_match.group(2) or _cp_from
+                        from intelligence import compute_contribution_history, compute_contribution_status
+                        env_id = session.current_envelope_id or "MM_BUDGET"
+                        if _cp_from == _cp_to:
+                            html = await _build_contribution_html(session, lang, month=_cp_from)
+                        else:
+                            try:
+                                _all_s = compute_contribution_history(sheets, env_id)
+                                _filt_s = [s for s in _all_s if _cp_from <= s.get("month", "") <= _cp_to]
+                                if not _filt_s:
+                                    _nd = {"ru": "Нет данных за этот период.",
+                                           "uk": "Немає даних за цей період.",
+                                           "en": "No data for this period.",
+                                           "it": "Nessun dato per questo periodo."}
+                                    html = _nd.get(lang, _nd["uk"])
+                                else:
+                                    _pl = f"{_month_abbr(_cp_from, lang)} – {_month_abbr(_cp_to, lang)}"
+                                    _lns = [f"<b>📊 {_pl}</b>", ""]
+                                    _users = _filt_s[0].get("split_users", [])
+                                    _cum_e = 0.0
+                                    _cum_b = {u: 0.0 for u in _users}
+                                    for _ss in _filt_s:
+                                        _mo = _ss.get("month", "")
+                                        _te = safe_float(_ss.get("total_expenses") or 0)
+                                        _tup_s = _ss.get("top_up_joint", {})
+                                        _ia = not any(safe_float(_tup_s.get(_u, 0)) > 0 for _u in _users) and _te == 0
+                                        _ia_tag = {
+                                            "ru": " (нет активности)", "uk": " (без активності)",
+                                            "en": " (no activity)", "it": " (nessuna attività)"
+                                        }.get(lang, "") if _ia else ""
+                                        _cum_e += _te
+                                        _lns.append(f"📅 <b>{_month_abbr(_mo, lang)}</b>{_ia_tag}  {_te:,.0f} EUR")
+                                        _balances_s = _ss.get("balances", {})
+                                        for _u in _users:
+                                            _ub = safe_float(_balances_s.get(_u) or 0)
+                                            _cum_b[_u] = _cum_b.get(_u, 0.0) + _ub
+                                            _ic = "✅" if _ub >= 0 else "⚠️"
+                                            _bs = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                                            _lns.append(f"  {_ic} {_u}: {_bs} EUR")
+                                        _lns.append("")
+                                    _lns.append(f"<b>Σ {_pl}: {_cum_e:,.0f} EUR</b>")
                                     for _u in _users:
-                                        _ub = safe_float(_balances_s.get(_u) or 0)
-                                        _cum_b[_u] = _cum_b.get(_u, 0.0) + _ub
-                                        _ic = "✅" if _ub >= 0 else "⚠️"
-                                        _bs = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                                        _cb = _cum_b.get(_u, 0.0)
+                                        _ic = "✅" if _cb >= 0 else "⚠️"
+                                        _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
                                         _lns.append(f"  {_ic} {_u}: {_bs} EUR")
-                                    _lns.append("")
-                                _lns.append(f"<b>Σ {_pl}: {_cum_e:,.0f} EUR</b>")
-                                for _u in _users:
-                                    _cb = _cum_b.get(_u, 0.0)
-                                    _ic = "✅" if _cb >= 0 else "⚠️"
-                                    _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
-                                    _lns.append(f"  {_ic} {_u}: {_bs} EUR")
-                                html = "\n".join(_lns)
-                        except Exception as _cpe:
-                            html = f"❌ {_cpe}"
-                else:
-                    _fmt_err = {
-                        "ru": "❌ Неверный формат. Введите ГГГГ-ММ или ГГГГ-ММ:ГГГГ-ММ",
-                        "uk": "❌ Невірний формат. Введіть РРРР-ММ або РРРР-ММ:РРРР-ММ",
-                        "en": "❌ Invalid format. Use YYYY-MM or YYYY-MM:YYYY-MM",
-                        "it": "❌ Formato non valido. Usare AAAA-MM o AAAA-MM:AAAA-MM",
-                    }
-                    html = _fmt_err.get(lang, _fmt_err["uk"])
-                # T-216: add period selector buttons so user can navigate back
+                                    html = "\n".join(_lns)
+                            except Exception as _cpe:
+                                html = f"❌ {_cpe}"
+                    else:
+                        _fmt_err = {
+                            "ru": "❌ Неверный формат. Введите ГГГГ-ММ или ГГГГ-ММ:ГГГГ-ММ",
+                            "uk": "❌ Невірний формат. Введіть РРРР-ММ або РРРР-ММ:РРРР-ММ",
+                            "en": "❌ Invalid format. Use YYYY-MM or YYYY-MM:YYYY-MM",
+                            "it": "❌ Formato non valido. Usare AAAA-MM o AAAA-MM:AAAA-MM",
+                        }
+                        html = _fmt_err.get(lang, _fmt_err["uk"])
+                except Exception as _cp_err:
+                    logger.error(f"contrib:custom_period failed: {_cp_err}", exc_info=True)
+                    html = f"⚠️ {str(_cp_err)[:200]}"
+                if not html:
+                    html = "⚠️ Немає даних за цей період."
+                # Period selector buttons so user can navigate back
                 _cp_periods = {
                     "ru": [("1 мес", "1M"), ("3 мес", "3M"), ("6 мес", "6M"),
                            ("12 мес", "12M"), ("Тек. год", "CY"), ("✏️ Другой", "CUSTOM")],
@@ -4743,9 +4747,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                      for lbl, cd in _cpl[3:]],
                     lang=lang,
                 )
-                await _safe_reply(update.message, html,
-                                  parse_mode=ParseMode.HTML,
-                                  reply_markup=_cp_kb)
+                try:
+                    await _safe_reply(update.message, html,
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=_cp_kb)
+                except Exception:
+                    # Fallback: send without HTML parsing (special chars in error msg)
+                    import re as _re_strip
+                    plain = _re_strip.sub(r'<[^>]+>', '', html)
+                    await _safe_reply(update.message, plain or "⚠️ Error",
+                                      reply_markup=_cp_kb)
                 return
 
             elif pending == "transactions:search":

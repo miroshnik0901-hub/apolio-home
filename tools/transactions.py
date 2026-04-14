@@ -11,6 +11,67 @@ from auth import AuthManager, SessionContext, LastAction
 
 logger = logging.getLogger(__name__)
 
+# T-218: Category/subcategory alias map — covers common agent-generated variants.
+# Keys are lowercase aliases; values are canonical names (matching Sheets list).
+# Updated via AdminSheets CategoryAliases tab (get_category_aliases).
+_CATEGORY_ALIASES: dict[str, str] = {
+    # ── Subcategory aliases ──────────────────────────────────────────────
+    # Restaurants / Food & Drink
+    "dining": "Restaurants", "restaurant": "Restaurants",
+    "ristorante": "Restaurants", "ресторан": "Restaurants",
+    "кафе": "Cafes", "cafe": "Cafes", "coffee": "Cafes",
+    "bakery": "Cafes", "bar": "Alcohol", "бар": "Alcohol",
+    "pub": "Alcohol", "паб": "Alcohol",
+    "pizza": "Restaurants", "sushi": "Restaurants",
+    "fast food": "Restaurants", "fastfood": "Restaurants",
+    # Food
+    "grocery": "Groceries", "groceries": "Groceries",
+    "supermarket": "Groceries", "супермаркет": "Groceries",
+    "продукти": "Groceries", "продукты": "Groceries",
+    "market": "Groceries", "mercato": "Groceries",
+    # Transport
+    "gas": "Fuel", "petrol": "Fuel", "gasoline": "Fuel",
+    "бензин": "Fuel", "паливо": "Fuel", "заправка": "Fuel",
+    "fuel station": "Fuel", "gas station": "Fuel",
+    "паркінг": "Parking", "парковка": "Parking", "parking lot": "Parking",
+    "метро": "Public Transport", "metro": "Public Transport",
+    "bus": "Public Transport", "автобус": "Public Transport",
+    "tram": "Public Transport", "трамвай": "Public Transport",
+    "cab": "Taxi", "uber": "Taxi", "bolt": "Taxi",
+    # Health
+    "dentist": "Dental", "дантист": "Dental", "стоматолог": "Dental",
+    "врач": "Doctor", "лікар": "Doctor", "clinic": "Doctor",
+    "аптека": "Pharmacy", "drugs": "Pharmacy", "medicine": "Pharmacy",
+    # Personal
+    "hair": "Haircut", "haircare": "Haircut", "перукарня": "Haircut",
+    "salon": "Haircut", "beauty salon": "Haircut",
+    "clothes": "Clothes", "clothing": "Clothes", "одяг": "Clothes",
+    "одежда": "Clothes", "fashion": "Clothes",
+    # Entertainment
+    "movie": "Cinema", "кіно": "Cinema", "кино": "Cinema",
+    "film": "Cinema", "theatre": "Cinema",
+    "gym": "Gym", "фітнес": "Gym", "fitness": "Gym",
+    "sport": "Gym", "sport club": "Gym",
+    # ── Category aliases ─────────────────────────────────────────────────
+    "food": "Food", "еда": "Food", "їжа": "Food", "питание": "Food",
+    "transport": "Transport", "транспорт": "Transport",
+    "transportation": "Transport", "перевезення": "Transport",
+    "health": "Health", "здоров'я": "Health", "здоровье": "Health",
+    "entertainment": "Entertainment", "розваги": "Entertainment",
+    "розваги": "Entertainment",
+    "personal": "Personal", "особисте": "Personal", "личное": "Personal",
+    "education": "Education", "освіта": "Education", "образование": "Education",
+    "household": "Household", "дім": "Household", "дом": "Household",
+    "housing": "Housing", "житло": "Housing", "жилье": "Housing",
+    "savings": "Savings", "заощадження": "Savings", "сбережения": "Savings",
+    "children": "Children", "діти": "Children", "дети": "Children",
+    "travel": "Travel", "подорож": "Travel", "путешествие": "Travel",
+    "subscriptions": "Subscriptions",
+    "income": "Income", "доход": "Income", "дохід": "Income",
+    "top up": "Top-up", "topup": "Top-up", "top-up": "Top-up",
+    "поповнення": "Top-up", "пополнение": "Top-up",
+}
+
 
 def _gen_id() -> str:
     return uuid.uuid4().hex[:8]
@@ -110,29 +171,60 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
         params["subcategory"] = ""  # strip — income has no subcategory
         # Leave category as-is (e.g. "Income") but don't validate it against expense list
     else:
-        # Validate category — auto-correct if fuzzy match finds exactly one hit
+        # T-218: Category alias resolution — check alias map before fuzzy matching.
+        # Also load dynamic aliases from AdminSheets if available.
+        def _resolve_cat_alias(value: str, known: list[str], sheets_inst=None) -> str | None:
+            """Try alias map → fuzzy → None."""
+            if not value:
+                return None
+            v_lower = value.lower().strip()
+            # 1. Exact match (case-insensitive)
+            for k in known:
+                if k.lower() == v_lower:
+                    return k
+            # 2. Hardcoded alias table
+            alias = _CATEGORY_ALIASES.get(v_lower)
+            if alias and any(k.lower() == alias.lower() for k in known):
+                return alias
+            # 3. Dynamic aliases from AdminSheets (if available)
+            if sheets_inst:
+                try:
+                    dyn = sheets_inst.get_category_aliases()
+                    canonical = dyn.get(v_lower)
+                    if canonical and any(k.lower() == canonical.lower() for k in known):
+                        return canonical
+                except Exception:
+                    pass
+            # 4. Fuzzy single match
+            similar = _fuzzy_suggest(value, known)
+            if len(similar) == 1:
+                return similar[0]
+            return None  # unknown
+
+        # Validate category with alias resolution
         category = params.get("category", "")
         known_cats = ref.get("categories", [])
+        _sheets_ref = ref.get("_sheets_instance")  # injected if available
         if category and known_cats:
-            if not any(k.lower() == category.lower() for k in known_cats):
+            resolved = _resolve_cat_alias(category, known_cats, _sheets_ref)
+            if resolved:
+                params["category"] = resolved  # auto-correct (silent)
+            else:
                 similar = _fuzzy_suggest(category, known_cats)
-                if len(similar) == 1:
-                    params["category"] = similar[0]  # auto-correct
-                else:
-                    unknown["category"] = category
-                    suggestions["category"] = similar
+                unknown["category"] = category
+                suggestions["category"] = similar
 
-        # Validate subcategory (only if parent category is known) — auto-correct
+        # Validate subcategory with alias resolution (T-218)
         subcategory = params.get("subcategory", "")
         known_subs = ref.get("subcategories", [])
         if subcategory and known_subs and "category" not in unknown:
-            if not any(k.lower() == subcategory.lower() for k in known_subs):
+            resolved_sub = _resolve_cat_alias(subcategory, known_subs, _sheets_ref)
+            if resolved_sub:
+                params["subcategory"] = resolved_sub  # auto-correct (silent)
+            else:
                 similar = _fuzzy_suggest(subcategory, known_subs)
-                if len(similar) == 1:
-                    params["subcategory"] = similar[0]  # auto-correct
-                else:
-                    unknown["subcategory"] = subcategory
-                    suggestions["subcategory"] = similar
+                unknown["subcategory"] = subcategory
+                suggestions["subcategory"] = similar
 
     # Validate who — with alias normalization (T-215: Marina→Maryna, Миша→Mikhail)
     who = params.get("who", "")

@@ -1133,6 +1133,60 @@ class SheetsClient:
         aliases = self.get_user_aliases()
         return aliases.get(raw_name.strip().lower())
 
+    # T-218: Category/subcategory aliases ─────────────────────────────────────
+    def get_category_aliases(self) -> dict[str, str]:
+        """Return alias_lower→canonical dict from AdminSheets CategoryAliases tab.
+        Creates the tab if absent. Cached in _static_cache (10 min)."""
+        cache_key = "category_aliases"
+        cached = self._static_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            wb = self._admin._workbook()
+            try:
+                ws = wb.worksheet("CategoryAliases")
+            except Exception:
+                ws = wb.add_worksheet("CategoryAliases", rows=100, cols=3)
+                ws.update("A1:C1", [["canonical_name", "aliases", "type"]])
+                # Seed with most common variants
+                seed = [
+                    ["Restaurants", "Dining,Restaurant,Ristorante,Ресторан,Кафе,Bar,Pub", "subcategory"],
+                    ["Groceries", "Grocery,Supermarket,Супермаркет,Продукти,Mercato", "subcategory"],
+                    ["Fuel", "Gas,Petrol,Бензин,Паливо,Заправка,Fuel Station,Gas Station", "subcategory"],
+                    ["Parking", "Паркінг,Парковка,Parking Lot", "subcategory"],
+                    ["Cafes", "Кафе,Coffee,Bakery,Cafe,Snack Bar", "subcategory"],
+                    ["Alcohol", "Bar,Pub,Бар,Паб,Wine,Beer", "subcategory"],
+                    ["Taxi", "Cab,Uber,Bolt,Таксі,Такси", "subcategory"],
+                    ["Public Transport", "Metro,Bus,Tram,Метро,Автобус,Трамвай", "subcategory"],
+                    ["Dental", "Dentist,Дантист,Стоматолог,Dental Clinic", "subcategory"],
+                    ["Clothes", "Clothing,Одяг,Одежда,Fashion,Apparel", "subcategory"],
+                    ["Food", "Еда,Їжа,Питание", "category"],
+                    ["Transport", "Transportation,Транспорт,Перевезення", "category"],
+                    ["Health", "Здоров'я,Здоровье,Medical", "category"],
+                    ["Entertainment", "Розваги,Развлечения,Fun", "category"],
+                    ["Personal", "Особисте,Личное,Personal Care", "category"],
+                    ["Top-up", "Top up,TopUp,Поповнення,Пополнение,Deposit", "category"],
+                ]
+                ws.append_rows(seed)
+            records = _sheets_retry(ws.get_all_records)
+            alias_map: dict[str, str] = {}
+            for row in records:
+                canonical = str(row.get("canonical_name") or "").strip()
+                aliases_raw = str(row.get("aliases") or "").strip()
+                if not canonical:
+                    continue
+                for alias in aliases_raw.split(","):
+                    a = alias.strip().lower()
+                    if a:
+                        alias_map[a] = canonical
+                alias_map[canonical.lower()] = canonical
+            self._static_cache.set(cache_key, alias_map)
+            return alias_map
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f"get_category_aliases failed: {e}")
+            return {}
+
     def read_config(self) -> dict:
         """Read global settings from Admin Config tab."""
         cached = self._cache.get("admin_config")
