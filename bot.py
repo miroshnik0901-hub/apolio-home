@@ -35,6 +35,25 @@ import i18n
 _user_agent_locks: dict[int, asyncio.Lock] = {}
 _status_cache: dict = {}  # T-203: stale fallback when 429 hits status view
 
+
+# T-220: Non-blocking DB error logger — call from any except block
+async def _db_log_error(error_type: str, context: str, exc: Exception = None,
+                         user_id: int = 0, session_id: str = "", raw_input: str = ""):
+    """Log error to PostgreSQL error_log table. Fire-and-forget — never raises."""
+    try:
+        import traceback as _tb
+        tb_str = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__)) if exc else ""
+        await appdb.log_error(
+            error_type=error_type[:100],
+            context=context[:500],
+            traceback_str=tb_str[:2000],
+            raw_input=raw_input[:300],
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception:
+        pass  # never let error logging crash the bot
+
 from telegram import (
     Update, BotCommand,
     InlineKeyboardButton, InlineKeyboardMarkup,
@@ -1184,6 +1203,12 @@ async def post_init(app: Application):
         _db_ready = await appdb.init_db()
         if _db_ready:
             logger.info("PostgreSQL initialized — conversation history enabled")
+            # T-220: ensure error_log table exists on startup
+            try:
+                await appdb.ensure_error_log_table()
+                logger.info("T-220: error_log table ready")
+            except Exception as _el_err:
+                logger.warning(f"T-220: ensure_error_log_table failed: {_el_err}")
         else:
             logger.warning("PostgreSQL not available — conversation history disabled")
     except Exception as e:
@@ -1552,6 +1577,46 @@ async def cmd_dbstatus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lines.append("DB not initialized — check Railway logs for [DB] PostgreSQL init failed")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def cmd_errors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/errors [N] — show last N errors from error_log table (admin only). T-220."""
+    tg_user, session = _require_user(update)
+    if not tg_user:
+        return
+    if not auth.is_admin(session.user_id):
+        await update.message.reply_text("❌ Admin only")
+        return
+
+    limit = 10
+    args = ctx.args
+    if args:
+        try:
+            limit = int(args[0])
+        except ValueError:
+            pass
+
+    lines = [f"🔴 <b>Last {limit} errors (error_log)</b>"]
+    try:
+        errors = await appdb.get_recent_errors(limit=limit)
+        if not errors:
+            lines.append("✅ No errors recorded yet")
+        else:
+            for i, err in enumerate(errors, 1):
+                ts = str(err.get("ts", ""))[:16]
+                uid = err.get("user_id", 0)
+                etype = err.get("error_type", "?")
+                ctx_str = str(err.get("context", ""))[:100]
+                lines.append(f"\n<b>{i}. [{ts}] uid={uid}</b>\n"
+                              f"  Type: <code>{etype}</code>\n"
+                              f"  {ctx_str}")
+    except Exception as e:
+        lines.append(f"❌ Failed to read error_log: {e}")
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n..."
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 async def cmd_admin_support(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -5038,6 +5103,15 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # subclasses in Python 3.9+). Without this, cancellations silently kill
         # the handler and the user sees no response at all.
         logger.error(f"agent.run() failed: {type(agent_exc).__name__}: {agent_exc}", exc_info=True)
+        # T-220: log to error_log table for persistent debugging
+        await _db_log_error(
+            error_type=f"agent.run:{type(agent_exc).__name__}",
+            context=str(agent_exc)[:500],
+            exc=agent_exc,
+            user_id=getattr(session, "user_id", 0),
+            session_id=getattr(session, "session_id", "") or "",
+            raw_input=text[:200] if text else "",
+        )
         try:
             response = f"⚠️ {i18n.ts('error_something_wrong', lang)}"
         except Exception:
@@ -5323,6 +5397,7 @@ def main():
     app.add_handler(CommandHandler("admin_support", cmd_admin_support))
     app.add_handler(CommandHandler("version",      cmd_version))
     app.add_handler(CommandHandler("dbstatus",     cmd_dbstatus))
+    app.add_handler(CommandHandler("errors",       cmd_errors))  # T-220
     app.add_handler(CommandHandler("idea",         cmd_idea))
     app.add_handler(CommandHandler("goal",         cmd_goal))
     app.add_handler(CallbackQueryHandler(callback_handler))
