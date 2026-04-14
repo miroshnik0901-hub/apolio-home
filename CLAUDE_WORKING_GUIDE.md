@@ -47,52 +47,95 @@ This section only lists env vars for reference:
 
 ## 4. FILE STRUCTURE
 
-```
-bot.py              — entry point; handlers, keyboards, routing, callbacks
-                      cb_split_separate: batch add with T-192 cross-currency dup pre-check
-                      cb_dup_*: enrichment buttons (Update/Add new/Cancel); T-192 queue for batch dups
-                      cb_del_bulk: batch delete using T-194 batch_hard_delete_transactions (1 read)
-agent.py            — agentic loop, 27 tools, system prompt, context build
-                      store_pending_receipt schema: includes type field (T-185) + per-item who (T-186)
-db.py               — PostgreSQL: conversation_log, sessions, agent_learning; learning context
-sheets.py           — SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets + get_reference_data
-                      _sheets_retry(): exponential backoff (5/10/20s) for gspread 429/503
-                      EnvelopeSheets.batch_hard_delete_by_tx_ids(): 1 read + N deletes (T-194)
-                      SheetsClient.batch_hard_delete_transactions(sheet_id, tx_ids) → {deleted, not_found}
-auth.py             — SessionContext, get_session, AuthManager
-                      SessionContext uses self.lang (not self.language) — always use session.lang
-                      Session state fields: pending_receipt, _bulk_delete_ids, _user_bulk_delete_ids,
-                        _pending_cross_dups (T-192 queue), _dup_receipt, _dup_existing_tx_id, _dup_add_params
-i18n.py             — KB_LABELS, MENU_LABELS, SYS, ADD_PROMPT, START_MSG
-menu_config.py      — DEFAULT_MENU, _DEFAULT_ROWS, BotMenu sheet loader
-intelligence.py     — IntelligenceEngine: budget snapshot, trends, anomalies
-                      compute_contribution_history(): iterates ACTUAL transaction months only
-                      (not months_back from today); data-driven, skips empty months (T-175)
-ApolioHome_Prompt.md — agent system prompt (read at startup)
-                       Currency rules (T-188): NEVER convert, store original amount AS-IS
-                       T-161: atomic batch — ONE pass, ONE summary, NEVER ask Продолжить?
-DEV_CHECKLIST.md    — checklist BEFORE and AFTER every change
-DEV_PROD_STATE.md   — live dev vs main state: what's deployed, what's pending GO, test/prod IDs
-CLAUDE_WORKING_GUIDE.md — this file
+### Root — core runtime
 
-tools/
-  transactions.py   — add / edit / delete / find; _fuzzy_suggest; _validate_transaction_params
-                      tool_add_transaction(): calls sort_transactions_by_date() after every add (T-176)
-                      Dup detection (T-030/T-182/T-192): same-currency + cross-currency via Amount_EUR ±5%
-                      Cross-currency: pre-computes _pre_eur via FX lookup, compares existing Amount_EUR
-  summary.py        — get_summary, get_budget_status
-  wise.py           — Wise CSV import (DO NOT TOUCH without explicit instruction)
-  envelope_tools.py — create_envelope, list_envelopes
-  conversation_log.py — ConversationLogger (async, Queue, Google Sheets fallback)
-  receipt_store.py  — DEPRECATED, not used. Receipts stored in PostgreSQL parsed_data only.
-  fx.py             — exchange rates (DO NOT TOUCH)
-  config_tools.py   — bot config (DO NOT TOUCH)
+```
+bot.py           5522  Entry point: PTB handlers, keyboards, callback routing
+                       cb_split_separate — batch add with T-192 cross-currency dup pre-check
+                       cb_dup_* — enrich/skip/cancel dup buttons; T-192 queue for batch dups
+                       cb_del_bulk — batch delete (T-194: 1 read + N deletes)
+                       cb_force_reprocess — T-233: retry photo when T-162 dedup blocked it
+agent.py         1988  Agentic loop, 27 tools, Claude API, _build_context()
+                       store_pending_receipt: items[], type (T-185), per-item who (T-186)
+sheets.py        1569  SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets
+                       _sheets_retry(): backoff 2/4/8s for 429/503
+                       Cache TTLs: txns=120s, static=600s, cfg=600s
+intelligence.py   666  compute_contribution_status, compute_contribution_history (reads
+                       ACTUAL months from txns — not months_back), compute_cumulative_balance
+db.py            1316  PostgreSQL: conversation_log, error_log, parsed_data, agent_learning
+auth.py           179  SessionContext, get_session(), AuthManager
+                       Always use session.lang (not .language)
+i18n.py          1140  All UI strings: i18n.ts(), i18n.tu(), MENU_LABELS, MONTH_SHORT
+                       4 languages required: RU/UK/EN/IT
+menu_config.py    304  DEFAULT_MENU, BotMenu sheet loader, reset_to_defaults()
+reports.py        152  Formats agent tool output into Telegram-ready text
+user_context.py   172  User goals / behavioral patterns → UserContext sheet tab
+task_log.py       288  TaskLog API — ONLY correct way to r/w Task Log sheet
+                       Full docs in module docstring. Claude updates this file when API changes.
+```
+
+### Root — ops & setup
+
+```
+test_regression.py  808  39 regression tests (L1-L2 static + L3 live). Run before every push.
+requirements.txt         Python dependencies
+Procfile                 Railway: worker: python bot.py
+setup_sheets_v2.py  556  Sheet tab creation/init. ⚠️ DO NOT TOUCH without instruction
+setup_admin.py      144  Admin sheet setup.     ⚠️ DO NOT TOUCH without instruction
+```
+
+### tools/ — agent tool implementations
+
+```
+transactions.py   960  tool_add_transaction, tool_enrich_transaction, tool_delete_transaction
+                       tool_find_transactions. Dup detection: same-currency + cross-currency (T-192)
+summary.py        163  tool_get_summary, tool_get_budget_status
+envelope_tools.py 214  create_envelope, list_envelopes
+envelopes.py      146  Envelope data access helpers
+goals.py          179  User goals management
+ideas.py          121  Ideas/wishlist feature
+support.py        209  Support requests
+conversation_log.py 208 ConversationLogger (async, Queue, Sheets fallback)
+admin.py          154  Admin commands
+receipt_store.py  205  DEPRECATED — receipts now in PostgreSQL parsed_data only
+config_tools.py    68  Bot config.         ⚠️ DO NOT TOUCH without instruction
+fx.py              81  Exchange rates.     ⚠️ DO NOT TOUCH without instruction
+wise.py           157  Wise CSV import.    ⚠️ DO NOT TOUCH without instruction
+```
+
+### scripts/ — ops scripts
+
+```
+sync_prod_after_deploy.py  Post-PROD verifier (9 checks). Run after every git push main.
+encode_service_account.py  Encodes SA JSON → base64 for env var
+get_oauth_token.py         OAuth token helper
+get_telegram_id.py         Get Telegram user ID
+setup.py                   Initial environment setup
+```
+
+### tests/
+
+```
+run_all.py   L1–L3 runner (25/25). Run after push to dev: python3 tests/run_all.py
+```
+
+### Docs & config
+
+```
+CLAUDE.md              Single source of truth: IDs, deploy rules, session start order
+CLAUDE_WORKING_GUIDE.md  This file: architecture, file map, schemas
+DEV_PROD_STATE.md      Current dev vs main: what's deployed, what's pending GO
+ApolioHome_Prompt.md   Agent system prompt (loaded at startup). Living doc — Claude updates it.
+SESSION_LOG.md         Append-only session log. Rotate at 16384 bytes → logs/
+logs/                  SESSION_LOG_ARCHIVE_*.md, bot.log
+source_files/          task_log_automation.js (Apps Script), _archive/
+apolio_home_logo/      SVG/PNG brand assets
 ```
 
 **Files NOT to touch without explicit instruction:**
 `tools/wise.py`, `tools/fx.py`, `tools/config_tools.py`,
-`setup_admin.py`, `setup_sheets_v2.py`, `test_bot.py`,
-`encode_service_account.py`, `get_telegram_id.py`
+`setup_admin.py`, `setup_sheets_v2.py`,
+`scripts/encode_service_account.py`, `scripts/get_telegram_id.py`
 
 ---
 
