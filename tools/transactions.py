@@ -43,25 +43,47 @@ def _fuzzy_suggest(value: str, known: list[str], max_results: int = 3) -> list[s
     return contains[:max_results] if contains else known[:max_results]
 
 
-def _normalize_who(who: str, known_who: list[str]) -> str | None:
-    """Auto-correct 'who' if a known user first name appears in the submitted value.
+def _normalize_who(who: str, known_who: list[str], aliases: dict = None) -> str | None:
+    """T-215: Resolve name/alias to canonical user name.
 
-    Handles cases like "Marina Maslo" → "Marina" when "Marina" is a known user.
-    Returns the normalized known name, or None if no clear match.
-    This prevents phantom users from being created when full names are submitted.
+    Resolution order:
+    1. Exact match against known_who (case-insensitive)
+    2. Alias table lookup: Marina→Maryna, Михаил→Mikhail, Миша→Mikhail, etc.
+    3. Word-in-phrase match: "Maryna Maslo" → "Maryna"
+
+    Args:
+        who: raw name string to resolve
+        known_who: list of canonical user names
+        aliases: dict from sheets.get_user_aliases() — alias_lower→canonical
     """
-    if not who or not known_who:
+    if not who:
         return None
     who_l = who.lower().strip()
-    # Already an exact match — no normalization needed
-    for k in known_who:
+    if not who_l:
+        return None
+
+    # 1. Exact match (case-insensitive)
+    for k in (known_who or []):
         if k.lower() == who_l:
             return k
-    # Check if any individual word in the submitted value exactly matches a known user
+
+    # 2. Alias table lookup (T-215)
+    if aliases:
+        canonical = aliases.get(who_l)
+        if canonical:
+            return canonical
+        # Try individual words in the input against alias table
+        for word in who_l.split():
+            canonical = aliases.get(word)
+            if canonical:
+                return canonical
+
+    # 3. Word-in-phrase: "Maryna Maslo" → "Maryna" if "Maryna" in known_who
     who_words = who_l.split()
-    for k in known_who:
+    for k in (known_who or []):
         if k.lower() in who_words:
             return k
+
     return None
 
 
@@ -112,17 +134,27 @@ def _validate_transaction_params(params: dict, ref: dict) -> dict:
                     unknown["subcategory"] = subcategory
                     suggestions["subcategory"] = similar
 
-    # Validate who — with auto-normalization for full names (T-034)
+    # Validate who — with alias normalization (T-215: Marina→Maryna, Миша→Mikhail)
     who = params.get("who", "")
     known_who = ref.get("who", [])
+    # T-215: load alias table for robust name resolution
+    _aliases = {}
+    try:
+        _aliases = sheets.get_user_aliases()
+    except Exception:
+        pass
     if who and known_who:
-        normalized = _normalize_who(who, known_who)
+        normalized = _normalize_who(who, known_who, aliases=_aliases)
         if normalized and normalized.lower() != who.lower():
-            # Auto-correct silently: "Marina Maslo" → "Marina"
             params["who"] = normalized
         elif not any(k.lower() == who.lower() for k in known_who):
-            unknown["who"] = who
-            suggestions["who"] = _fuzzy_suggest(who, known_who)
+            # Try alias lookup before flagging as unknown
+            _alias_match = _aliases.get(who.lower().strip())
+            if _alias_match:
+                params["who"] = _alias_match
+            else:
+                unknown["who"] = who
+                suggestions["who"] = _fuzzy_suggest(who, known_who)
 
     if unknown:
         return {"unknown": unknown, "suggestions": suggestions, "known": ref}
@@ -190,7 +222,33 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     currency = params.get("currency", "EUR")
     category = params.get("category", "")
     subcategory = params.get("subcategory", "")
-    who = params.get("who", session.user_name)
+
+    # T-215: resolve `who` from Telegram user_id (most reliable) or alias table.
+    # Priority: (1) params who → normalize via alias; (2) session user_id → Users tab lookup
+    raw_who = params.get("who", "")
+    if raw_who:
+        # Normalize whatever the agent/user passed (handles Marina→Maryna, Миша→Mikhail)
+        try:
+            _al = sheets.get_user_aliases()
+            _kw = sheets._admin.get_user_names()
+            _resolved = _normalize_who(raw_who, _kw, aliases=_al)
+            who = _resolved if _resolved else raw_who
+        except Exception:
+            who = raw_who
+    else:
+        # No who set — identify from Telegram user_id via Users tab
+        who = session.user_name  # fallback
+        try:
+            _users = sheets.get_users()
+            _uid = str(session.user_id)
+            for _u in _users:
+                if str(_u.get("telegram_id", "")) == _uid:
+                    _name = _u.get("name") or _u.get("Name", "")
+                    if _name:
+                        who = _name.strip()
+                    break
+        except Exception:
+            pass
 
     # ── Duplicate detection (T-030 / T-182 / T-192) ──────────────────────
     # Checks: same date + amount within tolerance + note overlap.

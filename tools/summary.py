@@ -54,12 +54,19 @@ async def tool_get_summary(params: dict, session: SessionContext,
     by_who = defaultdict(float)
     total = 0.0
 
+    # T-215: load alias table for who normalization
+    _aliases = {}
+    try:
+        _aliases = sheets.get_user_aliases()
+    except Exception:
+        pass
+
     for r in month_records:
         from sheets import safe_float as _sf
         amt = _sf(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
         cat = r.get("Category", "Other")
         who_raw = r.get("Who", "Unknown")
-        who = _normalize_who(who_raw, known_who) or who_raw
+        who = _normalize_who(who_raw, known_who, aliases=_aliases) or who_raw
         by_category[cat] += amt
         by_who[who] += amt
         total += amt

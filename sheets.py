@@ -265,6 +265,71 @@ class AdminSheets:
                 ws.delete_rows(i + 2)
                 return
 
+    # T-215: User alias table ─────────────────────────────────────────────────
+
+    def get_user_aliases(self) -> dict[str, str]:
+        """Return alias→canonical_name mapping from UserAliases tab.
+        Creates the tab if absent. Result cached in _static_cache (10 min).
+        Example return: {'marina': 'Maryna', 'михаил': 'Mikhail', 'миша': 'Mikhail'}
+        """
+        # AdminSheets uses a simple instance dict for alias cache (no SheetsCache)
+        if not hasattr(self, "_alias_cache"):
+            self._alias_cache = None
+        if self._alias_cache is not None:
+            return self._alias_cache
+        try:
+            wb = self._workbook()
+            try:
+                ws = wb.worksheet("UserAliases")
+            except Exception:
+                # Create the tab if missing
+                ws = wb.add_worksheet("UserAliases", rows=50, cols=3)
+                ws.update("A1:C1", [["canonical_name", "aliases", "note"]])
+                # Seed with known variants
+                ws.append_row(["Maryna", "Marina,Марина,Масло,Maryna Maslo,Marina Maslo", ""])
+                ws.append_row(["Mikhail", "Михайло,Михаил,Миша,Michael,Misha,Mikhail Miro", ""])
+            records = _sheets_retry(ws.get_all_records)
+            alias_map: dict[str, str] = {}
+            for row in records:
+                canonical = str(row.get("canonical_name") or "").strip()
+                aliases_raw = str(row.get("aliases") or "").strip()
+                if not canonical:
+                    continue
+                for alias in aliases_raw.split(","):
+                    a = alias.strip().lower()
+                    if a:
+                        alias_map[a] = canonical
+                # Also map exact canonical to itself (case-insensitive lookup)
+                alias_map[canonical.lower()] = canonical
+            self._alias_cache = alias_map
+            return alias_map
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f"get_user_aliases failed: {e}")
+            return {}
+
+    def add_user_alias(self, canonical_name: str, new_alias: str) -> bool:
+        """Add a new alias for an existing canonical user name.
+        Updates the UserAliases tab and invalidates cache."""
+        self._alias_cache = None  # invalidate instance cache
+        try:
+            wb = self._workbook()
+            ws = wb.worksheet("UserAliases")
+            records = _sheets_retry(ws.get_all_records)
+            for i, row in enumerate(records):
+                if row.get("canonical_name", "").strip().lower() == canonical_name.lower():
+                    existing = str(row.get("aliases", "")).strip()
+                    updated = f"{existing},{new_alias}" if existing else new_alias
+                    ws.update_cell(i + 2, 2, updated)
+                    return True
+            # Not found — add new row
+            ws.append_row([canonical_name, new_alias, ""])
+            return True
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f"add_user_alias failed: {e}")
+            return False
+
     # ── Audit log ─────────────────────────────────────────────────────────
 
     def log_action(self, user_id: int, user_name: str, action: str, details: str = ""):
@@ -1052,6 +1117,21 @@ class SheetsClient:
         result = self._admin.get_users()
         self._static_cache.set("admin_users", result)
         return result
+
+    # T-215: User alias passthrough ────────────────────────────────────────
+    def get_user_aliases(self) -> dict[str, str]:
+        """alias_lower → canonical_name, cached 10 min."""
+        return self._admin.get_user_aliases()
+
+    def add_user_alias(self, canonical_name: str, new_alias: str) -> bool:
+        return self._admin.add_user_alias(canonical_name, new_alias)
+
+    def get_canonical_name(self, raw_name: str) -> str | None:
+        """Resolve any alias/variant to canonical user name. Returns None if unknown."""
+        if not raw_name:
+            return None
+        aliases = self.get_user_aliases()
+        return aliases.get(raw_name.strip().lower())
 
     def read_config(self) -> dict:
         """Read global settings from Admin Config tab."""

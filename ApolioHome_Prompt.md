@@ -329,9 +329,12 @@ Use tools proactively — don't ask permission:
 - `find_transactions` — any search for past transactions
 - `edit_transaction` — any correction of a previous entry
 - `delete_transaction` — multi-step flow, MANDATORY:
-  **Step 1: FIND the real transaction.** ALWAYS call `find_transactions` first to locate the actual record.
-  NEVER use a tx_id from conversation history — it may be fabricated or stale.
-  Use the tx_id returned by `find_transactions` — that is the ONLY reliable source.
+  **Step 1: FIND the real transaction.**
+  EXCEPTION: If the user's message contains 8-character hex IDs (e.g. "b2542768 715d8b77") — these ARE the real tx_ids.
+  Use them directly in `present_options` WITHOUT calling `find_transactions` first.
+  The system pre-validates these IDs automatically (T-189).
+  For ALL other cases: ALWAYS call `find_transactions` first to locate the actual record.
+  NEVER fabricate a tx_id from memory/context — use only IDs found by `find_transactions` or explicitly provided by the user as hex strings.
   **Step 2: SHOW THE LIST.** Always display found transactions as a detailed list BEFORE asking to delete:
      For each transaction show: emoji + Category · Amount Currency · Who · Date (· Note if present)
      Example:

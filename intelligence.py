@@ -297,9 +297,15 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         top_up_joint: dict[str, float] = defaultdict(float)
         personal_exp: dict[str, float] = defaultdict(float)
         joint_exp: dict[str, float] = defaultdict(float)
+        # T-215: alias lookup for who normalization
+        _aliases_intel = {}
+        try:
+            _aliases_intel = sheets.get_user_aliases()
+        except Exception:
+            pass
         for t in month_txns:
             who_raw = t.get("Who", "Unknown")
-            who = _normalize_who(who_raw, known_who) or who_raw
+            who = _normalize_who(who_raw, known_who, aliases=_aliases_intel) or who_raw
             amt = _parse_amount(t)
             if amt <= 0:
                 continue
