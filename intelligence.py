@@ -550,9 +550,16 @@ def compute_cumulative_balance(sheets: SheetsClient, envelope_id: str) -> dict:
                 "cumulative_contributions": {u: 0.0 for u in split_users},
             }
 
-        # Accumulate balance per user across all months
+        # T-208: Fix double-counting in cumulative balance.
+        # OLD (WRONG): cumulative_balance = contributions - obligations
+        #   When obligation < 0 (user overpaid minimum), this double-counts:
+        #   contribution(4700) - obligation(-2200) = 6900 instead of +2200.
+        # CORRECT: sum per-month balances directly.
+        #   balance[month] = -obligation = correctly computed by compute_contribution_status.
+        #   cumulative_balance = sum(balance[month] for month in months)
         cumulative_obligations: dict[str, float] = defaultdict(float)
         cumulative_contributions: dict[str, float] = defaultdict(float)
+        cumulative_balances_raw: dict[str, float] = defaultdict(float)
 
         for month in months_with_txns:
             snap = compute_contribution_status(sheets, envelope_id, month)
@@ -561,13 +568,14 @@ def compute_cumulative_balance(sheets: SheetsClient, envelope_id: str) -> dict:
             for u in split_users:
                 obligation = safe_float(snap.get("user_shares", {}).get(u, 0))
                 contribution = safe_float(snap.get("assets", {}).get(u, 0))
+                monthly_balance = safe_float(snap.get("balances", {}).get(u, 0))
                 cumulative_obligations[u] += obligation
                 cumulative_contributions[u] += contribution
+                cumulative_balances_raw[u] += monthly_balance  # correct running total
 
-        # Cumulative balance = sum of monthly credits = -(obligations)
-        # Positive = overpaid overall, negative = owes overall
+        # Sum of per-month balances is the true cumulative balance
         cumulative_balances: dict[str, float] = {
-            u: round(cumulative_contributions[u] - cumulative_obligations[u], 2)
+            u: round(cumulative_balances_raw[u], 2)
             for u in split_users
         }
 
