@@ -177,3 +177,27 @@ if passed < total:
         if not ok:
             print(f"  ❌ {label}")
 print("\nRun after every: git push main")
+
+# ── 8. Transactions sparse layout check (T-223) ──────────────────────────────
+print("\n8. Transactions sparse layout — check for data scattered in non-contiguous rows")
+try:
+    from sheets import _sheets_retry
+    wb_t = sheets._gc.open_by_key(PROD_BUDGET)
+    ws_tx = wb_t.worksheet("Transactions")
+    tx_vals = _sheets_retry(ws_tx.get_all_values)
+    data_rows = [(i+2, row) for i, row in enumerate(tx_vals[1:]) if any(c.strip() for c in row[:12])]
+    if data_rows:
+        first_rn = data_rows[0][0]
+        last_rn = data_rows[-1][0]
+        expected_last = first_rn + len(data_rows) - 1
+        gap = last_rn - expected_last
+        if gap > 5:
+            check(f"Transactions layout: {len(data_rows)} rows spread across rows {first_rn}-{last_rn}",
+                  False,
+                  f"⚠️ {gap} empty rows between data. Run manual re-sort (see T-223 procedure).")
+        else:
+            check(f"Transactions layout OK: {len(data_rows)} rows at {first_rn}-{last_rn} (gap≤{gap})", True)
+    else:
+        check("Transactions: no data rows found", True, "ℹ️ Empty Transactions sheet")
+except Exception as e:
+    check("Transactions layout check", False, str(e)[:80])
