@@ -488,7 +488,21 @@ def _current_month_str() -> str:
 def _quick_balance_line(session, lang: str = "ru") -> str:
     """T-128: Balance summary after add/delete. Credit model from xlsx formula.
     T-133: All strings via i18n.
-    T-167: Use cumulative balance across all months (from first transaction)."""
+    T-167: Use cumulative balance across all months (from first transaction).
+    T-228: Session-level 60s cache — avoids repeated Sheets reads in rapid succession
+           (e.g. consecutive cross-dup enriches each trigger get_transactions)."""
+    import time as _time
+    _now = _time.time()
+    _bc = getattr(session, "_balance_line_cache", None)
+    if _bc:
+        _bc_ts, _bc_lang, _bc_text = _bc
+        if _bc_lang == lang and (_now - _bc_ts) < 60:
+            return _bc_text
+
+    def _cache_and_return(text: str) -> str:
+        session._balance_line_cache = (_now, lang, text)
+        return text
+
     try:
         from intelligence import compute_cumulative_balance, compute_contribution_status
         env_id = session.current_envelope_id or "MM_BUDGET"
@@ -526,12 +540,12 @@ def _quick_balance_line(session, lang: str = "ru") -> str:
                     else:
                         parts.append(f"  ✅ {u}: баланс ок")
             if parts:
-                return "\n".join(parts)
+                return _cache_and_return("\n".join(parts))
 
         # Fallback: current month only (solo envelope or cumulative failed)
         snap = compute_contribution_status(sheets, env_id)
         if snap.get("status") != "ok":
-            return ""
+            return _cache_and_return("")
         spent = snap.get("total_expenses", 0)
         cur = snap.get("currency", "EUR")
         parts = [f"💰 {spent:,.0f} {cur} {i18n.ts('bal_expenses', lang)}"]
@@ -546,7 +560,7 @@ def _quick_balance_line(session, lang: str = "ru") -> str:
                     parts.append(f"⚠️ {u}: {credit:,.0f} {cur} ({i18n.ts('bal_owes', lang)})")
                 else:
                     parts.append(f"➖ {u}: 0 {cur}")
-        return "\n".join(parts)
+        return _cache_and_return("\n".join(parts))
     except Exception:
         return ""
 
@@ -3471,7 +3485,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-                bal_line = _quick_balance_line(session, lang)
+                # T-228: skip balance line if more dups are still pending — avoids
+                # an extra get_transactions read per enrich (cache invalidated by write).
+                _cdq_ahead = getattr(session, "_pending_cross_dups", None) or []
+                bal_line = _quick_balance_line(session, lang) if not _cdq_ahead else ""
                 full_msg = f"{msg}\n\n{bal_line}" if bal_line else msg
 
                 await ctx.bot.send_message(

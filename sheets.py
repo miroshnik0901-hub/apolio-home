@@ -716,8 +716,18 @@ class EnvelopeSheets:
         try:
             # Native Sheets API sort: single batchUpdate write, no read needed.
             # range="A2:..." skips header row 1.
-            n_rows = max(ws.row_count, 1000)
-            n_cols = max(ws.col_count, 20)
+            # T-229: cap n_rows to avoid sorting 900+ empty rows (PROD has row_count=957
+            # from sparse layout history but only ~40 data rows). Sort on huge empty range
+            # wastes quota and may cause issues. Use actual data row count + buffer instead.
+            _phys_rows = ws.row_count  # physical sheet dimension (may be >> data)
+            # Assume data rows ≤ 300 (family budget). Add 50 buffer for future growth.
+            # If more data than 300 rows, bump to phys_rows to stay safe.
+            n_rows = min(_phys_rows, 350) if _phys_rows > 350 else _phys_rows
+            n_rows = max(n_rows, 50)  # always sort at least 50 rows
+            # Cap col to actual transaction schema (max 20 columns), ignore TEST anomaly
+            # where col_count=212 due to a previous bug writing outside the data area.
+            n_cols = min(ws.col_count, 20)
+            n_cols = max(n_cols, 16)
             # Fix: chr() overflows for col_count > 26 → use gspread util instead
             try:
                 import gspread.utils as _gu
