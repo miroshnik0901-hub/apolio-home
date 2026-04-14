@@ -598,31 +598,44 @@ class EnvelopeSheets:
     def sort_by_date(self, order: str = "asc") -> int:
         """Sort Transactions data rows by Date (col A) in-place.
         Header (row 1) is preserved. Returns number of rows sorted.
-        order: 'asc' (oldest first) or 'desc' (newest first)."""
+        order: 'asc' (oldest first) or 'desc' (newest first).
+
+        T-206: Uses native Sheets API sort (single write, no read) via
+        gspread.Worksheet.sort(). This avoids a get_all_values() read that
+        was failing with 429 after large batch inserts (20+ rows).
+        Falls back to read-sort-write if native sort fails.
+        """
         ws = self._ws("Transactions")
-        all_rows = ws.get_all_values()
+        sort_order = "asc" if order.lower() == "asc" else "des"
+        try:
+            # Native Sheets API sort: single batchUpdate write, no read needed.
+            # range="A2:..." skips header row 1.
+            n_rows = max(ws.row_count, 1000)
+            n_cols = max(ws.col_count, 20)
+            col_letter = chr(ord("A") + n_cols - 1)
+            range_str = f"A2:{col_letter}{n_rows}"
+            _sheets_retry(ws.sort, (1, sort_order), range=range_str)
+            return n_rows - 1  # approximate
+        except Exception as _e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f"native sort failed, falling back: {_e}")
+
+        # Fallback: read-sort-write (wrapped in retry for 429 resilience)
+        all_rows = _sheets_retry(ws.get_all_values)
         if len(all_rows) < 2:
             return 0
-
         header = all_rows[0]
         data_rows = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
         if not data_rows:
             return 0
-
-        # Pad rows to header width so the update range is uniform
         width = len(header)
         padded = [r + [""] * max(0, width - len(r)) for r in data_rows]
-
-        # ISO dates (YYYY-MM-DD) sort correctly as strings; empty dates go last
         reverse = (order.lower() == "desc")
-        padded.sort(key=lambda r: r[0] if r[0].strip() else "9999-99-99",
-                    reverse=reverse)
-
-        # Overwrite data area with sorted rows (single API call)
+        padded.sort(key=lambda r: r[0] if r[0].strip() else "9999-99-99", reverse=reverse)
         end_row = 1 + len(padded)
-        col_letter = chr(ord('A') + width - 1)  # e.g. 'P' for 16 columns
-        ws.update(f"A2:{col_letter}{end_row}", padded,
-                  value_input_option="USER_ENTERED")
+        col_letter = chr(ord("A") + width - 1)
+        _sheets_retry(ws.update, f"A2:{col_letter}{end_row}", padded,
+                      value_input_option="USER_ENTERED")
         return len(padded)
 
     def sum_expenses(self, month: str) -> float:

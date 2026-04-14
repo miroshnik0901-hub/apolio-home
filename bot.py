@@ -3953,12 +3953,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 failed.append(f"✗ {item_name}: {e}")
 
-        # T-183: one sort after batch, not N sorts during batch
+        # T-183/T-206: one sort after batch; T-206 uses native Sheets API sort (no read)
+        _sort_ok = False
         if _file_id:
             try:
                 sheets.sort_transactions_by_date(_file_id, order="asc")
+                _sort_ok = True
             except Exception as _se:
-                logger.warning(f"batch sort failed (non-fatal): {_se}")
+                logger.warning(f"T-206: batch sort failed: {_se}")
 
         cur = receipt.get("currency", "EUR")
         total_added = len(added)
@@ -3968,6 +3970,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             summary_lines.append(
                 f"\n⚠️ Потенційних дублікатів: {len(_pending_cross_dups)} — питання нижче"
             )
+        if not _sort_ok and _file_id:
+            _sort_warn = {"ru": "⚠️ Сортировка после добавления не выполнена (лимит API). Нажмите «Сортировать» в меню позже.",
+                          "uk": "⚠️ Сортування після додавання не виконано (ліміт API). Зробіть сортування пізніше.",
+                          "en": "⚠️ Sort after batch add failed (API limit). Please re-sort manually later.",
+                          "it": "⚠️ Ordinamento post-aggiunta fallito (limite API). Riprovare."}
+            summary_lines.append(_sort_warn.get(lang, _sort_warn["uk"]))
         if failed:
             summary_lines += [f"\n⚠️ Не вдалося ({len(failed)}):"] + failed
         bal_line = _quick_balance_line(session, lang)
