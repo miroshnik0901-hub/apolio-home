@@ -7,12 +7,23 @@
 ## Current State (2026-04-14)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**Last commit on main:** `6d05c0d` (merge: sync main with master, task log v1.5)
-**Status:** Stable. Contains tasks up to ~T-171 (pre-April 2026 session).
+**Last commit on main:** `ab5a4ff` (2026-04-14 deploy — 60 tasks T-152..T-221)
+**Status:** ✅ DEPLOYED. Bot responding. Railway auto-deploy triggered.
+**Deployed:** 2026-04-14 ~22:00 UTC. Post-deploy sync: 8/8 ✅
 
-Notable features on production:
-- Task Log integration (TaskLog class, Apps Script)
-- Google Sheets: Transactions, Summary, Dashboard, Categories, Accounts tabs
+### What's new in this PROD release (T-152..T-221):
+- Sheets API caching + 429 retry with backoff
+- Cross-currency duplicate detection (UAH vs EUR)
+- Bank statement: separate transactions, income type fix
+- Dashboard redesign (HISTORY table)
+- Cumulative balance (compute_cumulative_balance fix)
+- Bulk delete: batch N-delete, pre-parse IDs
+- Language system: session.lang as sole source, shift detection
+- Navigation UX: Деталі (was Аналітика), top-3 categories in Бюджет
+- Category/subcategory aliases (60+ variants → canonical)
+- User aliases: Marina→Maryna, Миша→Mikhail + Telegram ID auto-assign
+- Error logging: PostgreSQL error_log table + global PTB handler
+- Post-deploy sync script: scripts/sync_prod_after_deploy.py
 - Staging environment setup (separate Test Admin sheet, Railway staging vars)
 
 **⚠️ NOT yet on production (waiting GO):**
@@ -28,6 +39,9 @@ Tasks on dev but NOT yet on main (newest first):
 
 | Commit | Task | Description |
 |--------|------|-------------|
+| `d3ddf70` | T-198 | Contribution inactive month display: "без активності" banner, "не внесено" label |
+| `d3a8749` | T-196/197/199 | Float crash fix, analytics income display, month abbr, contribution period selector |
+| `dda6349` | T-195 | Hardcode income category (Top-up/Salary) + localize account question |
 | `564097b` | T-194 | Batch bulk delete: 1 read + N deletes. Eliminates 429 quota errors on bulk delete |
 | `f46cf5b` | T-192 | Batch dup enrichment prompt: queues dups after batch, shows Update/Add/Cancel one by one |
 | `873ca63` | T-192 | Cross-currency dup detection: EUR vs UAH compared via Amount_EUR ±5% |
