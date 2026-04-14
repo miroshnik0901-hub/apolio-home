@@ -4,12 +4,13 @@
 
 ---
 
-## Current State (2026-04-14)
+## Current State (2026-04-15)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**Last commit on main:** `ab5a4ff` (2026-04-14 deploy — 60 tasks T-152..T-221)
-**Status:** ✅ DEPLOYED. Bot responding. Railway auto-deploy triggered.
-**Deployed:** 2026-04-14 ~22:00 UTC. Post-deploy sync: 8/8 ✅
+**Last commit on main:** `c6367f4` (T-220: Complete error logging)
+**Status:** ⚠️ Bot running but Anthropic API credits exhausted (T-231) — agent calls fail.
+**Deployed:** 2026-04-15. Post-deploy sync: 8/8 ✅
+**⚠️ Action needed:** Top up Anthropic API credits at console.anthropic.com
 
 ### What's new in this PROD release (T-152..T-221):
 - Sheets API caching + 429 retry with backoff
@@ -32,7 +33,7 @@
 ---
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**Last commit on dev:** `564097b` (T-194: batch bulk delete)
+**Last commit on dev:** `cc3c131` (T-232: agent dup fix in text flow)
 **Branch:** `dev`
 
 Tasks on dev but NOT yet on main (newest first):
