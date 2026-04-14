@@ -712,36 +712,12 @@ class EnvelopeSheets:
         Falls back to read-sort-write if native sort fails.
         """
         ws = self._ws("Transactions")
-        sort_order = "asc" if order.lower() == "asc" else "des"
-        try:
-            # Native Sheets API sort: single batchUpdate write, no read needed.
-            # range="A2:..." skips header row 1.
-            # T-229: cap n_rows to avoid sorting 900+ empty rows (PROD has row_count=957
-            # from sparse layout history but only ~40 data rows). Sort on huge empty range
-            # wastes quota and may cause issues. Use actual data row count + buffer instead.
-            _phys_rows = ws.row_count  # physical sheet dimension (may be >> data)
-            # Assume data rows ≤ 300 (family budget). Add 50 buffer for future growth.
-            # If more data than 300 rows, bump to phys_rows to stay safe.
-            n_rows = min(_phys_rows, 350) if _phys_rows > 350 else _phys_rows
-            n_rows = max(n_rows, 50)  # always sort at least 50 rows
-            # Cap col to actual transaction schema (max 20 columns), ignore TEST anomaly
-            # where col_count=212 due to a previous bug writing outside the data area.
-            n_cols = min(ws.col_count, 20)
-            n_cols = max(n_cols, 16)
-            # Fix: chr() overflows for col_count > 26 → use gspread util instead
-            try:
-                import gspread.utils as _gu
-                col_letter = _gu.rowcol_to_a1(1, n_cols)[:-1]  # strip row number
-            except Exception:
-                col_letter = chr(ord("A") + min(n_cols - 1, 25))  # cap at Z
-            range_str = f"A2:{col_letter}{n_rows}"
-            _sheets_retry(ws.sort, (1, sort_order), range=range_str)
-            return n_rows - 1  # approximate
-        except Exception as _e:
-            import logging as _log
-            _log.getLogger(__name__).warning(f"native sort failed, falling back: {_e}")
+        # T-235: Native sort (ws.sort() batchUpdate) returns success but does NOT actually
+        # reorder rows on this sheet — confirmed by testing: reply={'replies':[{}]} but data
+        # unchanged. Root cause unknown (may be gspread version or sheet properties).
+        # Always use read-sort-write. It costs 1 read + 2 writes but is reliable.
 
-        # Fallback: read-sort-write with FULL CLEAR to handle sparse sheets.
+        # Read-sort-write with FULL CLEAR to handle sparse sheets.
         # Previously only wrote rows 2-N but left old data at rows N+1..end.
         # Sparse sheets (many empty rows in middle) have data at e.g. rows 856-860
         # which persisted after a write to rows 2-42.
@@ -766,11 +742,11 @@ class EnvelopeSheets:
         # Step 1: clear the ENTIRE data area (including sparse tail where old rows hide)
         if total_rows > 1:
             empty_block = [[""] * width for _ in range(total_rows - 1)]
-            _sheets_retry(ws.update, f"A2:{_col_ltr}{total_rows}", empty_block,
+            _sheets_retry(ws.update, empty_block, f"A2:{_col_ltr}{total_rows}",
                           value_input_option="USER_ENTERED")
         # Step 2: write sorted data back at top
         end_row = 1 + len(padded)
-        _sheets_retry(ws.update, f"A2:{_col_ltr}{end_row}", padded,
+        _sheets_retry(ws.update, padded, f"A2:{_col_ltr}{end_row}",
                       value_input_option="USER_ENTERED")
         return len(padded)
 
