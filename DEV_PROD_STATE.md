@@ -7,9 +7,9 @@
 ## Current State (2026-04-15)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**Last commit on main:** `679ef7a` (T-228/229/232/233/234 deployed)
+**Last commit on main:** `b7eb662` (T-235/236/237/238 deployed)
 **Status:** ✅ DEPLOYED. Bot responding. Railway auto-deploy triggered.
-**Deployed:** 2026-04-15. Post-deploy sync: 9/9 ✅
+**Deployed:** 2026-04-15. Post-deploy sync: 9/9 ✅. PROD manually re-sorted (40 rows).
 
 ### What's new in this PROD release (T-152..T-221):
 - Sheets API caching + 429 retry with backoff
@@ -32,7 +32,7 @@
 ---
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**Last commit on dev:** `679ef7a` (same as main — fully synced)
+**Last commit on dev:** `b7eb662` (same as main — fully synced)
 **Branch:** `dev`
 
 Tasks on dev but NOT yet on main (newest first):
