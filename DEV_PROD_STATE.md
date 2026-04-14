@@ -7,7 +7,7 @@
 ## Current State (2026-04-15)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**Last commit on main:** `b7eb662` (T-235/236/237/238 deployed)
+**Last commit on main:** `5b662f6` (T-239: batch dup pre-fetch fallback)
 **Status:** ✅ DEPLOYED. Bot responding. Railway auto-deploy triggered.
 **Deployed:** 2026-04-15. Post-deploy sync: 9/9 ✅. PROD manually re-sorted (40 rows).
 
