@@ -38,6 +38,10 @@ async def tool_get_summary(params: dict, session: SessionContext,
     month_records = [r for r in records
                      if str(r.get("Date", "")).startswith(period)
                      and r.get("Type") == "expense"]
+    # T-196: also count income for context (not included in total_spent)
+    income_records = [r for r in records
+                      if str(r.get("Date", "")).startswith(period)
+                      and r.get("Type") == "income"]
 
     # Load known users for who-normalization (fixes "Maslo" → "Maryna" etc.)
     try:
@@ -51,7 +55,8 @@ async def tool_get_summary(params: dict, session: SessionContext,
     total = 0.0
 
     for r in month_records:
-        amt = float(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+        from sheets import safe_float as _sf
+        amt = _sf(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
         cat = r.get("Category", "Other")
         who_raw = r.get("Who", "Unknown")
         who = _normalize_who(who_raw, known_who) or who_raw
@@ -62,11 +67,20 @@ async def tool_get_summary(params: dict, session: SessionContext,
     breakdown_by = params.get("breakdown_by", "category")
     breakdown = dict(by_category) if breakdown_by == "category" else dict(by_who)
 
+    # T-196: summarize income for display in report (not in total_spent)
+    from sheets import safe_float as _sf2
+    total_income = sum(
+        _sf2(r.get("Amount_EUR") or r.get("Amount_Orig") or 0)
+        for r in income_records
+    )
+
     return {
         "status": "ok",
         "envelope_id": envelope_id,
         "period": period,
         "total_spent": round(total, 2),
+        "total_income": round(total_income, 2),
+        "income_count": len(income_records),
         "categories": {k: round(v, 2) for k, v in by_category.items()},
         "by_who": {k: round(v, 2) for k, v in by_who.items()},
         "breakdown": {k: round(v, 2) for k, v in breakdown.items()},

@@ -263,6 +263,34 @@ MONTH_LABELS: dict[str, dict[str, str]] = {
     },
 }
 
+# MONTH_SHORT: 3-letter abbreviations for tab buttons — T-197
+MONTH_SHORT: dict[str, dict[str, str]] = {
+    "ru": {
+        "01": "Янв", "02": "Фев", "03": "Мар",
+        "04": "Апр", "05": "Май", "06": "Июн",
+        "07": "Июл", "08": "Авг", "09": "Сен",
+        "10": "Окт", "11": "Ноя", "12": "Дек",
+    },
+    "uk": {
+        "01": "Січ", "02": "Лют", "03": "Бер",
+        "04": "Квіт", "05": "Тра", "06": "Чер",
+        "07": "Лип", "08": "Сер", "09": "Вер",
+        "10": "Жов", "11": "Лис", "12": "Гру",
+    },
+    "en": {
+        "01": "Jan", "02": "Feb", "03": "Mar",
+        "04": "Apr", "05": "May", "06": "Jun",
+        "07": "Jul", "08": "Aug", "09": "Sep",
+        "10": "Oct", "11": "Nov", "12": "Dec",
+    },
+    "it": {
+        "01": "Gen", "02": "Feb", "03": "Mar",
+        "04": "Apr", "05": "Mag", "06": "Giu",
+        "07": "Lug", "08": "Ago", "09": "Set",
+        "10": "Ott", "11": "Nov", "12": "Dic",
+    },
+}
+
 # MONTH_NAMES: prepositional form ("in April"), used inside sentences
 MONTH_NAMES: dict[str, dict[str, str]] = {
     "ru": {

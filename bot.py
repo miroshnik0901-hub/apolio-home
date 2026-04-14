@@ -316,6 +316,16 @@ def _month_label(period: str, lang: str = "ru") -> str:
         return period
 
 
+def _month_abbr(period: str, lang: str = "ru") -> str:
+    """T-197: 3-letter month abbreviation for tab buttons, e.g. 'Січ', 'Лют'."""
+    try:
+        _, m = period.split("-")
+        shorts = i18n.MONTH_SHORT.get(lang, i18n.MONTH_SHORT["ru"])
+        return shorts.get(m, period[-2:])
+    except Exception:
+        return period[-2:]
+
+
 def _month_name(period: str, lang: str = "ru") -> str:
     """Convert YYYY-MM to localized prepositional form, e.g. 'April 2026' / 'апреле 2026'."""
     try:
@@ -689,6 +699,17 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
 
         if total == 0:
             lines.append(i18n.tu("report_no_records", lang))
+            # T-196: show income info even when no expenses
+            _inc_total = safe_float(summary.get("total_income") or 0)
+            _inc_count = int(summary.get("income_count") or 0)
+            if _inc_total > 0:
+                _inc_lbl = {
+                    "ru": f"💚 Поступлений: {_inc_count} · {_inc_total:,.0f} EUR",
+                    "uk": f"💚 Надходжень: {_inc_count} · {_inc_total:,.0f} EUR",
+                    "en": f"💚 Income: {_inc_count} entries · {_inc_total:,.0f} EUR",
+                    "it": f"💚 Entrate: {_inc_count} · {_inc_total:,.0f} EUR",
+                }
+                lines.append(_inc_lbl.get(lang, _inc_lbl["uk"]))
             return "\n".join(lines)
 
         # Total with comparison
@@ -2146,10 +2167,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 m2 = _offset_month(cur_m, -2)
                 m3 = _offset_month(cur_m, -3)
                 kb = _with_menu_btn(
-                    [InlineKeyboardButton(_month_label(m3, lang)[:3], callback_data=f"cb_report_m:{m3}"),
-                     InlineKeyboardButton(_month_label(m2, lang)[:3], callback_data=f"cb_report_m:{m2}"),
-                     InlineKeyboardButton(_month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
-                     InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
+                    [InlineKeyboardButton(_month_abbr(m3, lang), callback_data=f"cb_report_m:{m3}"),
+                     InlineKeyboardButton(_month_abbr(m2, lang), callback_data=f"cb_report_m:{m2}"),
+                     InlineKeyboardButton(_month_abbr(m1, lang), callback_data=f"cb_report_m:{m1}"),
+                     InlineKeyboardButton("▶ " + _month_abbr(cur_m, lang), callback_data=f"cb_report_m:{cur_m}")],
                     lang=lang,
                 )
             elif command == "week":
@@ -2238,12 +2259,30 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     html = f"❌ {e}"
                 kb = _with_menu_btn(lang=lang)
             elif command == "contribution":
-                html = await _build_contribution_html(session, lang)
-                kb = _with_menu_btn(
-                    [InlineKeyboardButton(i18n.t_menu("rep_curr", lang), callback_data="nav:rep_curr"),
-                     InlineKeyboardButton(i18n.t_menu("rep_trends", lang), callback_data="nav:rep_trends")],
-                    lang=lang,
-                )
+                # T-199: show period selector instead of jumping straight to report
+                _contrib_periods = {
+                    "ru": [("1 месяц", "1M"), ("3 месяца", "3M"), ("6 месяцев", "6M"),
+                           ("12 месяцев", "12M"), ("Текущий год", "CY"), ("Прошлый год", "PY")],
+                    "uk": [("1 місяць", "1M"), ("3 місяці", "3M"), ("6 місяців", "6M"),
+                           ("12 місяців", "12M"), ("Поточний рік", "CY"), ("Минулий рік", "PY")],
+                    "en": [("1 month", "1M"), ("3 months", "3M"), ("6 months", "6M"),
+                           ("12 months", "12M"), ("Current year", "CY"), ("Previous year", "PY")],
+                    "it": [("1 mese", "1M"), ("3 mesi", "3M"), ("6 mesi", "6M"),
+                           ("12 mesi", "12M"), ("Anno corrente", "CY"), ("Anno scorso", "PY")],
+                }
+                _cp_list = _contrib_periods.get(lang, _contrib_periods["ru"])
+                _period_rows = [
+                    [InlineKeyboardButton(label, callback_data=f"cb_contrib_period:{code}")]
+                    for label, code in _cp_list
+                ]
+                _title_map = {
+                    "ru": "📊 Взносы и расчёты — выберите период:",
+                    "uk": "📊 Внески та розрахунки — оберіть період:",
+                    "en": "📊 Contributions — select period:",
+                    "it": "📊 Contributi — seleziona periodo:",
+                }
+                html = _title_map.get(lang, _title_map["uk"])
+                kb = _with_menu_btn(*_period_rows, lang=lang)
             elif command == "trends":
                 html = await _build_trends_html(session, lang)
                 kb = _with_menu_btn(
@@ -2476,9 +2515,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         html = await _build_report_html(session, cur_m, lang)
         cat_rows = await _report_cat_rows(session, cur_m, lang)
         kb = _with_menu_btn(
-            [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
-             InlineKeyboardButton(_month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
-             InlineKeyboardButton("▶ " + _month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            [InlineKeyboardButton(_month_abbr(m2, lang), callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton(_month_abbr(m1, lang), callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton("▶ " + _month_abbr(cur_m, lang), callback_data=f"cb_report_m:{cur_m}")],
             *cat_rows, lang=lang,
         )
         try:
@@ -2494,9 +2533,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         html = await _build_report_html(session, m1, lang)
         cat_rows = await _report_cat_rows(session, m1, lang)
         kb = _with_menu_btn(
-            [InlineKeyboardButton(_month_label(m2, lang)[:4], callback_data=f"cb_report_m:{m2}"),
-             InlineKeyboardButton("▶ " + _month_label(m1, lang)[:4], callback_data=f"cb_report_m:{m1}"),
-             InlineKeyboardButton(_month_label(cur_m, lang)[:4], callback_data=f"cb_report_m:{cur_m}")],
+            [InlineKeyboardButton(_month_abbr(m2, lang), callback_data=f"cb_report_m:{m2}"),
+             InlineKeyboardButton("▶ " + _month_abbr(m1, lang), callback_data=f"cb_report_m:{m1}"),
+             InlineKeyboardButton(_month_abbr(cur_m, lang), callback_data=f"cb_report_m:{cur_m}")],
             *cat_rows, lang=lang,
         )
         try:
@@ -2504,6 +2543,121 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except BadRequest:
             pass
         await query.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+    # T-199: Contribution period selector
+    elif data.startswith("cb_contrib_period:"):
+        import datetime as _cdt
+        code = data.split(":", 1)[1]
+        _today = _cdt.date.today()
+        _cur_y = _today.year
+        _cur_m_s = _today.strftime("%Y-%m")
+
+        # Compute date_from / date_to (YYYY-MM strings)
+        if code == "1M":
+            _cf_from = _cur_m_s
+            _cf_to = _cur_m_s
+        elif code == "3M":
+            _cf_from = _offset_month(_cur_m_s, -2)
+            _cf_to = _cur_m_s
+        elif code == "6M":
+            _cf_from = _offset_month(_cur_m_s, -5)
+            _cf_to = _cur_m_s
+        elif code == "12M":
+            _cf_from = _offset_month(_cur_m_s, -11)
+            _cf_to = _cur_m_s
+        elif code == "CY":
+            _cf_from = f"{_cur_y:04d}-01"
+            _cf_to = _cur_m_s
+        elif code == "PY":
+            _cf_from = f"{_cur_y - 1:04d}-01"
+            _cf_to = f"{_cur_y - 1:04d}-12"
+        else:
+            _cf_from = _cur_m_s
+            _cf_to = _cur_m_s
+
+        # Load contribution history and filter to date range
+        from intelligence import compute_contribution_history, compute_contribution_status
+        env_id = session.current_envelope_id or "MM_BUDGET"
+        if _cf_from == _cf_to:
+            # Single month — use existing snapshot renderer
+            html = await _build_contribution_html(session, lang)
+        else:
+            try:
+                _all_snaps = compute_contribution_history(sheets, env_id)
+                _snaps = [s for s in _all_snaps if _cf_from <= s.get("month", "") <= _cf_to]
+                if not _snaps:
+                    _no_data = {"ru": "Записів за цей період немає.",
+                                "uk": "Записів за цей період немає.",
+                                "en": "No data for this period.",
+                                "it": "Nessun dato per questo periodo."}
+                    html = _no_data.get(lang, _no_data["uk"])
+                else:
+                    _lines = []
+                    _period_label = f"{_month_abbr(_cf_from, lang)} – {_month_abbr(_cf_to, lang)}"
+                    _hdr = {"ru": f"📊 Расчёты: {_period_label}",
+                            "uk": f"📊 Розрахунки: {_period_label}",
+                            "en": f"📊 Contributions: {_period_label}",
+                            "it": f"📊 Contributi: {_period_label}"}
+                    _lines.append(_hdr.get(lang, _hdr["uk"]))
+                    _lines.append("")
+                    _users = _snaps[0].get("split_users", []) if _snaps else []
+                    # Cumulative totals per user
+                    _cum_contrib = {u: 0.0 for u in _users}
+                    _cum_expense = 0.0
+                    _cum_balance = {u: 0.0 for u in _users}
+                    for _s in _snaps:
+                        _mo = _s.get("month", "")
+                        _mo_label = _month_abbr(_mo, lang)
+                        _total_e = safe_float(_s.get("total_expenses") or 0)
+                        _cur_s = _s.get("currency", "EUR")
+                        _bal_s = _s.get("balances", {})
+                        _contr_s = _s.get("contributions", {})
+                        _cum_expense += _total_e
+                        _lines.append(f"📅 <b>{_mo_label}</b>  {_total_e:,.0f} {_cur_s}")
+                        for _u in _users:
+                            _ub = safe_float(_bal_s.get(_u) or 0)
+                            _cum_balance[_u] = safe_float(_cum_balance.get(_u) or 0) + _ub
+                            _icon = "✅" if _ub >= 0 else "⚠️"
+                            _bal_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                            _lines.append(f"  {_icon} {_u}: {_bal_str} {_cur_s}")
+                        _lines.append("")
+                    # Cumulative summary
+                    _lines.append(f"<b>Σ {_period_label}: {_cum_expense:,.0f} EUR</b>")
+                    for _u in _users:
+                        _cb = safe_float(_cum_balance.get(_u) or 0)
+                        _icon = "✅" if _cb >= 0 else "⚠️"
+                        _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
+                        _lines.append(f"  {_icon} {_u}: {_bs} EUR")
+                    html = "\n".join(_lines)
+            except Exception as _ce:
+                html = f"❌ {_ce}"
+
+        # Period selector + back button
+        _contrib_periods_cb = {
+            "ru": [("1 мес", "1M"), ("3 мес", "3M"), ("6 мес", "6M"),
+                   ("12 мес", "12M"), ("Тек. год", "CY"), ("Пр. год", "PY")],
+            "uk": [("1 міс", "1M"), ("3 міс", "3M"), ("6 міс", "6M"),
+                   ("12 міс", "12M"), ("Поточ. рік", "CY"), ("Мин. рік", "PY")],
+            "en": [("1M", "1M"), ("3M", "3M"), ("6M", "6M"),
+                   ("12M", "12M"), ("CY", "CY"), ("PY", "PY")],
+            "it": [("1M", "1M"), ("3M", "3M"), ("6M", "6M"),
+                   ("12M", "12M"), ("A.corr", "CY"), ("A.prec", "PY")],
+        }
+        _cbl = _contrib_periods_cb.get(lang, _contrib_periods_cb["ru"])
+        kb = _with_menu_btn(
+            [InlineKeyboardButton(lbl, callback_data=f"cb_contrib_period:{cd}")
+             for lbl, cd in _cbl[:3]],
+            [InlineKeyboardButton(lbl, callback_data=f"cb_contrib_period:{cd}")
+             for lbl, cd in _cbl[3:]],
+            lang=lang,
+        )
+        await query.answer()
+        try:
+            await query.edit_message_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except BadRequest:
+            await ctx.bot.send_message(chat_id=query.message.chat_id, text=html,
+                                       parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
 
     elif data.startswith("cb_report_m:"):
         period = data.split(":", 1)[1]
@@ -2517,7 +2671,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         nav_months = [m3, m2, m1, cur_m]
         nav_btns = []
         for nm in nav_months:
-            label = ("▶ " if nm == period else "") + _month_label(nm, lang)[:4]
+            label = ("▶ " if nm == period else "") + _month_abbr(nm, lang)
             nav_btns.append(InlineKeyboardButton(label, callback_data=f"cb_report_m:{nm}"))
 
         # Category drill-down buttons
