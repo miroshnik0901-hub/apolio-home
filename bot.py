@@ -3953,10 +3953,34 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 _bd_eid = session.current_envelope_id or "MM_BUDGET"
                 _bd_env = next((e for e in _bd_envs if e.get("ID") == _bd_eid), None)
                 if _bd_env:
-                    _batch_existing = sheets.get_transactions(
-                        _bd_env["file_id"],
-                        {"date_from": _bd_min, "date_to": _bd_max, "limit": 300},
-                    )
+                    try:
+                        # T-239: use ±1 day range (covers posting date vs value date mismatch)
+                        from tools.transactions import _date_range_for_dup as _drd
+                        _dup_from, _ = _drd(_bd_min)
+                        _, _dup_to = _drd(_bd_max)
+                        _batch_existing = sheets.get_transactions(
+                            _bd_env["file_id"],
+                            {"date_from": _dup_from, "date_to": _dup_to, "limit": 300},
+                        )
+                    except Exception as _fetch_err:
+                        # T-239: fallback — filtered fetch failed (likely 429).
+                        # Use cached get_transactions (no filter) and filter in Python.
+                        # Prevents dup check from being silently disabled on quota errors.
+                        logger.warning(f"T-239: filtered pre-fetch failed ({_fetch_err}), falling back to cache")
+                        await _db_log_error(
+                            error_type="T-239:pre_fetch_fallback",
+                            context=str(_fetch_err)[:300],
+                            exc=_fetch_err,
+                            user_id=getattr(session, "user_id", 0),
+                        )
+                        try:
+                            all_txns = sheets.get_transactions(_bd_env["file_id"])
+                            _batch_existing = [
+                                t for t in all_txns
+                                if _dup_from <= str(t.get("Date", "")) <= _dup_to
+                            ]
+                        except Exception:
+                            _batch_existing = []
                     if _batch_currency != "EUR" and _batch_existing:
                         # T-211: use cached get_fx_rates() — was raw get_all_records() (missed in T-211).
                         # This was the root cause of dup detection failure:
