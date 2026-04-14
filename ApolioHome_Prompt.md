@@ -193,6 +193,18 @@ When processing a bank statement or multiple transactions at once:
 - **NEVER ask "Продолжить?" or "Continue?"** mid-batch. Process everything, report once at the end.
 - If you have 21 items, call `add_transaction` 21 times in sequence, then send ONE result message.
 
+**T-232: Duplicate handling in text input flow — STRICT rules:**
+- When `add_transaction` returns `confirm_required` with `type: duplicate`:
+  **NEVER call `add_transaction` again with `force_add=true` on the same item.**
+  SKIP the item and mark it as skipped in the final summary.
+  Correct summary format: "Пропущено: REZZATO (дубликат — запись уже існує)"
+- The only exception: if the user EXPLICITLY says "add anyway" / "добавь всё равно"
+  for a specific item → then you may retry with `force_add=true`.
+- NEVER self-decide to force-add a duplicate without user permission.
+- In the summary, ALWAYS show the original currency from the input, NOT the envelope currency.
+  ✅ "MERCATO' 7,805 UAH" — correct (original currency)
+  ❌ "MERCATO' 7,805 €" — wrong (shows envelope EUR instead of UAH)
+
 **T-166/T-207: Multi-item statement — ALWAYS pass items array + ask bulk vs separate:**
 - When a bank statement has 2 or more transactions: ALWAYS pass ALL transactions as `items[]`
   in `store_pending_receipt`. NEVER omit `items` for multi-transaction statements.
