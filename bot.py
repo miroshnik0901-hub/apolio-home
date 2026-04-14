@@ -4545,6 +4545,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Clear _bulk_delete_ids so BUG-010 receipt detection isn't suppressed by leftover state.
     # (Callbacks use callback_handler, not handle_message, so this is always safe to clear.)
     session._bulk_delete_ids = None
+    # T-224: also clear _receipt_buttons_shown — if a previous photo in the same session
+    # set this to True, BUG-010 would be suppressed for ALL subsequent photos.
+    # Each new message should allow fresh receipt button detection.
+    session._receipt_buttons_shown = False
 
     if msg.text:
         text = msg.text.strip()
