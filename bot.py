@@ -3352,7 +3352,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     )
                     return
 
-                msg = result.get("message", "") if isinstance(result, dict) else str(result)
+                msg = (result.get("message") or result.get("error") or "") if isinstance(result, dict) else str(result)
+                if not msg or not msg.strip():
+                    msg = "✓ Готово" if dup_action == "update" else "✓ Додано"
 
                 # Save receipt to PostgreSQL
                 if receipt:
@@ -3612,7 +3614,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     return
 
                 tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
-                msg = result.get("message", "") if isinstance(result, dict) else str(result)
+                msg = (result.get("message") or result.get("error") or "") if isinstance(result, dict) else str(result)
+                if not msg or not msg.strip():
+                    msg = "✓ Готово"
 
                 # Save receipt details to PostgreSQL parsed_data
                 try:
