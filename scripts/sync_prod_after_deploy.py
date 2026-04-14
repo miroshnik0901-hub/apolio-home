@@ -81,9 +81,7 @@ except Exception as e:
 # ── 3. UserAliases tab (creates only if missing, never overwrites) ───────────
 print("\n3. UserAliases tab (creates with seed if missing, never overwrites)")
 try:
-    # get_user_aliases creates tab with seed data ONLY if absent
-    sheets._admin = __import__('sheets').AdminSheets(sheets._gc, PROD_ADMIN) \
-        if hasattr(__import__('sheets'), 'AdminSheets') else sheets._admin
+    # SheetsClient already uses correct admin from env — just call directly
     aliases = sheets.get_user_aliases()
     check(f"UserAliases tab OK ({len(aliases)} aliases)", len(aliases) > 0)
 except Exception as e:
