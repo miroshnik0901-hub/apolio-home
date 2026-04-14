@@ -1925,9 +1925,11 @@ class ApolioAgent:
             "tg_file_id": params.get("tg_file_id", ""),
         }
         session.pending_receipt = receipt_data
-        # Clear stale delete state — receipt flow takes priority
+        # T-207: Clear ALL stale state — new receipt starts fresh
         session.pending_delete_tx = None
         session._bulk_delete_ids = None
+        session._split_mode_chosen = False   # critical: prevents new receipt going to single-add
+        session._pending_split_account = None
 
         # If matching transaction already exists, set up enrich buttons directly
         # so user gets immediate actionable choice (no extra LLM round-trip).

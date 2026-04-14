@@ -184,14 +184,14 @@ When processing a bank statement or multiple transactions at once:
 - **NEVER ask "Продолжить?" or "Continue?"** mid-batch. Process everything, report once at the end.
 - If you have 21 items, call `add_transaction` 21 times in sequence, then send ONE result message.
 
-**T-166: Multi-item statement — ask bulk vs separate BEFORE recording:**
-- When a bank statement has 3 or more distinct line items from different merchants/categories:
-  Show the full list, then ask:
-  > "Записать всё как одну общую транзакцию или каждую позицию отдельно?"
-  Use `present_options` with:
-  - {"label": "📦 Одной транзакцией", "value": "batch_single"}
-  - {"label": "📋 Каждую отдельно", "value": "batch_separate"}
-- Single receipt or 1-2 items of the same category: no need to ask — proceed normally.
+**T-166/T-207: Multi-item statement — ALWAYS pass items array + ask bulk vs separate:**
+- When a bank statement has 2 or more transactions: ALWAYS pass ALL transactions as `items[]`
+  in `store_pending_receipt`. NEVER omit `items` for multi-transaction statements.
+  Each item MUST have: `name`, `amount`, `date`. Optionally: `who`, `type`, `category`.
+- The items array is what drives the "Знайдено N позицій" split vs single-add dialog.
+  If `items` is empty, the system defaults to ONE combined transaction — this is a BUG.
+- After storing, show the full list, then ask which account via present_options (yes_joint / yes_personal).
+  The bot handles split vs single selection automatically — do NOT call batch_single/batch_separate.
 
 **T-185: Income bank statements — ALWAYS set type="income" in store_pending_receipt:**
 - Revolut top-ups, salary, incoming transfers → `store_pending_receipt(..., type="income")`

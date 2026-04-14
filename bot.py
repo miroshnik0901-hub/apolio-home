@@ -3425,6 +3425,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # No heuristic detection — user sees the items and decides.
             # Works for bank statements (2+ rows) and multi-dish restaurant receipts alike.
             items = receipt.get("items") or []
+            # T-207: _split_mode_chosen MUST be False here — it's reset in store_pending_receipt.
+            # This guard is a safety net in case of future regressions.
+            if getattr(session, "_split_mode_chosen", False) and len(items) >= 2:
+                session._split_mode_chosen = False  # self-heal stale state
             if len(items) >= 2 and not getattr(session, "_split_mode_chosen", False):
                 # Store account choice so we can use it after user picks split mode
                 session._pending_split_account = account
