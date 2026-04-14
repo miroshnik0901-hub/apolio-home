@@ -2286,13 +2286,17 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # T-199: show period selector instead of jumping straight to report
                 _contrib_periods = {
                     "ru": [("1 месяц", "1M"), ("3 месяца", "3M"), ("6 месяцев", "6M"),
-                           ("12 месяцев", "12M"), ("Текущий год", "CY"), ("Прошлый год", "PY")],
+                           ("12 месяцев", "12M"), ("Текущий год", "CY"), ("Прошлый год", "PY"),
+                           ("✏️ Произвольный", "CUSTOM")],
                     "uk": [("1 місяць", "1M"), ("3 місяці", "3M"), ("6 місяців", "6M"),
-                           ("12 місяців", "12M"), ("Поточний рік", "CY"), ("Минулий рік", "PY")],
+                           ("12 місяців", "12M"), ("Поточний рік", "CY"), ("Минулий рік", "PY"),
+                           ("✏️ Довільний", "CUSTOM")],
                     "en": [("1 month", "1M"), ("3 months", "3M"), ("6 months", "6M"),
-                           ("12 months", "12M"), ("Current year", "CY"), ("Previous year", "PY")],
+                           ("12 months", "12M"), ("Current year", "CY"), ("Previous year", "PY"),
+                           ("✏️ Custom", "CUSTOM")],
                     "it": [("1 mese", "1M"), ("3 mesi", "3M"), ("6 mesi", "6M"),
-                           ("12 mesi", "12M"), ("Anno corrente", "CY"), ("Anno scorso", "PY")],
+                           ("12 mesi", "12M"), ("Anno corrente", "CY"), ("Anno scorso", "PY"),
+                           ("✏️ Personalizzato", "CUSTOM")],
                 }
                 _cp_list = _contrib_periods.get(lang, _contrib_periods["ru"])
                 _period_rows = [
@@ -2595,6 +2599,22 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif code == "PY":
             _cf_from = f"{_cur_y - 1:04d}-01"
             _cf_to = f"{_cur_y - 1:04d}-12"
+        elif code == "CUSTOM":
+            # Ask user to type the period
+            session.pending_prompt = "contrib:custom_period"
+            _custom_ask = {
+                "ru": "Введите период в формате ГГГГ-ММ или ГГГГ-ММ:ГГГГ-ММ\nПримеры: 2026-01 или 2025-10:2026-03",
+                "uk": "Введіть період у форматі РРРР-ММ або РРРР-ММ:РРРР-ММ\nПриклади: 2026-01 або 2025-10:2026-03",
+                "en": "Enter period as YYYY-MM or YYYY-MM:YYYY-MM\nExamples: 2026-01 or 2025-10:2026-03",
+                "it": "Inserisci il periodo come AAAA-MM o AAAA-MM:AAAA-MM\nEsempi: 2026-01 o 2025-10:2026-03",
+            }
+            await query.answer()
+            try:
+                await query.edit_message_text(_custom_ask.get(lang, _custom_ask["uk"]))
+            except BadRequest:
+                await ctx.bot.send_message(chat_id=query.message.chat_id,
+                                           text=_custom_ask.get(lang, _custom_ask["uk"]))
+            return
         else:
             _cf_from = _cur_m_s
             _cf_to = _cur_m_s
@@ -2623,45 +2643,79 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             "en": f"📊 Contributions: {_period_label}",
                             "it": f"📊 Contributi: {_period_label}"}
                     _lines.append(_hdr.get(lang, _hdr["uk"]))
-                    _lines.append("")
+                    # T-201: Enumerate ALL months in range (including empty ones).
+                    # compute_contribution_history skips months w/o transactions,
+                    # but obligation exists even with 0 activity → include all.
+                    import datetime as _cdt2
+                    def _mo_range(f, t):
+                        """Yield YYYY-MM strings from f to t inclusive."""
+                        fy, fm = int(f[:4]), int(f[5:7])
+                        ty, tm = int(t[:4]), int(t[5:7])
+                        while (fy, fm) <= (ty, tm):
+                            yield f"{fy:04d}-{fm:02d}"
+                            fm += 1
+                            if fm > 12:
+                                fm, fy = 1, fy + 1
+
+                    # Build snap dict indexed by month for O(1) lookup
+                    _snap_by_mo = {s.get("month", ""): s for s in _snaps}
+                    # Determine split_users from first available snap
                     _users = _snaps[0].get("split_users", []) if _snaps else []
-                    # Cumulative totals per user
-                    _cum_contrib = {u: 0.0 for u in _users}
+                    _cur_s = _snaps[0].get("currency", "EUR") if _snaps else "EUR"
+
                     _cum_expense = 0.0
                     _cum_balance = {u: 0.0 for u in _users}
-                    for _s in _snaps:
-                        _mo = _s.get("month", "")
-                        _mo_label = _month_abbr(_mo, lang)
+                    _lines.append("")
+
+                    _delta_lbl = {
+                        "ru": "за мес", "uk": "за міс", "en": "mo", "it": "mese"
+                    }
+                    _total_lbl = {
+                        "ru": "накоплено", "uk": "накопичено", "en": "total", "it": "totale"
+                    }
+
+                    for _mo in _mo_range(_cf_from, _cf_to):
+                        _mo_lbl = _month_abbr(_mo, lang)
+                        if _mo in _snap_by_mo:
+                            _s = _snap_by_mo[_mo]
+                        else:
+                            # No transactions — compute obligation for this empty month
+                            _s = compute_contribution_status(sheets, env_id, month=_mo)
+                            if _s.get("status") != "ok":
+                                continue
+                            if not _users:
+                                _users = _s.get("split_users", [])
+                                _cur_s = _s.get("currency", "EUR")
+
                         _total_e = safe_float(_s.get("total_expenses") or 0)
-                        _cur_s = _s.get("currency", "EUR")
                         _bal_s = _s.get("balances", {})
-                        _contr_s = _s.get("contributions", {})
-                        _cum_expense += _total_e
-                        # T-198: flag months without any real activity
                         _top_up_s = _s.get("top_up_joint", {})
                         _any_top = any(safe_float(_top_up_s.get(_u, 0)) > 0 for _u in _users)
                         _mo_inactive = not _any_top and _total_e == 0
-                        _inactive_sfx = {
-                            "ru": " (нет активности)",
-                            "uk": " (без активності)",
-                            "en": " (no activity)",
-                            "it": " (nessuna attività)",
-                        }
-                        _ia_sfx = _inactive_sfx.get(lang, _inactive_sfx["uk"]) if _mo_inactive else ""
-                        _lines.append(f"📅 <b>{_mo_label}</b>{_ia_sfx}  {_total_e:,.0f} {_cur_s}")
+                        _cum_expense += _total_e
+
+                        # Tag inactive months
+                        _ia_tag = {
+                            "ru": " ⚪", "uk": " ⚪", "en": " ⚪", "it": " ⚪"
+                        }.get(lang, " ⚪") if _mo_inactive else ""
+                        _lines.append(f"📅 <b>{_mo_lbl}</b>{_ia_tag}  {_total_e:,.0f} {_cur_s}")
+
                         for _u in _users:
-                            _ub = safe_float(_bal_s.get(_u) or 0)
-                            _cum_balance[_u] = safe_float(_cum_balance.get(_u) or 0) + _ub
-                            _icon = "✅" if _ub >= 0 else "⚠️"
-                            _bal_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
-                            # T-198: show "not paid" label for inactive months with obligation
-                            if _mo_inactive and _ub < 0:
-                                _np = {"ru": "не внесено", "uk": "не внесено", "en": "not paid", "it": "non pagato"}
-                                _lines.append(f"  {_icon} {_u}: {_bal_str} ({_np.get(lang,'не внесено')})")
-                            else:
-                                _lines.append(f"  {_icon} {_u}: {_bal_str} {_cur_s}")
+                            _ub = safe_float(_bal_s.get(_u) or 0)      # monthly delta
+                            _cum_balance[_u] = _cum_balance.get(_u, 0.0) + _ub
+                            _run = _cum_balance[_u]                     # running total
+                            _d_icon = "✅" if _ub >= 0 else "⚠️"
+                            _d_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                            _r_icon = "✅" if _run >= 0 else "🔴"
+                            _r_str  = f"+{_run:,.0f}" if _run > 0 else f"{_run:,.0f}"
+                            # Format: "⚠️ Mikhail: -2,100 за міс → 🔴 -2,290 накопичено"
+                            _lines.append(
+                                f"  {_d_icon} {_u}: {_d_str} {_delta_lbl.get(lang,'за міс')}"
+                                f"  →  {_r_icon} {_r_str} {_total_lbl.get(lang,'накопичено')}"
+                            )
                         _lines.append("")
-                    # Cumulative summary — label clearly as running total, not single month
+
+                    # Final cumulative summary
                     _cum_hdr = {
                         "ru": f"📊 Итого {_period_label}:",
                         "uk": f"📊 Всього {_period_label}:",
@@ -2670,18 +2724,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     }
                     _lines.append(f"<b>{_cum_hdr.get(lang, _cum_hdr['uk'])}</b>  {_cum_expense:,.0f} EUR")
                     for _u in _users:
-                        _cb = safe_float(_cum_balance.get(_u) or 0)
-                        _icon = "✅" if _cb >= 0 else "⚠️"
+                        _cb = _cum_balance.get(_u, 0.0)
+                        _icon = "✅" if _cb >= 0 else "🔴"
                         _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
                         _lines.append(f"  {_icon} {_u}: {_bs} EUR")
-                    _note = {
-                        "ru": "<i>Баланс — независимо за каждый месяц (не нарастающий)</i>",
-                        "uk": "<i>Баланс — незалежно за кожен місяць (не накопичувальний)</i>",
-                        "en": "<i>Balance shown per month independently (not cumulative)</i>",
-                        "it": "<i>Saldo per mese indipendente (non cumulativo)</i>",
-                    }
-                    _lines.append("")
-                    _lines.append(_note.get(lang, _note["uk"]))
                     html = "\n".join(_lines)
             except Exception as _ce:
                 html = f"❌ {_ce}"
@@ -4062,6 +4108,61 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except BadRequest:
             pass
 
+    # ── T-200: Language switch callbacks ──────────────────────────────────────
+    elif data == "cb_lang_switch_yes":
+        new_lang = getattr(session, "_lang_shift_pending", None)
+        if new_lang and new_lang in i18n.SUPPORTED_LANGS:
+            session.lang = new_lang
+            session._lang_shift_pending = None
+            session._lang_shift_count = 0
+            session._lang_shift_candidate = None
+            # Persist to UserContext so it survives session restart
+            try:
+                from user_context import UserContextManager
+                ctx_mgr = UserContextManager(sheets._gc, _get_active_file_id())
+                ctx_mgr.set(query.from_user.id, "language", new_lang)
+            except Exception as _ue:
+                logger.debug(f"T-200: could not save lang to UserContext: {_ue}")
+            _done_msg = {
+                "ru": f"✅ Язык изменён на {new_lang.upper()}",
+                "uk": f"✅ Мову змінено на {new_lang.upper()}",
+                "en": f"✅ Language changed to {new_lang.upper()}",
+                "it": f"✅ Lingua cambiata in {new_lang.upper()}",
+            }
+            await query.answer()
+            try:
+                await query.edit_message_text(_done_msg.get(new_lang, _done_msg["uk"]))
+            except BadRequest:
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=_done_msg.get(new_lang, _done_msg["uk"]),
+                    reply_markup=_build_main_keyboard(new_lang),
+                )
+            # Refresh reply keyboard in new language
+            try:
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=i18n.ts("lang_changed", new_lang),
+                    reply_markup=_build_main_keyboard(new_lang),
+                )
+            except Exception:
+                pass
+        else:
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+
+    elif data == "cb_lang_switch_no":
+        session._lang_shift_pending = None
+        session._lang_shift_count = 0
+        await query.answer()
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+
 
 # ── Photo batch processor ─────────────────────────────────────────────────────
 
@@ -4314,10 +4415,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     media_file_id = ""  # Telegram file_id for photos — stored in DB for image memory
 
     role = tg_user.get("role", "viewer")
-    lang = getattr(session, "lang", "en")
-
-    # Use detected language from recent text messages as primary
-    lang = getattr(session, "_detected_lang", None) or lang
+    # T-200: session.lang is the ONLY UI language source.
+    # _detected_lang is no longer applied to UI — it caused menus to render in wrong
+    # language when a previous text message set it. Language changes only via settings
+    # or explicit user consent (language shift detection below).
+    lang = getattr(session, "lang", "uk")
 
     # T-190: any new message (text or photo) means old bulk-delete button is stale.
     # Clear _bulk_delete_ids so BUG-010 receipt detection isn't suppressed by leftover state.
@@ -4326,12 +4428,22 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if msg.text:
         text = msg.text.strip()
-        # Detect user's actual language from text and persist it on session
-        # so photo messages (no text) can use the correct language.
+        # T-200: detect user language from text for shift tracking only.
+        # Do NOT apply to lang — session.lang is authoritative for all UI.
         _det = _detect_user_lang(text)
-        if _det:
-            session._detected_lang = _det
-            lang = _det  # override for this request too
+        if _det and _det != lang:
+            # Track consecutive messages in a different language
+            _shift_cand = getattr(session, "_lang_shift_candidate", None)
+            if _shift_cand == _det:
+                session._lang_shift_count = getattr(session, "_lang_shift_count", 0) + 1
+            else:
+                # Reset count for the new candidate language
+                session._lang_shift_candidate = _det
+                session._lang_shift_count = 1
+        elif _det == lang:
+            # User back to their configured language — reset shift tracking
+            session._lang_shift_count = 0
+            session._lang_shift_candidate = None
 
         # T-189: pre-parse bulk delete IDs from user message BEFORE agent runs.
         # When user says "удали abc12345 def67890 ...", detect all 8-char hex IDs.
@@ -4346,6 +4458,51 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif not any(kw in text.lower() for kw in _delete_keywords):
             # Clear if user is doing something unrelated
             session._user_bulk_delete_ids = None
+
+        # ── T-200: Language shift detection — ask once after 3 messages in other lang ──
+        _shift_count = getattr(session, "_lang_shift_count", 0)
+        _shift_cand  = getattr(session, "_lang_shift_candidate", None)
+        _shift_asked = getattr(session, "_lang_shift_asked", set())
+        _is_kb_tap   = bool(i18n.KB_TEXT_TO_ACTION.get(text)) or text.strip().lower() in {
+            "☰ меню", "≡ меню", "☰ menu", "меню", "/menu"
+        }
+        if (
+            _shift_count >= 3
+            and _shift_cand
+            and _shift_cand not in _shift_asked
+            and not _is_kb_tap  # don't interrupt on menu taps
+            and not getattr(session, "pending_prompt", None)
+        ):
+            # Mark as asked so we never ask again for this lang combo
+            _shift_asked.add(_shift_cand)
+            session._lang_shift_asked = _shift_asked
+            session._lang_shift_count = 0
+            session._lang_shift_pending = _shift_cand  # remember candidate for Yes callback
+            _lang_names = {
+                "ru": {"ru": "Русский", "uk": "Українська", "en": "English", "it": "Italiano"},
+                "uk": {"ru": "Русский", "uk": "Українська", "en": "English", "it": "Italiano"},
+                "en": {"ru": "Russian", "uk": "Ukrainian", "en": "English", "it": "Italian"},
+                "it": {"ru": "Russo",   "uk": "Ucraino",   "en": "Inglese", "it": "Italiano"},
+            }
+            _cand_name = _lang_names.get(lang, _lang_names["uk"]).get(_shift_cand, _shift_cand.upper())
+            _ask_switch = {
+                "ru": f"Вы пишете на {_cand_name}. Поменять язык интерфейса?",
+                "uk": f"Ви пишете {_cand_name}. Змінити мову інтерфейсу?",
+                "en": f"You're writing in {_cand_name}. Switch interface language?",
+                "it": f"Stai scrivendo in {_cand_name}. Cambiare lingua?",
+            }
+            _yes_lbl = {"ru": "✅ Да", "uk": "✅ Так", "en": "✅ Yes", "it": "✅ Sì"}
+            _no_lbl  = {"ru": "❌ Нет", "uk": "❌ Ні", "en": "❌ No", "it": "❌ No"}
+            _switch_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(_yes_lbl.get(lang, "✅ Так"), callback_data="cb_lang_switch_yes"),
+                InlineKeyboardButton(_no_lbl.get(lang, "❌ Ні"),  callback_data="cb_lang_switch_no"),
+            ]])
+            await ctx.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=_ask_switch.get(lang, _ask_switch["uk"]),
+                reply_markup=_switch_kb,
+            )
+            # Continue processing the message normally — don't block it
 
         # ── Reply keyboard buttons ALWAYS take priority (even over pending prompts) ──
         # This prevents "☰ Ще", "💰 Бюджет" etc. from being swallowed by pending_prompt
@@ -4380,6 +4537,78 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         await agent.run(f"покажи отчёт за {text}", session), lang
                     )
                     await _safe_reply(update.message, response, reply_markup=_with_menu_btn(lang=lang))
+                return
+
+            elif pending == "contrib:custom_period":
+                # Parse YYYY-MM or YYYY-MM:YYYY-MM from user input
+                import datetime as _cpdt
+                _cp_text = text.strip()
+                _cp_match = re.match(r'(\d{4}-\d{2})(?:[:\s]+(\d{4}-\d{2}))?', _cp_text)
+                if _cp_match:
+                    _cp_from = _cp_match.group(1)
+                    _cp_to = _cp_match.group(2) or _cp_from
+                    from intelligence import compute_contribution_history, compute_contribution_status
+                    env_id = session.current_envelope_id or "MM_BUDGET"
+                    if _cp_from == _cp_to:
+                        # Single month
+                        _snap_s = compute_contribution_status(sheets, env_id, month=_cp_from)
+                        # Re-use _build_contribution_html by patching session temp — simplest
+                        html = await _build_contribution_html(session, lang)
+                    else:
+                        try:
+                            _all_s = compute_contribution_history(sheets, env_id)
+                            _filt_s = [s for s in _all_s if _cp_from <= s.get("month", "") <= _cp_to]
+                            if not _filt_s:
+                                _nd = {"ru": "Нет данных за этот период.",
+                                       "uk": "Немає даних за цей період.",
+                                       "en": "No data for this period.",
+                                       "it": "Nessun dato per questo periodo."}
+                                html = _nd.get(lang, _nd["uk"])
+                            else:
+                                _pl = f"{_month_abbr(_cp_from, lang)} – {_month_abbr(_cp_to, lang)}"
+                                _lns = [f"<b>📊 {_pl}</b>", ""]
+                                _users = _filt_s[0].get("split_users", [])
+                                _cum_e = 0.0
+                                _cum_b = {u: 0.0 for u in _users}
+                                for _ss in _filt_s:
+                                    _mo = _ss.get("month", "")
+                                    _te = safe_float(_ss.get("total_expenses") or 0)
+                                    _tup_s = _ss.get("top_up_joint", {})
+                                    _ia = not any(safe_float(_tup_s.get(_u, 0)) > 0 for _u in _users) and _te == 0
+                                    _ia_tag = {
+                                        "ru": " (нет активности)", "uk": " (без активності)",
+                                        "en": " (no activity)", "it": " (nessuna attività)"
+                                    }.get(lang, "") if _ia else ""
+                                    _cum_e += _te
+                                    _lns.append(f"📅 <b>{_month_abbr(_mo, lang)}</b>{_ia_tag}  {_te:,.0f} EUR")
+                                    _balances_s = _ss.get("balances", {})
+                                    for _u in _users:
+                                        _ub = safe_float(_balances_s.get(_u) or 0)
+                                        _cum_b[_u] = _cum_b.get(_u, 0.0) + _ub
+                                        _ic = "✅" if _ub >= 0 else "⚠️"
+                                        _bs = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                                        _lns.append(f"  {_ic} {_u}: {_bs} EUR")
+                                    _lns.append("")
+                                _lns.append(f"<b>Σ {_pl}: {_cum_e:,.0f} EUR</b>")
+                                for _u in _users:
+                                    _cb = _cum_b.get(_u, 0.0)
+                                    _ic = "✅" if _cb >= 0 else "⚠️"
+                                    _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
+                                    _lns.append(f"  {_ic} {_u}: {_bs} EUR")
+                                html = "\n".join(_lns)
+                        except Exception as _cpe:
+                            html = f"❌ {_cpe}"
+                else:
+                    _fmt_err = {
+                        "ru": "❌ Неверный формат. Введите ГГГГ-ММ или ГГГГ-ММ:ГГГГ-ММ",
+                        "uk": "❌ Невірний формат. Введіть РРРР-ММ або РРРР-ММ:РРРР-ММ",
+                        "en": "❌ Invalid format. Use YYYY-MM or YYYY-MM:YYYY-MM",
+                        "it": "❌ Formato non valido. Usare AAAA-MM o AAAA-MM:AAAA-MM",
+                    }
+                    html = _fmt_err.get(lang, _fmt_err["uk"])
+                await _safe_reply(update.message, html,
+                                  parse_mode=ParseMode.HTML,
+                                  reply_markup=_with_menu_btn(lang=lang))
                 return
 
             elif pending == "transactions:search":
