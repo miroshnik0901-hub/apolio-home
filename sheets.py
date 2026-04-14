@@ -1006,8 +1006,14 @@ class SheetsClient:
         if cached is not None:
             return cached
         try:
-            result = self._env_sheets(file_id).read_config()
-            self._cfg_cache.set(cache_key, result)
+            # T-202: use _sheets_retry to survive 429/transient errors.
+            # Silent {} return was causing legacy-mode fallback in compute_contribution_status
+            # (min_Mikhail key missing → obligation = total_expenses instead of 1650).
+            ws = self._env_sheets(file_id)._ws("Config")
+            rows = _sheets_retry(ws.get_all_values)
+            result = {row[0]: row[1] for row in rows if len(row) >= 2 and row[0]}
+            if result:
+                self._cfg_cache.set(cache_key, result)
             return result
         except Exception as e:
             import logging as _logging

@@ -239,6 +239,18 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
         # Admin Config holds only global settings.
         env_config = sheets.read_envelope_config(file_id) if file_id else {}
 
+        # T-202: Guard against empty config (happens when 429 silenced the read).
+        # Empty config would fall into legacy solo-mode giving wrong obligation = total_expenses.
+        if not env_config:
+            logger.warning(f"compute_contribution_status: empty env_config for file_id={file_id[:20] if file_id else 'none'} — retrying once")
+            try:
+                env_config = sheets.read_envelope_config(file_id) or {}
+                # Invalidate cache so next read is fresh
+                sheets._cfg_cache.invalidate(f"env_config_{file_id}")
+                env_config = sheets.read_envelope_config(file_id) or {}
+            except Exception as _e:
+                logger.error(f"compute_contribution_status: retry also failed: {_e}")
+
         split_users_raw  = env_config.get("split_users", "")
         split_users      = [u.strip() for u in split_users_raw.split(",") if u.strip()]
         base_contributor = env_config.get("base_contributor", "Mikhail")
@@ -248,6 +260,11 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
 
         # Detect new per-user model (min_<user> / split_<user> keys in Config).
         _has_per_user_min = any(f"min_{u}" in env_config for u in split_users)
+        if not _has_per_user_min and env_config.get("split_users"):
+            # Config loaded but no min_ keys — legacy mode is intentional
+            pass
+        elif not _has_per_user_min and not env_config.get("split_users"):
+            logger.warning(f"compute_contribution_status: no split_users in config, using legacy mode. env_config keys: {list(env_config.keys())[:10]}")
 
         all_txns = sheets.get_transactions(file_id)
         month_txns = [t for t in all_txns if str(t.get("Date", "")).startswith(month)]
