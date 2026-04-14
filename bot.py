@@ -884,12 +884,14 @@ async def _build_week_html(session, lang: str = "ru") -> str:
         return i18n.tu("week_error", lang, detail=str(e))
 
 
-async def _build_contribution_html(session, lang: str = "ru") -> str:
-    """Render contribution/split status — who owes what."""
+async def _build_contribution_html(session, lang: str = "ru", month: str = None) -> str:
+    """Render contribution/split status — who owes what.
+    T-216: month param allows showing a specific month (default=current)."""
     try:
         from intelligence import compute_contribution_status
         envelope_id = session.current_envelope_id or "MM_BUDGET"
-        snap = compute_contribution_status(sheets, envelope_id)
+        snap = compute_contribution_status(sheets, envelope_id, month=month) if month else \
+               compute_contribution_status(sheets, envelope_id)
         if snap.get("error"):
             return f"❌ {snap['error']}"
         if snap.get("status") != "ok":
@@ -4667,10 +4669,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     from intelligence import compute_contribution_history, compute_contribution_status
                     env_id = session.current_envelope_id or "MM_BUDGET"
                     if _cp_from == _cp_to:
-                        # Single month
-                        _snap_s = compute_contribution_status(sheets, env_id, month=_cp_from)
-                        # Re-use _build_contribution_html by patching session temp — simplest
-                        html = await _build_contribution_html(session, lang)
+                        # Single month — use the specified month, not current
+                        # (old code called _build_contribution_html which ignores _cp_from)
+                        html = await _build_contribution_html(session, lang, month=_cp_from)
                     else:
                         try:
                             _all_s = compute_contribution_history(sheets, env_id)
@@ -4723,9 +4724,28 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         "it": "❌ Formato non valido. Usare AAAA-MM o AAAA-MM:AAAA-MM",
                     }
                     html = _fmt_err.get(lang, _fmt_err["uk"])
+                # T-216: add period selector buttons so user can navigate back
+                _cp_periods = {
+                    "ru": [("1 мес", "1M"), ("3 мес", "3M"), ("6 мес", "6M"),
+                           ("12 мес", "12M"), ("Тек. год", "CY"), ("✏️ Другой", "CUSTOM")],
+                    "uk": [("1 міс", "1M"), ("3 міс", "3M"), ("6 міс", "6M"),
+                           ("12 міс", "12M"), ("Поточ. рік", "CY"), ("✏️ Інший", "CUSTOM")],
+                    "en": [("1M", "1M"), ("3M", "3M"), ("6M", "6M"),
+                           ("12M", "12M"), ("CY", "CY"), ("✏️ Custom", "CUSTOM")],
+                    "it": [("1M", "1M"), ("3M", "3M"), ("6M", "6M"),
+                           ("12M", "12M"), ("A.corr", "CY"), ("✏️ Altro", "CUSTOM")],
+                }
+                _cpl = _cp_periods.get(lang, _cp_periods["uk"])
+                _cp_kb = _with_menu_btn(
+                    [InlineKeyboardButton(lbl, callback_data=f"cb_contrib_period:{cd}")
+                     for lbl, cd in _cpl[:3]],
+                    [InlineKeyboardButton(lbl, callback_data=f"cb_contrib_period:{cd}")
+                     for lbl, cd in _cpl[3:]],
+                    lang=lang,
+                )
                 await _safe_reply(update.message, html,
                                   parse_mode=ParseMode.HTML,
-                                  reply_markup=_with_menu_btn(lang=lang))
+                                  reply_markup=_cp_kb)
                 return
 
             elif pending == "transactions:search":

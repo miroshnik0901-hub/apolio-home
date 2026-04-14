@@ -539,26 +539,35 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
         if _vparams:
             issues = _validate_transaction_params(_vparams, ref)
             if issues:
-                unknown = issues["unknown"]
-                sug = issues["suggestions"]
-                known = issues["known"]
-                lines = []
-                for field, val in unknown.items():
-                    s = sug.get(field, [])
-                    hint = (f"Похожие: {', '.join(s)}" if s
-                            else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}")
-                    lines.append(f"• {field} = «{val}» — не найдено. {hint}")
-                return {
-                    "status": "confirm_required",
-                    "type": "unknown_values",
-                    "message": "⚠️ Неизвестные значения:\n" + "\n".join(lines),
-                    "unknown_fields": unknown,
-                    "suggestions": sug,
-                    "hint_for_agent": (
-                        "Ask user: pick a suggested value, or confirm creating new? "
-                        "If confirmed, call enrich_transaction again — the value will be accepted."
-                    ),
-                }
+                unknown = issues.get("unknown", {})
+                sug = issues.get("suggestions", {})
+                # T-216: For enrichment, subcategory is metadata — don't block on it.
+                # If subcategory is invalid → silently drop it, continue with other fields.
+                # Only block on category/who unknown values (more critical).
+                if "subcategory" in unknown:
+                    del unknown["subcategory"]
+                    params.pop("subcategory", None)  # drop invalid subcategory
+                    if "subcategory" in sug:
+                        del sug["subcategory"]
+                if unknown:
+                    known = issues.get("known", {})
+                    lines = []
+                    for field, val in unknown.items():
+                        s = sug.get(field, [])
+                        hint = (f"Похожие: {', '.join(s)}" if s
+                                else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}")
+                        lines.append(f"• {field} = «{val}» — не найдено. {hint}")
+                    return {
+                        "status": "confirm_required",
+                        "type": "unknown_values",
+                        "message": "⚠️ Неизвестные значения:\n" + "\n".join(lines),
+                        "unknown_fields": unknown,
+                        "suggestions": sug,
+                        "hint_for_agent": (
+                            "Ask user: pick a suggested value, or confirm creating new? "
+                            "If confirmed, call enrich_transaction again — the value will be accepted."
+                        ),
+                    }
             # Apply auto-corrections from validation
             if "category" in _vparams:
                 params["category"] = _vparams["category"]
