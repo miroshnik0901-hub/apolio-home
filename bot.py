@@ -33,6 +33,7 @@ import i18n
 # Per-user lock to serialize agent.run() calls — prevents concurrent API calls
 # that crash due to rate limits and session state races on multi-photo sends.
 _user_agent_locks: dict[int, asyncio.Lock] = {}
+_status_cache: dict = {}  # T-203: stale fallback when 429 hits status view
 
 from telegram import (
     Update, BotCommand,
@@ -636,10 +637,32 @@ async def _build_status_html(session, lang: str = "ru") -> str:
         except Exception:
             pass
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        # T-203: cache last successful status for 429 fallback
+        _status_cache["last"] = result
+        return result
     except Exception as e:
         logger.error(f"_build_status_html failed: {e}", exc_info=True)
-        return i18n.tu("status_error", lang, detail=str(e))
+        # T-203: friendly 429 message + stale cache fallback
+        _is_quota = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota exceeded" in str(e)
+        if _is_quota:
+            _stale = _status_cache.get("last")
+            _quota_note = {
+                "ru": "⏳ Временный лимит запросов. Показаны данные из кэша:",
+                "uk": "⏳ Тимчасовий ліміт запитів. Показано дані з кешу:",
+                "en": "⏳ Rate limit hit. Showing cached data:",
+                "it": "⏳ Limite temporaneo. Dati dalla cache:",
+            }
+            if _stale:
+                return f"{_quota_note.get(lang, _quota_note['uk'])}\n\n{_stale}"
+            _wait_msg = {
+                "ru": "⏳ Временный лимит Sheets API (60 запросов/мин). Попробуйте через 30 секунд.",
+                "uk": "⏳ Тимчасовий ліміт Sheets API (60 запитів/хв). Спробуйте через 30 секунд.",
+                "en": "⏳ Sheets API rate limit (60 req/min). Please try again in 30 seconds.",
+                "it": "⏳ Limite API Sheets (60 req/min). Riprovare tra 30 secondi.",
+            }
+            return _wait_msg.get(lang, _wait_msg["uk"])
+        return i18n.tu("status_error", lang, detail=str(e)[:200])
 
 
 async def _build_report_html(session, period: str = "current", lang: str = "ru") -> str:
@@ -779,7 +802,14 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"_build_report_html failed: {e}", exc_info=True)
-        return i18n.tu("report_error", lang, detail=str(e))
+        _is_q = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
+        if _is_q:
+            _wm = {"ru": "⏳ Лимит Sheets API. Повторите через 30 сек.",
+                   "uk": "⏳ Ліміт Sheets API. Спробуйте через 30 сек.",
+                   "en": "⏳ Sheets API rate limit. Retry in 30 sec.",
+                   "it": "⏳ Limite API. Riprova tra 30 sec."}
+            return _wm.get(lang, _wm["uk"])
+        return i18n.tu("report_error", lang, detail=str(e)[:200])
 
 
 async def _build_week_html(session, lang: str = "ru") -> str:

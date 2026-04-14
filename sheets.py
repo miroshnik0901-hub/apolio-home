@@ -921,10 +921,10 @@ class SheetsClient:
     def __init__(self):
         self._gc = get_sheets_client()
         self._admin = AdminSheets(self._gc)
-        self._cache = SheetsCache(ttl_seconds=60)          # default TTL
-        self._static_cache = SheetsCache(ttl_seconds=300)  # envelopes/users/dashcfg
-        self._cfg_cache = SheetsCache(ttl_seconds=120)     # env configs
-        self.snapshot_cache = SheetsCache(ttl_seconds=30)  # intelligence snapshots
+        self._cache = SheetsCache(ttl_seconds=120)         # T-203: 120s (was 60) — reduces quota pressure
+        self._static_cache = SheetsCache(ttl_seconds=600) # T-203: 10 min (was 5) — envelopes/users change rarely
+        self._cfg_cache = SheetsCache(ttl_seconds=600)    # T-203: 10 min (was 2) — config almost never changes
+        self.snapshot_cache = SheetsCache(ttl_seconds=60) # intelligence snapshots
 
     @property
     def admin(self):
