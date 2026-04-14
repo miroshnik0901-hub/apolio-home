@@ -3307,6 +3307,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         enrich_params["who"] = receipt["who"]
                     if dup_account:
                         enrich_params["account"] = dup_account
+                    # T-210: preserve original UAH amount from bank statement
+                    # _dup_add_params carries the original currency/amount from the new tx
+                    if dup_add_params:
+                        _orig_amt = dup_add_params.get("amount")
+                        _orig_cur = dup_add_params.get("currency", "")
+                        if _orig_amt and _orig_cur and _orig_cur.upper() != "EUR":
+                            enrich_params["amount_orig"] = _orig_amt
+                            enrich_params["currency_orig"] = _orig_cur.upper()
                     result = await tool_enrich_transaction(
                         enrich_params, session, sheets, auth,
                     )
@@ -3328,20 +3336,23 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # Save receipt to PostgreSQL
                 if receipt:
                     try:
-                        await agent._tool_save_receipt(
-                            {
-                                "transaction_id": tx_id,
-                                "merchant": receipt.get("merchant", ""),
-                                "date": receipt.get("date", ""),
-                                "total_amount": receipt.get("total_amount", 0),
-                                "currency": receipt.get("currency", "EUR"),
-                                "items": receipt.get("items", []),
-                                "ai_summary": receipt.get("ai_summary", ""),
-                                "raw_text": receipt.get("raw_text", ""),
-                                "tg_file_id": receipt.get("tg_file_id", ""),
-                            },
-                            session, sheets, auth,
-                        )
+                        # T-210: include original UAH amount in parsed_data
+                        _pd_payload = {
+                            "transaction_id": tx_id,
+                            "merchant": receipt.get("merchant", ""),
+                            "date": receipt.get("date", ""),
+                            "total_amount": receipt.get("total_amount", 0),
+                            "currency": receipt.get("currency", "EUR"),
+                            "items": receipt.get("items", []),
+                            "ai_summary": receipt.get("ai_summary", ""),
+                            "raw_text": receipt.get("raw_text", ""),
+                            "tg_file_id": receipt.get("tg_file_id", ""),
+                        }
+                        # Preserve original currency amount if enriching from bank statement
+                        if dup_add_params and dup_add_params.get("currency", "EUR").upper() != "EUR":
+                            _pd_payload["amount_orig"] = dup_add_params.get("amount")
+                            _pd_payload["currency_orig"] = dup_add_params.get("currency", "").upper()
+                        await agent._tool_save_receipt(_pd_payload, session, sheets, auth)
                     except Exception:
                         pass
 

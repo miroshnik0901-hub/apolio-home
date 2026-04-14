@@ -496,21 +496,28 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
         pass  # validation is best-effort
 
     # Fields that can be enriched from receipt data
+    # T-210: also support amount_orig / currency_orig (e.g. UAH original from bank statement)
     col_map = {
         "note": "Note",
         "category": "Category",
         "subcategory": "Subcategory",
         "who": "Who",
         "account": "Account",
+        "amount_orig": "Amount_Orig",
+        "currency_orig": "Currency_Orig",
+    }
+    field_sources = {
+        "note": params.get("note"),
+        "category": params.get("category"),
+        "subcategory": params.get("subcategory"),
+        "who": params.get("who"),
+        "account": params.get("account"),
+        "amount_orig": str(params["amount_orig"]) if params.get("amount_orig") else None,
+        "currency_orig": params.get("currency_orig"),
     }
     fields_to_write = {
-        col_map[k]: v for k, v in {
-            "note": params.get("note"),
-            "category": params.get("category"),
-            "subcategory": params.get("subcategory"),
-            "who": params.get("who"),
-            "account": params.get("account"),
-        }.items() if v is not None and v != ""
+        col_map[k]: v for k, v in field_sources.items()
+        if v is not None and v != ""
     }
 
     if not fields_to_write:
