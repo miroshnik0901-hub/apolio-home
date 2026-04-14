@@ -108,6 +108,8 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "gas": "Fuel", "petrol": "Fuel", "gasoline": "Fuel",
     "бензин": "Fuel", "паливо": "Fuel", "заправка": "Fuel",
     "fuel station": "Fuel", "gas station": "Fuel",
+    "esso": "Fuel", "shell": "Fuel", "agip": "Fuel", "ip": "Fuel",
+    "tamoil": "Fuel", "q8": "Fuel", "eni": "Fuel",
     "паркінг": "Parking", "парковка": "Parking", "parking lot": "Parking",
     "метро": "Public Transport", "metro": "Public Transport",
     "bus": "Public Transport", "автобус": "Public Transport",
