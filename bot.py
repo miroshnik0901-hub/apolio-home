@@ -3336,25 +3336,34 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # Save receipt to PostgreSQL
                 if receipt:
                     try:
-                        # T-210: include original UAH amount in parsed_data
+                        # T-210: send full enrichment data to parsed_data merge
                         _pd_payload = {
                             "transaction_id": tx_id,
                             "merchant": receipt.get("merchant", ""),
-                            "date": receipt.get("date", ""),
+                            "date": receipt.get("date") or (dup_add_params or {}).get("date", ""),
                             "total_amount": receipt.get("total_amount", 0),
                             "currency": receipt.get("currency", "EUR"),
                             "items": receipt.get("items", []),
                             "ai_summary": receipt.get("ai_summary", ""),
                             "raw_text": receipt.get("raw_text", ""),
                             "tg_file_id": receipt.get("tg_file_id", ""),
+                            # enrichment metadata
+                            "category": receipt.get("category", ""),
+                            "subcategory": receipt.get("subcategory", ""),
+                            "who": receipt.get("who", ""),
+                            "account": dup_account or "",
                         }
-                        # Preserve original currency amount if enriching from bank statement
-                        if dup_add_params and dup_add_params.get("currency", "EUR").upper() != "EUR":
-                            _pd_payload["amount_orig"] = dup_add_params.get("amount")
-                            _pd_payload["currency_orig"] = dup_add_params.get("currency", "").upper()
+                        # T-210: include UAH original amount when enriching from non-EUR bank statement
+                        if dup_add_params:
+                            _orig_cur = dup_add_params.get("currency", "EUR")
+                            if _orig_cur and _orig_cur.upper() != "EUR":
+                                _pd_payload["amount_orig"] = dup_add_params.get("amount")
+                                _pd_payload["currency_orig"] = _orig_cur.upper()
+                                # Also store note from bank statement as additional context
+                                _pd_payload["note"] = dup_add_params.get("note", "")
                         await agent._tool_save_receipt(_pd_payload, session, sheets, auth)
-                    except Exception:
-                        pass
+                    except Exception as _save_e:
+                        logger.warning(f"T-210: save_receipt for enrichment failed: {_save_e}")
 
                 # Log
                 try:

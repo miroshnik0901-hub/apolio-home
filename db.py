@@ -908,6 +908,37 @@ async def get_parsed_data(
         return []
 
 
+async def get_parsed_data_by_tx_id(transaction_id: str) -> Optional[dict]:
+    """T-210: Look up parsed_data row by transaction_id (direct lookup, no limit)."""
+    if not transaction_id:
+        return None
+    pool = await get_pool()
+    if pool is None:
+        return None
+    try:
+        import json as _json
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT id, ts, data_type, envelope_id, payload_json, transaction_id
+                   FROM parsed_data
+                   WHERE transaction_id=$1
+                   ORDER BY ts DESC LIMIT 1""",
+                transaction_id,
+            )
+            if row:
+                payload = row["payload_json"]
+                if isinstance(payload, str):
+                    payload = _json.loads(payload)
+                return {
+                    "id": row["id"],
+                    "transaction_id": row["transaction_id"] or "",
+                    "payload": payload or {},
+                }
+    except Exception as e:
+        logger.warning(f"[DB] get_parsed_data_by_tx_id failed: {e}")
+    return None
+
+
 async def update_parsed_data_payload(
     row_id: int,
     payload: dict,

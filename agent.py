@@ -1513,15 +1513,9 @@ class ApolioAgent:
         try:
             import db as _db
             if _db.is_ready() and tx_id:
-                # Dedup: skip if this tx_id is already stored
-                existing = await _db.get_parsed_data(
-                    user_id=session.user_id,
-                    data_type="receipt",
-                    limit=5,
-                )
-                already_saved = [
-                    r for r in existing if r.get("transaction_id") == tx_id
-                ]
+                # T-210: direct lookup by tx_id (no limit — previously limit=5 missed old records)
+                old_row = await _db.get_parsed_data_by_tx_id(tx_id)
+                # Build new payload — include all extra keys (amount_orig, currency_orig, etc.)
                 new_payload = {
                     "merchant": merchant,
                     "date": date,
@@ -1532,7 +1526,12 @@ class ApolioAgent:
                     "raw_text": raw_text,
                     "tg_file_id": tg_file_id,
                 }
-                if not already_saved:
+                # Include any extra enrichment fields passed (amount_orig, currency_orig, etc.)
+                for _ek in ("amount_orig", "currency_orig", "note", "category", "subcategory", "who", "account"):
+                    if params.get(_ek) is not None and params.get(_ek) != "":
+                        new_payload[_ek] = params[_ek]
+
+                if not old_row:
                     await _db.save_parsed_data(
                         user_id=session.user_id,
                         data_type="receipt",
@@ -1542,13 +1541,12 @@ class ApolioAgent:
                     )
                     logger.info(f"Receipt saved to parsed_data: tx={tx_id}, merchant={merchant}")
                 else:
-                    # UPDATE existing parsed_data — merge new receipt info
-                    old_row = already_saved[0]
+                    # T-210: MERGE new data with existing — never overwrite, always accumulate
                     old_payload = old_row.get("payload", {}) if isinstance(old_row.get("payload"), dict) else {}
-                    # Merge: prefer non-empty new values, combine items and summaries
                     merged = {**old_payload}
                     for k, v in new_payload.items():
                         if k == "items":
+                            # Take the richer items list
                             if v and len(v) > len(merged.get("items", [])):
                                 merged["items"] = v
                         elif k == "ai_summary":
@@ -1559,13 +1557,20 @@ class ApolioAgent:
                             old_raw = merged.get("raw_text", "")
                             if v and v not in old_raw:
                                 merged["raw_text"] = (old_raw + "\n---\n" + v)[:3000] if old_raw else v
-                        elif v:
-                            merged[k] = v
+                        elif v is not None and v != "" and v != 0:
+                            # For all other fields: only set if new value is non-empty
+                            # and either no existing value OR existing is empty/0
+                            existing_val = merged.get(k)
+                            if not existing_val or existing_val == 0:
+                                merged[k] = v
+                            elif k in ("amount_orig", "currency_orig", "note"):
+                                # These are override-safe — new enrichment data takes precedence
+                                merged[k] = v
                     await _db.update_parsed_data_payload(
                         row_id=old_row.get("id"),
                         payload=merged,
                     )
-                    logger.info(f"Receipt updated in parsed_data: tx={tx_id}, merged fields")
+                    logger.info(f"Receipt merged in parsed_data: tx={tx_id}, new fields: {list(new_payload.keys())}")
         except Exception as e:
             logger.warning(f"save_receipt PostgreSQL write failed: {e}")
 
