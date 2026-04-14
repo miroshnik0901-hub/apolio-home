@@ -374,7 +374,21 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         sheets.add_transaction(envelope["file_id"], row)
     except Exception as e:
         logger.error(f"sheets.add_transaction failed for {tx_id}: {e}", exc_info=True)
-        return {"error": f"TRANSACTION FAILED to save: {e}", "tx_id": tx_id}
+        # T-212: clean error message (hide raw JSON dict from user)
+        import re as _re
+        _err_str = str(e)
+        _code_m = _re.search(r"'code':\s*(\d+)", _err_str)
+        _msg_m  = _re.search(r"'message':\s*'([^']+)'", _err_str)
+        if _code_m:
+            _code = int(_code_m.group(1))
+            _msg = _msg_m.group(1) if _msg_m else "Sheets API error"
+            _friendly = {
+                429: "Quota exceeded (60 reads/min). Try again in 30 sec.",
+                500: "Sheets server error (transient). Retry.",
+                503: "Sheets unavailable (transient). Retry.",
+            }.get(_code, f"Sheets error {_code}")
+            return {"error": f"Sheets {_code}: {_friendly}", "tx_id": tx_id}
+        return {"error": f"Sheets write failed: {_err_str[:120]}", "tx_id": tx_id}
 
     # T-176: sort Transactions sheet by Date (asc) after every add.
     # T-183: skip_sort=True in batch mode (cb_split_separate) — caller sorts once at end.

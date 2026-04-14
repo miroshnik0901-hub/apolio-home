@@ -13,17 +13,22 @@ from typing import Optional
 
 _sheets_logger = _log_module.getLogger(__name__)
 
-# T-172: retry wrapper for Google Sheets API 429 / 503 transient errors.
-# Applied to any sheets read or write call that can hit quota limits.
-def _sheets_retry(fn, *args, max_attempts: int = 3, base_delay: float = 5.0, **kwargs):
-    """Call fn(*args, **kwargs) with exponential backoff on gspread APIError 429/503."""
+# T-172/T-212: retry wrapper for Google Sheets API 429/500/503 transient errors.
+# T-212: reduced base_delay 5→2 and max_attempts 3→2 to cap worst-case at 6s per call.
+#   Old: 5+10=15s per failure, 3 failures × 15s = 45s+.
+#   New: 2+4=6s per failure, much faster failure detection.
+# Also retries 500 (Internal Error) once — Google 500s are often transient.
+def _sheets_retry(fn, *args, max_attempts: int = 2, base_delay: float = 2.0, **kwargs):
+    """Call fn(*args, **kwargs) with capped backoff on gspread APIError 429/500/503."""
     last_exc = None
     for attempt in range(max_attempts):
         try:
             return fn(*args, **kwargs)
         except gspread.exceptions.APIError as e:
             status = e.response.status_code if hasattr(e, "response") else 0
-            if status in (429, 503) and attempt < max_attempts - 1:
+            # 429 = quota, 500 = transient server error, 503 = service unavailable
+            retryable = status in (429, 500, 503)
+            if retryable and attempt < max_attempts - 1:
                 delay = base_delay * (2 ** attempt)
                 _sheets_logger.warning(
                     f"Sheets API {status} on attempt {attempt+1}/{max_attempts}, "
