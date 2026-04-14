@@ -607,15 +607,25 @@ async def _build_status_html(session, lang: str = "ru") -> str:
             pace_str = (f"+{pace_delta:,.0f}" if pace_delta > 0 else f"{pace_delta:,.0f}")
             lines.append(i18n.tu("status_pace", lang, rate=daily_rate, proj=projected, delta=pace_str))
 
-        # Status is a COMPACT widget — no category/who breakdown.
-        # Detailed breakdown is in _build_report_html (📋 Аналітика).
+        # T-205: Бюджет = self-sufficient in 1 tap.
+        # Show per-person spending + top-3 categories so user rarely needs "📊 Деталі".
         if summary.get("status") == "ok":
             by_who = summary.get("by_who", {})
-            # Only show top spender as a one-liner if 2+ people
+            cats = summary.get("categories", {})
+            total_s = safe_float(summary.get("total_spent") or 0)
+            # Per-person spending (if 2+ people)
             if len(by_who) > 1:
-                top_who = max(by_who.items(), key=lambda x: x[1])
                 lines.append("")
                 lines.append(f"👥 {' · '.join(f'{w}: {a:,.0f}' for w, a in sorted(by_who.items(), key=lambda x: -x[1]))}")
+            # Top-3 categories
+            if cats and total_s > 0:
+                lines.append("")
+                _cats_hdr = {"ru": "📊 По категориям:", "uk": "📊 За категоріями:",
+                              "en": "📊 By category:", "it": "📊 Per categoria:"}
+                lines.append(_cats_hdr.get(lang, _cats_hdr["uk"]))
+                for cat, amt in sorted(cats.items(), key=lambda x: -x[1])[:3]:
+                    pct = round(amt / total_s * 100) if total_s else 0
+                    lines.append(f"  {_cat_icon(cat)} {i18n.t_cat(cat, lang)}: {amt:,.0f} EUR ({pct}%)")
 
         # T-094: User balance — credit model (xlsx formula)
         try:
@@ -1858,9 +1868,15 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = getattr(session, "lang", "ru")
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     html = await _build_status_html(session, lang)
+    # T-205: post-budget buttons — "📊 Деталі" + "📝 Записи" + quick month nav
+    _cur_m = _current_month_str()
+    _prev_m = _offset_month(_cur_m, -1)
     kb = _with_menu_btn(
-        [InlineKeyboardButton(i18n.t_menu("report", lang), callback_data="cb_report"),
+        [InlineKeyboardButton(i18n.t_menu("report", lang),       callback_data="cb_report"),
          InlineKeyboardButton(i18n.t_menu("transactions", lang), callback_data="cb_transactions")],
+        [InlineKeyboardButton(f"◀ {_month_abbr(_prev_m, lang)}", callback_data=f"cb_report_m:{_prev_m}"),
+         InlineKeyboardButton(f"▶ {_month_abbr(_cur_m, lang)}",  callback_data=f"cb_report_m:{_cur_m}")],
+        lang=lang,
     )
     await update.message.reply_text(html, parse_mode=ParseMode.HTML, reply_markup=kb)
 

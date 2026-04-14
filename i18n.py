@@ -71,7 +71,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
     "ru": {
         # top level
         "status":        "📊 Статус",
-        "report":        "📋 Аналитика",
+        "report":        "📊 Детали",
         "transactions":  "📝 Записи",
         "envelopes_top": "📁 Конверты",
         "settings":      "⚙️ Система",
@@ -116,7 +116,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
     },
     "uk": {
         "status":        "📊 Статус",
-        "report":        "📋 Аналітика",
+        "report":        "📊 Деталі",
         "transactions":  "📝 Записи",
         "envelopes_top": "📁 Конверти",
         "settings":      "⚙️ Система",
@@ -155,7 +155,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
     },
     "en": {
         "status":        "📊 Status",
-        "report":        "📋 Analytics",
+        "report":        "📊 Details",
         "transactions":  "📝 Records",
         "envelopes_top": "📁 Envelopes",
         "settings":      "⚙️ System",
@@ -194,7 +194,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
     },
     "it": {
         "status":        "📊 Stato",
-        "report":        "📋 Analisi",
+        "report":        "📊 Dettagli",
         "transactions":  "📝 Voci",
         "envelopes_top": "📁 Buste",
         "settings":      "⚙️ Sistema",
