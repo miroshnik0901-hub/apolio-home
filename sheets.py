@@ -546,7 +546,7 @@ class EnvelopeSheets:
             return False
         headers = all_vals[0]
         for row_idx, row in enumerate(all_vals[1:], start=2):
-            id_col = headers.index("ID") if "ID" in headers else 0
+            id_col = headers.index("ID") if "ID" in headers else 10
             if len(row) > id_col and row[id_col].strip() == tx_id.strip():
                 try:
                     col = headers.index(field) + 1
@@ -568,7 +568,7 @@ class EnvelopeSheets:
             return []
         headers = all_vals[0]
         for row_idx, row in enumerate(all_vals[1:], start=2):
-            id_col = headers.index("ID") if "ID" in headers else 0
+            id_col = headers.index("ID") if "ID" in headers else 10
             if len(row) > id_col and row[id_col].strip() == tx_id.strip():
                 updated = []
                 for field, value in fields.items():
@@ -612,7 +612,7 @@ class EnvelopeSheets:
         try:
             id_col = headers.index("ID")
         except ValueError:
-            return {"deleted": deleted_ids, "not_found": list(tx_ids)}
+            id_col = 10  # fallback: col K = ID per schema (handles sheets with empty headers)
         tx_ids_stripped = {str(tid).strip(): str(tid) for tid in tx_ids}
         found_rows: dict = {}  # stripped_tx_id → row_number (1-based)
         for i, row in enumerate(all_values[1:], start=2):
@@ -643,7 +643,7 @@ class EnvelopeSheets:
         try:
             id_col = headers.index("ID")
         except ValueError:
-            return False
+            id_col = 10  # fallback: col K per schema
 
         # Normalise tx_id: strip whitespace for comparison
         tx_id_stripped = tx_id.strip()
