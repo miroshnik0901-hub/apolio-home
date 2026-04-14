@@ -115,6 +115,30 @@ except Exception as e:
     check("FX_Rates tab", False, str(e)[:80])
 
 # ── 6. Envelope Config — read-only check (no data changes) ──────────────────
+# ── 5b. Summary sheet REF errors check (T-222) ──────────────────────────────
+print("\n5b. Summary sheet — check for #REF! errors (T-222)")
+try:
+    wb_check = sheets._gc.open_by_key(PROD_BUDGET)
+    ws_sum = wb_check.worksheet("Summary")
+    sum_vals = ws_sum.get_all_values()
+    ref_count = sum(1 for row in sum_vals for cell in row if "#REF!" in str(cell))
+    if ref_count > 0:
+        print(f"   ⚠️  Found {ref_count} #REF! errors in Summary sheet")
+        confirm = input("   Fix Cap column (N) formulas with VLOOKUP to Config? [y/N]: ").strip().lower()
+        if confirm == "y":
+            from sheets import _sheets_retry
+            cap_formula = '=IFERROR(VALUE(VLOOKUP("monthly_cap",Config!A:B,2,FALSE)),0)'
+            n_rows = len(sum_vals) - 1
+            _sheets_retry(ws_sum.update, f"N2:N{n_rows+1}", [[cap_formula]]*n_rows,
+                          value_input_option="USER_ENTERED")
+            check("Summary Cap formulas fixed", True)
+        else:
+            check("Summary #REF! errors NOT fixed", False, f"{ref_count} errors remain")
+    else:
+        check("Summary sheet OK (no #REF! errors)", True)
+except Exception as e:
+    check("Summary sheet check", False, str(e)[:80])
+
 print("\n6. Envelope Config — read-only check (data NOT touched)")
 try:
     cfg = sheets.read_envelope_config(PROD_BUDGET)
