@@ -32,37 +32,38 @@ DEFAULT_MENU: dict[str, dict] = {
     # ══════════════════════════════════════════════════════════════════════
 
     # ── Root level: 6 buttons in 3 rows ──────────────────────────────────
+    # T-205: labels use clear action-oriented names; emoji consistent with context
     "rep_curr": {
-        "label": "📋 Отчёт · этот месяц", "parent": "",
+        "label": "📊 Деталі: цей місяць", "parent": "",
         "type": "cmd", "command": "report", "params": {"period": "current"},
         "order": 1, "roles": [],
     },
     "rep_last": {
-        "label": "◀ Прошлый месяц", "parent": "",
+        "label": "◀ Деталі: минулий місяць", "parent": "",
         "type": "cmd", "command": "report", "params": {"period": "last"},
         "order": 2, "roles": [],
     },
     "txn_recent": {
-        "label": "📝 Последние записи", "parent": "",
+        "label": "📝 Останні записи", "parent": "",
         "type": "cmd", "command": "transactions", "params": {"limit": 10},
         "order": 3, "roles": [],
     },
     "txn_search": {
-        "label": "🔍 Найти...", "parent": "",
+        "label": "🔍 Пошук…", "parent": "",
         "type": "free_text", "command": "",
         "params": {
-            "prompt": "Введите запрос:\nПо названию, категории, сумме или дате\nНапример: Esselunga, кофе, > 50, 2026-03-15",
+            "prompt": "Введіть запит:\nЗа назвою, категорією, сумою або датою\nНаприклад: Mercato, їжа, > 50, 2026-04-11",
             "pending_key": "transactions:search",
         },
         "order": 4, "roles": [],
     },
     "rep_contribution": {
-        "label": "⚖️ Баланс (кто кому)", "parent": "",
+        "label": "🤝 Внески та розрахунки", "parent": "",
         "type": "cmd", "command": "contribution", "params": {},
         "order": 5, "roles": [],
     },
     "settings": {
-        "label": "⚙️ Настройки", "parent": "",
+        "label": "⚙️ Система", "parent": "",
         "type": "submenu", "command": "", "params": {},
         "order": 6, "roles": [],
     },
@@ -129,12 +130,13 @@ DEFAULT_MENU: dict[str, dict] = {
 # Rows for auto-creating / re-creating the BotMenu sheet (v2 — flat root)
 _DEFAULT_ROWS = [
     # Root level — 6 buttons in 3 rows, max 2 taps to any action
-    ("rep_curr",         "📋 Отчёт · этот месяц",  "",        "cmd",       "report",       '{"period":"current"}',   1, "TRUE", ""),
-    ("rep_last",         "◀ Прошлый месяц",         "",        "cmd",       "report",       '{"period":"last"}',      2, "TRUE", ""),
-    ("txn_recent",       "📝 Последние записи",     "",        "cmd",       "transactions", '{"limit":10}',           3, "TRUE", ""),
-    ("txn_search",       "🔍 Найти...",             "",        "free_text", "",             '{"prompt":"Введите запрос:\\nПо названию, категории, сумме или дате","pending_key":"transactions:search"}', 4, "TRUE", ""),
-    ("rep_contribution", "⚖️ Баланс (кто кому)",    "",        "cmd",       "contribution", "",                       5, "TRUE", ""),
-    ("settings",         "⚙️ Настройки",            "",        "submenu",   "",             "",                       6, "TRUE", ""),
+    # T-205: clear action names, consistent emoji
+    ("rep_curr",         "📊 Деталі: цей місяць",   "",        "cmd",       "report",       '{"period":"current"}',   1, "TRUE", ""),
+    ("rep_last",         "◀ Деталі: мин. місяць",   "",        "cmd",       "report",       '{"period":"last"}',      2, "TRUE", ""),
+    ("txn_recent",       "📝 Останні записи",       "",        "cmd",       "transactions", '{"limit":10}',           3, "TRUE", ""),
+    ("txn_search",       "🔍 Пошук…",              "",        "free_text", "",             '{"prompt":"Введіть запит:\\nЗа назвою, категорією, сумою або датою","pending_key":"transactions:search"}', 4, "TRUE", ""),
+    ("rep_contribution", "🤝 Внески та розрахунки", "",        "cmd",       "contribution", "",                       5, "TRUE", ""),
+    ("settings",         "⚙️ Система",              "",        "submenu",   "",             "",                       6, "TRUE", ""),
     # Settings submenu
     ("set_lang",         "🌍 Язык",                 "settings",     "submenu",   "",             "",                   1, "TRUE", ""),
     ("set_lang_ru",      "🇷🇺 Русский",              "set_lang",     "cmd",       "set_language", '{"lang":"ru"}',      1, "TRUE", ""),

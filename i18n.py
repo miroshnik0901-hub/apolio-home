@@ -80,7 +80,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "rep_last":      "◀ Прошлый месяц",
         "rep_week":      "📅 Эта неделя",
         # records submenu
-        "txn_recent":    "📋 Последние 10",
+        "txn_recent":    "📝 Последние записи",
         "txn_week":      "📅 За неделю",
         "txn_month":     "📆 За месяц",
         # system submenu
@@ -101,7 +101,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_users":     "👥 Пользователи",
         "set_learning":  "🧠 База знаний",
         # contribution & trends
-        "rep_contribution": "💸 Взносы и расчёты",
+        "rep_contribution": "🤝 Взносы и расчёты",
         "rep_trends":    "📈 Тренды",
         "rep_custom":    "🗓 Другой период…",
         "txn_search":    "🔍 Поиск…",
@@ -123,7 +123,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "rep_curr":      "▶ Цей місяць",
         "rep_last":      "◀ Минулий місяць",
         "rep_week":      "📅 Цей тиждень",
-        "txn_recent":    "📋 Останні 10",
+        "txn_recent":    "📝 Останні записи",
         "txn_week":      "📅 За тиждень",
         "txn_month":     "📆 За місяць",
         "set_lang":      "🌍 Мова",
@@ -143,7 +143,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_users":     "👥 Користувачі",
         "set_learning":  "🧠 База знань",
         # contribution & trends
-        "rep_contribution": "💸 Внески та розрахунки",
+        "rep_contribution": "🤝 Внески та розрахунки",
         "rep_trends":    "📈 Тренди",
         "rep_custom":    "🗓 Інший період…",
         "txn_search":    "🔍 Пошук…",
@@ -162,7 +162,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "rep_curr":      "▶ This Month",
         "rep_last":      "◀ Last Month",
         "rep_week":      "📅 This Week",
-        "txn_recent":    "📋 Last 10",
+        "txn_recent":    "📝 Recent Records",
         "txn_week":      "📅 This Week",
         "txn_month":     "📆 This Month",
         "set_lang":      "🌍 Language",
@@ -182,7 +182,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_users":     "👥 Users",
         "set_learning":  "🧠 Knowledge Base",
         # contribution & trends
-        "rep_contribution": "💸 Contributions",
+        "rep_contribution": "🤝 Contributions",
         "rep_trends":    "📈 Trends",
         "rep_custom":    "🗓 Other Period…",
         "txn_search":    "🔍 Search…",
@@ -201,7 +201,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "rep_curr":      "▶ Questo Mese",
         "rep_last":      "◀ Mese Scorso",
         "rep_week":      "📅 Questa Settimana",
-        "txn_recent":    "📋 Ultimi 10",
+        "txn_recent":    "📝 Ultime voci",
         "txn_week":      "📅 Questa Settimana",
         "txn_month":     "📆 Questo Mese",
         "set_lang":      "🌍 Lingua",
@@ -221,7 +221,7 @@ MENU_LABELS: dict[str, dict[str, str]] = {
         "set_users":     "👥 Utenti",
         "set_learning":  "🧠 Base Conoscenza",
         # contribution & trends
-        "rep_contribution": "💸 Contributi",
+        "rep_contribution": "🤝 Contributi",
         "rep_trends":    "📈 Tendenze",
         "rep_custom":    "🗓 Altro Periodo…",
         "txn_search":    "🔍 Cerca…",
@@ -817,10 +817,10 @@ UI: dict[str, dict[str, str]] = {
     },
     # ── Report ─────────────────────────────────────────────────────────────
     "report_heading": {
-        "ru": "📋 <b>Аналитика · {label}</b>  ·  📁 {env}{mode}",
-        "uk": "📋 <b>Аналітика · {label}</b>  ·  📁 {env}{mode}",
-        "en": "📋 <b>Analytics · {label}</b>  ·  📁 {env}{mode}",
-        "it": "📋 <b>Analisi · {label}</b>  ·  📁 {env}{mode}",
+        "ru": "📊 <b>Детали · {label}</b>  ·  📁 {env}{mode}",
+        "uk": "📊 <b>Деталі · {label}</b>  ·  📁 {env}{mode}",
+        "en": "📊 <b>Details · {label}</b>  ·  📁 {env}{mode}",
+        "it": "📊 <b>Dettagli · {label}</b>  ·  📁 {env}{mode}",
     },
     "report_no_records": {
         "ru": "Записей за этот период нет.",
