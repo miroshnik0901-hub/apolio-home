@@ -4031,12 +4031,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 elif _batch_fx_rate:
                     _bie_eur = round(float(item_amount) / _batch_fx_rate, 2)
                 if _bie_eur and _bie_eur > 0:
-                    _bie_note = item_name.lower()
+                    from tools.transactions import _normalize_note as _nn
+                    _bie_note = _nn(item_name)  # T-237: normalized tokens (ò→o)
                     for _bex in _batch_existing:
                         _bex_cur = str(_bex.get("Currency_Orig", "EUR")).upper()
                         _bex_date = str(_bex.get("Date", ""))
-                        if _bex_date != item_date:
-                            continue
+                        # T-237: ±1 day tolerance (bank statement vs posting date)
+                        try:
+                            from datetime import datetime as _dt, timedelta as _td
+                            _d_item = _dt.strptime(item_date, "%Y-%m-%d").date()
+                            _d_bex = _dt.strptime(_bex_date, "%Y-%m-%d").date()
+                            if abs((_d_item - _d_bex).days) > 1:
+                                continue
+                        except Exception:
+                            if _bex_date != item_date:
+                                continue
                         # T-192 FIX: Do NOT skip same-currency records.
                         # batch_mode=True,force_add=True disables internal dup detection.
                         # Also: T-210 enrichment may have set Currency_Orig=UAH on an
@@ -4054,12 +4063,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         _btol = max(_bie_eur * 0.05, 0.5)
                         if abs(_bex_eur - _bie_eur) > _btol:
                             continue
-                        # Note overlap check
-                        _bex_note = str(_bex.get("Note", "")).strip().lower()
-                        if _bie_note and _bex_note:
-                            _bt_in = set(_bie_note.split())
-                            _bt_ex = set(_bex_note.split())
-                            if not _bt_in & _bt_ex:
+                        # Note overlap check — T-237: use normalized tokens
+                        _bt_ex = _nn(_bex.get("Note", ""))
+                        if _bie_note and _bt_ex:
+                            if not _bie_note & _bt_ex:
                                 continue
                         # Match found — queue for enrichment prompt (T-192)
                         _is_cross_dup = True

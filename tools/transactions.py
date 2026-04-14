@@ -3,13 +3,38 @@ import uuid
 import csv
 import io
 import logging
-from datetime import datetime
+import unicodedata
+from datetime import datetime, timedelta
 from typing import Any
 
 from sheets import SheetsClient
 from auth import AuthManager, SessionContext, LastAction
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_note(text: str) -> set:
+    """T-237: Normalize note text for dup detection token comparison.
+    Converts accented chars (ò→o, é→e) and splits into tokens.
+    Ensures 'mercatò' == 'mercato', 'esselunga' == 'esselunga', etc.
+    """
+    if not text:
+        return set()
+    # NFKD decomposition → remove combining diacritics → ASCII
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return set(ascii_text.split())
+
+
+def _date_range_for_dup(date: str) -> tuple:
+    """T-237: Return (date_from, date_to) with ±1 day tolerance.
+    Bank statement posting date can differ from transaction date by 1 day.
+    """
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").date()
+        return (str(d - timedelta(days=1)), str(d + timedelta(days=1)))
+    except Exception:
+        return (date, date)
 
 # T-218: Category/subcategory alias map — covers common agent-generated variants.
 # Keys are lowercase aliases; values are canonical names (matching Sheets list).
@@ -353,15 +378,17 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     #   no common tokens are treated as different transactions (not duplicate).
     if not params.get("force_add"):
         try:
+            # T-237: use ±1 day range to catch bank-statement vs posting-date mismatches
+            _dup_from, _dup_to = _date_range_for_dup(date)
             existing = sheets.get_transactions(
                 envelope["file_id"],
-                {"date_from": date, "date_to": date, "limit": 50},
+                {"date_from": _dup_from, "date_to": _dup_to, "limit": 100},
             )
             try:
                 in_amount = float(amount)
             except (ValueError, TypeError):
                 in_amount = 0.0
-            in_note = str(params.get("note", "")).strip().lower()
+            in_note = _normalize_note(params.get("note", ""))  # T-237: normalized tokens
             in_cur = currency.upper()
 
             # T-192: pre-compute EUR equivalent of new tx for cross-currency check.
@@ -401,11 +428,10 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                     if abs(ex_eur - _pre_eur) > eur_tol:
                         continue
                     # EUR amounts match — check note overlap before flagging
-                    ex_note_x = str(ex.get("Note", "")).strip().lower()
-                    if in_note and ex_note_x:
-                        in_toks_x = set(in_note.split())
-                        ex_toks_x = set(ex_note_x.split())
-                        if not in_toks_x & ex_toks_x:
+                    # T-237: normalize accents before token split
+                    ex_toks_x = _normalize_note(ex.get("Note", ""))
+                    if in_note and ex_toks_x:
+                        if not in_note & ex_toks_x:
                             continue
                     return {
                         "status": "confirm_required",
@@ -447,11 +473,10 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                     continue
 
                 # ── Note / merchant: reject if both present and no overlap ──
-                ex_note = str(ex.get("Note", "")).strip().lower()
-                if in_note and ex_note:
-                    in_tokens = set(in_note.split())
-                    ex_tokens = set(ex_note.split())
-                    if not in_tokens & ex_tokens:
+                # T-237: normalize accents (ò→o) before token comparison
+                ex_tokens = _normalize_note(ex.get("Note", ""))
+                if in_note and ex_tokens:
+                    if not in_note & ex_tokens:
                         # No common words → different merchants, not a duplicate
                         continue
 
