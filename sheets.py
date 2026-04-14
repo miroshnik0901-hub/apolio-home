@@ -653,7 +653,12 @@ class EnvelopeSheets:
             # range="A2:..." skips header row 1.
             n_rows = max(ws.row_count, 1000)
             n_cols = max(ws.col_count, 20)
-            col_letter = chr(ord("A") + n_cols - 1)
+            # Fix: chr() overflows for col_count > 26 → use gspread util instead
+            try:
+                import gspread.utils as _gu
+                col_letter = _gu.rowcol_to_a1(1, n_cols)[:-1]  # strip row number
+            except Exception:
+                col_letter = chr(ord("A") + min(n_cols - 1, 25))  # cap at Z
             range_str = f"A2:{col_letter}{n_rows}"
             _sheets_retry(ws.sort, (1, sort_order), range=range_str)
             return n_rows - 1  # approximate
@@ -661,21 +666,36 @@ class EnvelopeSheets:
             import logging as _log
             _log.getLogger(__name__).warning(f"native sort failed, falling back: {_e}")
 
-        # Fallback: read-sort-write (wrapped in retry for 429 resilience)
+        # Fallback: read-sort-write with FULL CLEAR to handle sparse sheets.
+        # Previously only wrote rows 2-N but left old data at rows N+1..end.
+        # Sparse sheets (many empty rows in middle) have data at e.g. rows 856-860
+        # which persisted after a write to rows 2-42.
         all_rows = _sheets_retry(ws.get_all_values)
         if len(all_rows) < 2:
             return 0
         header = all_rows[0]
-        data_rows = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
+        data_rows = [r for r in all_rows[1:] if any(cell.strip() for cell in r[:10])]
         if not data_rows:
             return 0
         width = len(header)
         padded = [r + [""] * max(0, width - len(r)) for r in data_rows]
         reverse = (order.lower() == "desc")
-        padded.sort(key=lambda r: r[0] if r[0].strip() else "9999-99-99", reverse=reverse)
+        padded.sort(key=lambda r: r[0].strip() if r[0].strip() else "9999-99-99", reverse=reverse)
+        # Use gspread utils for multi-letter column notation (handles > 26 cols)
+        try:
+            import gspread.utils as _gu
+            _col_ltr = _gu.rowcol_to_a1(1, width)[:-1]
+        except Exception:
+            _col_ltr = chr(ord("A") + min(width - 1, 25))
+        total_rows = len(all_rows)
+        # Step 1: clear the ENTIRE data area (including sparse tail where old rows hide)
+        if total_rows > 1:
+            empty_block = [[""] * width for _ in range(total_rows - 1)]
+            _sheets_retry(ws.update, f"A2:{_col_ltr}{total_rows}", empty_block,
+                          value_input_option="USER_ENTERED")
+        # Step 2: write sorted data back at top
         end_row = 1 + len(padded)
-        col_letter = chr(ord("A") + width - 1)
-        _sheets_retry(ws.update, f"A2:{col_letter}{end_row}", padded,
+        _sheets_retry(ws.update, f"A2:{_col_ltr}{end_row}", padded,
                       value_input_option="USER_ENTERED")
         return len(padded)
 
