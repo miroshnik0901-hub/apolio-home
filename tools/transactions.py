@@ -26,6 +26,55 @@ def _normalize_note(text: str) -> set:
     return set(ascii_text.split())
 
 
+def _infer_subcategory(note: str, known_subs: list, sheets_inst=None) -> str:
+    """T-237: Infer subcategory from note text when agent doesn't provide one.
+    Checks each token against _CATEGORY_ALIASES → subcategory name.
+    Strips punctuation, normalizes accents (ò→o), also checks original
+    Cyrillic tokens (паркінг, бар) before ASCII stripping.
+    Only assigns if the result is a known valid subcategory.
+    """
+    if not note or not known_subs:
+        return ""
+    import re
+    known_lower = {k.lower(): k for k in known_subs}
+
+    def _check_token(word):
+        # Strip punctuation from both ends
+        word = re.sub(r"[^\w]", "", word, flags=re.UNICODE).strip()
+        if not word:
+            return None
+        alias = _CATEGORY_ALIASES.get(word)
+        if alias and alias.lower() in known_lower:
+            return known_lower[alias.lower()]
+        return None
+
+    # Pass 1: original lowercased tokens (covers Cyrillic: паркінг, бар...)
+    for word in note.lower().split():
+        result = _check_token(word)
+        if result:
+            return result
+
+    # Pass 2: ASCII-normalized tokens (covers ò→o, é→e...)
+    ascii_note = unicodedata.normalize("NFKD", note.lower()).encode("ascii", "ignore").decode()
+    for word in ascii_note.split():
+        result = _check_token(word)
+        if result:
+            return result
+
+    # Pass 3: dynamic aliases from AdminSheets
+    if sheets_inst:
+        try:
+            dyn = sheets_inst.get_category_aliases()
+            for word in note.lower().split() + ascii_note.split():
+                word = re.sub(r"[^\w]", "", word, flags=re.UNICODE).strip()
+                canonical = dyn.get(word)
+                if canonical and canonical.lower() in known_lower:
+                    return known_lower[canonical.lower()]
+        except Exception:
+            pass
+    return ""
+
+
 def _date_range_for_dup(date: str) -> tuple:
     """T-237: Return (date_from, date_to) with ±1 day tolerance.
     Bank statement posting date can differ from transaction date by 1 day.
@@ -43,7 +92,8 @@ _CATEGORY_ALIASES: dict[str, str] = {
     # ── Subcategory aliases ──────────────────────────────────────────────
     # Restaurants / Food & Drink
     "dining": "Restaurants", "restaurant": "Restaurants",
-    "ristorante": "Restaurants", "ресторан": "Restaurants",
+    "ristorante": "Restaurants", "ресторан": "Restaurants", "trattoria": "Restaurants",
+    "osteria": "Restaurants", "pizzeria": "Restaurants", "gelateria": "Restaurants",
     "кафе": "Cafes", "cafe": "Cafes", "coffee": "Cafes",
     "bakery": "Cafes", "bar": "Alcohol", "бар": "Alcohol",
     "pub": "Alcohol", "паб": "Alcohol",
@@ -339,6 +389,19 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     currency = params.get("currency", "EUR")
     category = params.get("category", "")
     subcategory = params.get("subcategory", "")
+    note = params.get("note", "")
+
+    # T-237: infer subcategory from note text when agent/batch doesn't provide it
+    if not subcategory and note and category.lower() != "income":
+        try:
+            _ref_for_sub = sheets.get_reference_data(envelope["file_id"])
+            _known_subs = _ref_for_sub.get("subcategories", [])
+            _sheets_inst = _ref_for_sub.get("_sheets_instance")
+            subcategory = _infer_subcategory(note, _known_subs, _sheets_inst)
+            if subcategory:
+                params["subcategory"] = subcategory
+        except Exception:
+            pass  # inference is best-effort
 
     # T-215: resolve `who` from Telegram user_id (most reliable) or alias table.
     # Priority: (1) params who → normalize via alias; (2) session user_id → Users tab lookup
