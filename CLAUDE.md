@@ -127,41 +127,9 @@ Never hardcode UI strings. Match Mikhail's language in replies.
 ## Task Log — API and workflow
 
 **Always use `task_log.py` for all task log operations.** Never use raw gspread calls.
+Full API reference, column values, Deploy/Confirm rules, and workflow are documented in `task_log.py` (module docstring — read it).
 
-```python
-from dotenv import load_dotenv; load_dotenv('.env')
-from task_log import TaskLog
-tl = TaskLog()
-
-# Add a task
-tl.add_task("Fix X", topic="Features", deploy="READY", comment="[date] ...")
-
-# Update task fields
-tl.update_task("T-007", status="DISCUSSION", deploy="READY", branch="dev", comment="...")
-
-# After PROD deploy (main):
-tl.update_task("T-007", status="DISCUSSION", deploy="DEPLOYED", branch="main")
-
-# Read open tasks
-open_tasks = tl.get_open_tasks()
-```
-
-**Deploy column values (set by Claude):**
-- `READY` — code on dev, tests pass, waiting Mikhail's GO
-- `DEPLOYED` — pushed to main, Railway deployed
-- `N/A` — task needs no code deploy (config/billing/investigation)
-- `FAILED` — deploy attempted but failed
-
-**Confirm column (set by Mikhail only):**
-- `GO` — approved to push to main
-- `HOLD` — wait
-- (empty) — not yet reviewed
-
-**Workflow:**
-1. Fix → push dev → `update_task(status="DISCUSSION", deploy="READY", branch="dev")`
-2. Mikhail sets Confirm=GO in the sheet
-3. Claude pushes main → `update_task(deploy="DEPLOYED", branch="main")`
-4. If task reopened after deploy: `update_task(status="OPEN", deploy="READY", confirm="")` — old GO is invalid
+`task_log.py` is a living document: **Claude must update it** when the schema, workflow, or column values change.
 
 ## Task Log — comment rule
 
