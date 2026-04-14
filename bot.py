@@ -2666,19 +2666,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                                 "it": "Nessun dato per questo periodo."}
                     html = _no_data.get(lang, _no_data["uk"])
                 else:
-                    _lines = []
                     _period_label = f"{_month_abbr(_cf_from, lang)} – {_month_abbr(_cf_to, lang)}"
-                    _hdr = {"ru": f"📊 Расчёты: {_period_label}",
-                            "uk": f"📊 Розрахунки: {_period_label}",
-                            "en": f"📊 Contributions: {_period_label}",
-                            "it": f"📊 Contributi: {_period_label}"}
-                    _lines.append(_hdr.get(lang, _hdr["uk"]))
-                    # T-201: Enumerate ALL months in range (including empty ones).
-                    # compute_contribution_history skips months w/o transactions,
-                    # but obligation exists even with 0 activity → include all.
-                    import datetime as _cdt2
+
+                    # Helper: iterate all months in range
                     def _mo_range(f, t):
-                        """Yield YYYY-MM strings from f to t inclusive."""
                         fy, fm = int(f[:4]), int(f[5:7])
                         ty, tm = int(t[:4]), int(t[5:7])
                         while (fy, fm) <= (ty, tm):
@@ -2687,77 +2678,107 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             if fm > 12:
                                 fm, fy = 1, fy + 1
 
-                    # Build snap dict indexed by month for O(1) lookup
                     _snap_by_mo = {s.get("month", ""): s for s in _snaps}
-                    # Determine split_users from first available snap
                     _users = _snaps[0].get("split_users", []) if _snaps else []
                     _cur_s = _snaps[0].get("currency", "EUR") if _snaps else "EUR"
 
+                    # Pass 1: accumulate totals across all months (incl. empty)
                     _cum_expense = 0.0
+                    _cum_topup   = {u: 0.0 for u in _users}
+                    _cum_personal = {u: 0.0 for u in _users}
+                    _cum_oblig   = {u: 0.0 for u in _users}
                     _cum_balance = {u: 0.0 for u in _users}
-                    _lines.append("")
-
-                    _delta_lbl = {
-                        "ru": "за мес", "uk": "за міс", "en": "mo", "it": "mese"
-                    }
-                    _total_lbl = {
-                        "ru": "накоплено", "uk": "накопичено", "en": "total", "it": "totale"
-                    }
+                    _mo_count = 0
+                    _min_per_mo  = {}  # per-user min obligation per month (same each month)
+                    _mo_data = []
 
                     for _mo in _mo_range(_cf_from, _cf_to):
-                        _mo_lbl = _month_abbr(_mo, lang)
                         if _mo in _snap_by_mo:
                             _s = _snap_by_mo[_mo]
                         else:
-                            # No transactions — compute obligation for this empty month
                             _s = compute_contribution_status(sheets, env_id, month=_mo)
                             if _s.get("status") != "ok":
                                 continue
-                            if not _users:
-                                _users = _s.get("split_users", [])
-                                _cur_s = _s.get("currency", "EUR")
-
-                        _total_e = safe_float(_s.get("total_expenses") or 0)
+                        _mo_count += 1
+                        if not _users:
+                            _users = _s.get("split_users", [])
+                            _cur_s = _s.get("currency", "EUR")
+                        _te = safe_float(_s.get("total_expenses") or 0)
+                        _cum_expense += _te
+                        _top_s = _s.get("top_up_joint", {})
+                        _per_s = _s.get("personal_exp", {})
                         _bal_s = _s.get("balances", {})
-                        _top_up_s = _s.get("top_up_joint", {})
-                        _any_top = any(safe_float(_top_up_s.get(_u, 0)) > 0 for _u in _users)
-                        _mo_inactive = not _any_top and _total_e == 0
-                        _cum_expense += _total_e
-
-                        # Tag inactive months
-                        _ia_tag = {
-                            "ru": " ⚪", "uk": " ⚪", "en": " ⚪", "it": " ⚪"
-                        }.get(lang, " ⚪") if _mo_inactive else ""
-                        _lines.append(f"📅 <b>{_mo_lbl}</b>{_ia_tag}  {_total_e:,.0f} {_cur_s}")
-
+                        _usr_s = _s.get("user_shares", {})   # per-user obligation
+                        _pum   = _s.get("per_user_min", {})
+                        _any_top = any(safe_float(_top_s.get(_u, 0)) > 0 for _u in _users)
+                        _inactive = not _any_top and _te == 0
                         for _u in _users:
-                            _ub = safe_float(_bal_s.get(_u) or 0)      # monthly delta
-                            _cum_balance[_u] = _cum_balance.get(_u, 0.0) + _ub
-                            _run = _cum_balance[_u]                     # running total
-                            _d_icon = "✅" if _ub >= 0 else "⚠️"
-                            _d_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
-                            _r_icon = "✅" if _run >= 0 else "🔴"
-                            _r_str  = f"+{_run:,.0f}" if _run > 0 else f"{_run:,.0f}"
-                            # Format: "⚠️ Mikhail: -2,100 за міс → 🔴 -2,290 накопичено"
-                            _lines.append(
-                                f"  {_d_icon} {_u}: {_d_str} {_delta_lbl.get(lang,'за міс')}"
-                                f"  →  {_r_icon} {_r_str} {_total_lbl.get(lang,'накопичено')}"
-                            )
+                            _cum_topup[_u]    += safe_float(_top_s.get(_u) or 0)
+                            _cum_personal[_u] += safe_float(_per_s.get(_u) or 0)
+                            _cum_oblig[_u]    += safe_float(_usr_s.get(_u) or 0)
+                            _cum_balance[_u]  += safe_float(_bal_s.get(_u) or 0)
+                            if _u not in _min_per_mo:
+                                _min_per_mo[_u] = safe_float(_pum.get(_u) or 0)
+                        _mo_data.append({
+                            "mo": _mo, "te": _te, "inactive": _inactive,
+                            "bal": {u: safe_float(_bal_s.get(u) or 0) for u in _users},
+                            "top": {u: safe_float(_top_s.get(u) or 0) for u in _users},
+                        })
+
+                    # T-205: Redesigned layout — summary first, then compact per-month
+                    _lines = []
+                    _hdr = {"ru": f"📊 Расчёты: {_period_label} ({_mo_count} мес.)",
+                            "uk": f"📊 Розрахунки: {_period_label} ({_mo_count} міс.)",
+                            "en": f"📊 Contributions: {_period_label} ({_mo_count} mo.)",
+                            "it": f"📊 Contributi: {_period_label} ({_mo_count} mesi)"}
+                    _lines.append(_hdr.get(lang, _hdr["uk"]))
+                    _exp_lbl = {"ru":"Расходы","uk":"Витрати","en":"Expenses","it":"Spese"}
+                    _lines.append(f"💰 {_exp_lbl.get(lang,'Витрати')}: {_cum_expense:,.0f} {_cur_s}")
+                    _lines.append("")
+
+                    # Per-user summary block
+                    _lbl = {
+                        "topup":    {"ru":"Вніс на рах.",   "uk":"Вніс на рах.",   "en":"Topped up",   "it":"Versato"},
+                        "personal": {"ru":"Особисто",       "uk":"Особисто",       "en":"Personal",    "it":"Personale"},
+                        "oblig":    {"ru":"Зобов'язання",   "uk":"Зобов'язання",   "en":"Obligation",  "it":"Obbligo"},
+                        "balance":  {"ru":"БАЛАНС",         "uk":"БАЛАНС",         "en":"BALANCE",     "it":"SALDO"},
+                        "rule_mo":  {"ru":"міс. обяз.",     "uk":"міс. зобов.",    "en":"mo. obl.",    "it":"obbl./mese"},
+                    }
+                    for _u in _users:
+                        _tu = _cum_topup.get(_u, 0.0)
+                        _pe = _cum_personal.get(_u, 0.0)
+                        _ob = _cum_oblig.get(_u, 0.0)
+                        _cb = _cum_balance.get(_u, 0.0)
+                        _mo_min = _min_per_mo.get(_u, 0.0)
+                        _icon = "✅" if _cb >= 0 else "🔴"
+                        _lines.append(f"👤 <b>{_u}</b>")
+                        if _tu > 0:
+                            _lines.append(f"  💳 {_lbl['topup'].get(lang,'Вніс')}: {_tu:,.0f} {_cur_s}")
+                        if _pe > 0:
+                            _lines.append(f"  🛒 {_lbl['personal'].get(lang,'Особисто')}: {_pe:,.0f} {_cur_s}")
+                        if _ob != 0 or _mo_min > 0:
+                            _ob_note = f" ({_mo_min:,.0f} × {_mo_count})" if _mo_min > 0 else ""
+                            _lines.append(f"  📋 {_lbl['oblig'].get(lang,'Зобов')}: {_ob:,.0f} {_cur_s}{_ob_note}")
+                        _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
+                        _lines.append(f"  {_icon} <b>{_lbl['balance'].get(lang,'БАЛАНС')}: {_bs} {_cur_s}</b>")
                         _lines.append("")
 
-                    # Final cumulative summary
-                    _cum_hdr = {
-                        "ru": f"📊 Итого {_period_label}:",
-                        "uk": f"📊 Всього {_period_label}:",
-                        "en": f"📊 Total {_period_label}:",
-                        "it": f"📊 Totale {_period_label}:",
-                    }
-                    _lines.append(f"<b>{_cum_hdr.get(lang, _cum_hdr['uk'])}</b>  {_cum_expense:,.0f} EUR")
-                    for _u in _users:
-                        _cb = _cum_balance.get(_u, 0.0)
-                        _icon = "✅" if _cb >= 0 else "🔴"
-                        _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
-                        _lines.append(f"  {_icon} {_u}: {_bs} EUR")
+                    # Compact per-month breakdown
+                    _mo_hdr = {"ru": "По месяцам:", "uk": "По місяцях:", "en": "Monthly:", "it": "Mensile:"}
+                    _lines.append(f"<b>{_mo_hdr.get(lang, _mo_hdr['uk'])}</b>")
+                    for _md in _mo_data:
+                        _mo_lbl = _month_abbr(_md["mo"], lang)
+                        _te_str = f"{_md['te']:,.0f}" if _md['te'] > 0 else "0"
+                        _ia = " ⚪" if _md["inactive"] else ""
+                        # One line: "• Січ⚪ 0 EUR │ Mikhail -190 │ Maryna 0"
+                        _parts = [f"• <b>{_mo_lbl}</b>{_ia} {_te_str} {_cur_s}"]
+                        for _u in _users:
+                            _ub = _md["bal"].get(_u, 0.0)
+                            _ub_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
+                            _ui = "✅" if _ub >= 0 else "⚠️"
+                            _parts.append(f"{_u} {_ui}{_ub_str}")
+                        _lines.append("  │ ".join(_parts))
+
                     html = "\n".join(_lines)
             except Exception as _ce:
                 html = f"❌ {_ce}"
