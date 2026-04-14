@@ -1,8 +1,9 @@
 **Start of every session — read in this order:**
 1. `SESSION_LOG.md` — full history: actions, decisions, pending, state
 2. `DEV_PROD_STATE.md` — what's on dev vs main, what's waiting GO, test/prod resource table
-3. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
-4. Run relevant tests before every push
+3. `PROJECT_INDEX.md` — full file map: what every file/folder does (orient before any change)
+4. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
+5. Run relevant tests before every push
 
 ## ⚠️ Mandatory Self-Testing After EVERY Fix
 
