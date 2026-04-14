@@ -875,6 +875,20 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
 
         lines = [i18n.tu("contrib_title", lang, label=label), ""]
 
+        # T-198: flag months with zero activity (no expenses, no top-ups)
+        _any_topup = any(safe_float(top_up.get(u, 0)) > 0 for u in split_users)
+        _any_exp   = total_exp > 0
+        _no_activity = not _any_topup and not _any_exp
+        if _no_activity:
+            _no_act_lbl = {
+                "ru": "⚪ Нет активности — показано теоретическое обязательство за месяц",
+                "uk": "⚪ Без активності — показано теоретичне зобов'язання за місяць",
+                "en": "⚪ No activity — showing theoretical monthly obligation",
+                "it": "⚪ Nessuna attività — obbligo mensile teorico",
+            }
+            lines.append(_no_act_lbl.get(lang, _no_act_lbl["uk"]))
+            lines.append("")
+
         # Total expenses — no global min pool line (shown per user below)
         lines.append(i18n.tu("contrib_total_exp", lang, total=total_exp, cur=cur))
         lines.append("")
@@ -893,10 +907,20 @@ async def _build_contribution_html(session, lang: str = "ru") -> str:
             if pe > 0:
                 lines.append(f"  🛒 {i18n.ts('bal_personal_exp', lang)}: {pe:,.0f} {cur}")
             # Status: Переплата / Борг / Баланс — no Зобов'язання (redundant)
+            # T-198: if no activity, label as "unfulfilled obligation" not just "debt"
             if credit > 0:
                 lines.append(f"  ✅ <b>{i18n.ts('bal_surplus', lang)}: +{credit:,.0f} {cur}</b>")
             elif credit < 0:
-                lines.append(f"  ⚠️ <b>{i18n.ts('bal_debt', lang)}: {credit:,.0f} {cur}</b>")
+                if _no_activity and u_min > 0:
+                    _unf_lbl = {
+                        "ru": "не закрыто",
+                        "uk": "не закрито",
+                        "en": "unfulfilled",
+                        "it": "non coperto",
+                    }
+                    lines.append(f"  ⚠️ <b>{i18n.ts('bal_debt', lang)}: {credit:,.0f} {cur} ({_unf_lbl.get(lang, 'не закрито')})</b>")
+                else:
+                    lines.append(f"  ⚠️ <b>{i18n.ts('bal_debt', lang)}: {credit:,.0f} {cur}</b>")
             else:
                 lines.append(f"  ➖ {i18n.ts('bal_zero', lang)}: 0 {cur}")
             lines.append("")
@@ -2613,21 +2637,51 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         _bal_s = _s.get("balances", {})
                         _contr_s = _s.get("contributions", {})
                         _cum_expense += _total_e
-                        _lines.append(f"📅 <b>{_mo_label}</b>  {_total_e:,.0f} {_cur_s}")
+                        # T-198: flag months without any real activity
+                        _top_up_s = _s.get("top_up_joint", {})
+                        _any_top = any(safe_float(_top_up_s.get(_u, 0)) > 0 for _u in _users)
+                        _mo_inactive = not _any_top and _total_e == 0
+                        _inactive_sfx = {
+                            "ru": " (нет активности)",
+                            "uk": " (без активності)",
+                            "en": " (no activity)",
+                            "it": " (nessuna attività)",
+                        }
+                        _ia_sfx = _inactive_sfx.get(lang, _inactive_sfx["uk"]) if _mo_inactive else ""
+                        _lines.append(f"📅 <b>{_mo_label}</b>{_ia_sfx}  {_total_e:,.0f} {_cur_s}")
                         for _u in _users:
                             _ub = safe_float(_bal_s.get(_u) or 0)
                             _cum_balance[_u] = safe_float(_cum_balance.get(_u) or 0) + _ub
                             _icon = "✅" if _ub >= 0 else "⚠️"
                             _bal_str = f"+{_ub:,.0f}" if _ub > 0 else f"{_ub:,.0f}"
-                            _lines.append(f"  {_icon} {_u}: {_bal_str} {_cur_s}")
+                            # T-198: show "not paid" label for inactive months with obligation
+                            if _mo_inactive and _ub < 0:
+                                _np = {"ru": "не внесено", "uk": "не внесено", "en": "not paid", "it": "non pagato"}
+                                _lines.append(f"  {_icon} {_u}: {_bal_str} ({_np.get(lang,'не внесено')})")
+                            else:
+                                _lines.append(f"  {_icon} {_u}: {_bal_str} {_cur_s}")
                         _lines.append("")
-                    # Cumulative summary
-                    _lines.append(f"<b>Σ {_period_label}: {_cum_expense:,.0f} EUR</b>")
+                    # Cumulative summary — label clearly as running total, not single month
+                    _cum_hdr = {
+                        "ru": f"📊 Итого {_period_label}:",
+                        "uk": f"📊 Всього {_period_label}:",
+                        "en": f"📊 Total {_period_label}:",
+                        "it": f"📊 Totale {_period_label}:",
+                    }
+                    _lines.append(f"<b>{_cum_hdr.get(lang, _cum_hdr['uk'])}</b>  {_cum_expense:,.0f} EUR")
                     for _u in _users:
                         _cb = safe_float(_cum_balance.get(_u) or 0)
                         _icon = "✅" if _cb >= 0 else "⚠️"
                         _bs = f"+{_cb:,.0f}" if _cb > 0 else f"{_cb:,.0f}"
                         _lines.append(f"  {_icon} {_u}: {_bs} EUR")
+                    _note = {
+                        "ru": "<i>Баланс — независимо за каждый месяц (не нарастающий)</i>",
+                        "uk": "<i>Баланс — незалежно за кожен місяць (не накопичувальний)</i>",
+                        "en": "<i>Balance shown per month independently (not cumulative)</i>",
+                        "it": "<i>Saldo per mese indipendente (non cumulativo)</i>",
+                    }
+                    _lines.append("")
+                    _lines.append(_note.get(lang, _note["uk"]))
                     html = "\n".join(_lines)
             except Exception as _ce:
                 html = f"❌ {_ce}"
