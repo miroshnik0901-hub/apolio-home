@@ -3323,14 +3323,19 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         enrich_params["who"] = receipt["who"]
                     if dup_account:
                         enrich_params["account"] = dup_account
-                    # T-210: preserve original UAH amount from bank statement
-                    # _dup_add_params carries the original currency/amount from the new tx
+                    # T-210: store UAH amount info — but NEVER change Currency_Orig of
+                    # existing EUR record. Changing it to UAH breaks future cross-currency
+                    # dup detection (dup checker skips when _bex_cur == _batch_currency).
+                    # Instead, append UAH info to the note field so it's visible.
                     if dup_add_params:
                         _orig_amt = dup_add_params.get("amount")
                         _orig_cur = dup_add_params.get("currency", "")
                         if _orig_amt and _orig_cur and _orig_cur.upper() != "EUR":
-                            enrich_params["amount_orig"] = _orig_amt
-                            enrich_params["currency_orig"] = _orig_cur.upper()
+                            # Append UAH amount to note instead of overwriting Currency_Orig
+                            _uah_note = f"{_orig_amt:,.0f} {_orig_cur.upper()}"
+                            _base_note = enrich_params.get("note", receipt.get("merchant", "")) or ""
+                            if _uah_note not in _base_note:
+                                enrich_params["note"] = f"{_base_note} ({_uah_note})" if _base_note else _uah_note
                     result = await tool_enrich_transaction(
                         enrich_params, session, sheets, auth,
                     )
@@ -3833,8 +3838,11 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         {"date_from": _bd_min, "date_to": _bd_max, "limit": 300},
                     )
                     if _batch_currency != "EUR" and _batch_existing:
-                        _bd_fx_ws = sheets._env_sheets(_bd_env["file_id"])._ws("FX_Rates")
-                        _bd_fx_rows = _bd_fx_ws.get_all_records()
+                        # T-211: use cached get_fx_rates() — was raw get_all_records() (missed in T-211).
+                        # This was the root cause of dup detection failure:
+                        # if the uncached read failed with 429, _batch_fx_rate stayed None
+                        # → ALL items skipped dup check → added without asking.
+                        _bd_fx_rows = sheets.get_fx_rates(_bd_env["file_id"])
                         _bd_fx_row = next(
                             (r for r in _bd_fx_rows if r.get("Month") == _bd_min[:7]), None
                         )
@@ -3909,13 +3917,19 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         _bex_date = str(_bex.get("Date", ""))
                         if _bex_date != item_date:
                             continue
-                        if _bex_cur == _batch_currency:
-                            continue  # same-currency dup handled by tool internally
+                        # T-192 FIX: Do NOT skip same-currency records.
+                        # batch_mode=True,force_add=True disables internal dup detection.
+                        # Also: T-210 enrichment may have set Currency_Orig=UAH on an
+                        # existing EUR record, causing false "same-currency" skip.
+                        # Always compare Amount_EUR regardless of Currency_Orig.
                         try:
                             _bex_eur = float(_bex.get("Amount_EUR") or 0)
                         except (ValueError, TypeError):
                             _bex_eur = 0.0
                         if _bex_eur <= 0:
+                            continue
+                        # Skip records with Amount_EUR too close to zero (unset)
+                        if _bex_eur < 0.5:
                             continue
                         _btol = max(_bie_eur * 0.05, 0.5)
                         if abs(_bex_eur - _bie_eur) > _btol:

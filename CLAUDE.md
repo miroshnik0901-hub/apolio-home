@@ -4,6 +4,33 @@
 3. `CLAUDE_WORKING_GUIDE.md` — architecture and schemas (before any code change)
 4. Run relevant tests before every push
 
+## ⚠️ Mandatory Self-Testing After EVERY Fix
+
+**Claude must test its own fixes before declaring them done. No exceptions.**
+
+### After EVERY code fix:
+1. **Unit test**: run `python3 -m py_compile <changed_files>` + `python3 test_regression.py`
+2. **Integration test**: write and run a Python script that directly simulates the fix against live test data
+   - For dup detection fixes: simulate the dup check against test Sheets data and verify matches found
+   - For FX/conversion fixes: verify actual FX read returns expected values
+   - For balance calculation fixes: compute expected result and compare with actual
+3. **Push only after test PASSES** with concrete output proving it works
+4. **Log test result** in SESSION_LOG.md: `YYYY-MM-DD | TEST | what was tested + result`
+
+### Pattern: "зафіксовано" without testing = violation
+
+If a fix is pushed without self-testing:
+- The commit message must say `⚠️ NOT SELF-TESTED`
+- A follow-up task must be created immediately to test and verify
+- Mikhail should be warned that the fix is unverified
+
+### What counts as a valid self-test:
+- ✅ Python script running against live test data with concrete output showing the fix works
+- ✅ Simulation of the exact bug scenario (not just compilation passing)
+- ❌ "The logic looks correct" — not a test
+- ❌ "py_compile passes" — not a test for logic bugs
+- ❌ "regression tests pass" — not sufficient for logic changes in business rules
+
 **After every `git push`** — update `DEV_PROD_STATE.md`:
 - `git push dev` → add row to DEV table with commit hash + task + description
 - `git push main` → move DEV rows to MAIN section, update "last commit on main"
