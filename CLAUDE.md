@@ -27,9 +27,18 @@ If a fix is pushed without self-testing:
 ### What counts as a valid self-test:
 - ✅ Python script running against live test data with concrete output showing the fix works
 - ✅ Simulation of the exact bug scenario (not just compilation passing)
+- ✅ Test state must be CLEAN — verify test data matches expected preconditions.
+  If previous failed runs left stale data, clean it first or test against known state.
 - ❌ "The logic looks correct" — not a test
 - ❌ "py_compile passes" — not a test for logic bugs
 - ❌ "regression tests pass" — not sufficient for logic changes in business rules
+- ❌ Test against polluted data (data already modified by the bug) and call it "correct"
+
+### Test state awareness:
+Before running a dup detection test, verify:
+- What records ACTUALLY exist in the test sheet (not what should exist)
+- Whether previous bug runs left stale duplicates
+- Expected result: N dups out of M total (not "all M match because M were added by bug")
 
 **After every `git push`** — update `DEV_PROD_STATE.md`:
 - `git push dev` → add row to DEV table with commit hash + task + description
