@@ -496,16 +496,6 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
         pass  # validation is best-effort
 
     # Fields that can be enriched from receipt data
-    updatable = {
-        "note": params.get("note"),
-        "category": params.get("category"),
-        "subcategory": params.get("subcategory"),
-        "who": params.get("who"),
-        "account": params.get("account"),
-    }
-
-    updated = []
-    # Column name mapping: field → Transactions sheet column header
     col_map = {
         "note": "Note",
         "category": "Category",
@@ -513,22 +503,41 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
         "who": "Who",
         "account": "Account",
     }
+    fields_to_write = {
+        col_map[k]: v for k, v in {
+            "note": params.get("note"),
+            "category": params.get("category"),
+            "subcategory": params.get("subcategory"),
+            "who": params.get("who"),
+            "account": params.get("account"),
+        }.items() if v is not None and v != ""
+    }
 
-    for field, value in updatable.items():
-        if value is not None and value != "":
-            try:
-                sheets.update_transaction_field(file_id, tx_id, col_map[field], value)
-                updated.append(f"{field}={value}")
-            except Exception as e:
-                logger.warning(f"enrich_transaction: failed to update {field}: {e}")
-
-    if not updated:
+    if not fields_to_write:
         return {"error": "No fields to update."}
+
+    # T-209: ONE read + N writes instead of N reads + N writes.
+    # Also fixes false-positive: update_transaction_fields returns list of
+    # actually-updated field names, not just "no exception raised".
+    try:
+        written_cols = sheets.update_transaction_fields(file_id, tx_id, fields_to_write)
+    except Exception as e:
+        logger.error(f"enrich_transaction: batch write failed: {e}")
+        return {"error": f"Sheets write failed: {e}"}
+
+    if not written_cols:
+        logger.warning(f"enrich_transaction: tx_id {tx_id} not found in {file_id}")
+        return {"error": f"Transaction {tx_id} not found in Sheets. It may have been deleted or the ID is wrong."}
+
+    # Build human-readable summary of what was updated
+    reverse_map = {v: k for k, v in col_map.items()}
+    updated_display = [f"{reverse_map.get(c, c)}={fields_to_write[c]}" for c in written_cols]
 
     return {
         "status": "ok",
-        "message": f"✓ Enriched {tx_id}: {', '.join(updated)}",
+        "message": f"✓ Enriched {tx_id}: {', '.join(updated_display)}",
         "tx_id": tx_id,
+        "updated_fields": written_cols,
     }
 
 

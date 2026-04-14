@@ -471,18 +471,54 @@ class EnvelopeSheets:
 
     def edit_transaction(self, tx_id: str, field: str, new_value: str) -> bool:
         ws = self._ws("Transactions")
-        records = ws.get_all_records()
-        headers = ws.row_values(1)
-        for i, row in enumerate(records):
-            if row.get("ID") == tx_id:
-                col = headers.index(field) + 1
-                ws.update_cell(i + 2, col, new_value)
-                # Update Modified_At if column exists
+        all_vals = _sheets_retry(ws.get_all_values)
+        if not all_vals:
+            return False
+        headers = all_vals[0]
+        for row_idx, row in enumerate(all_vals[1:], start=2):
+            id_col = headers.index("ID") if "ID" in headers else 0
+            if len(row) > id_col and row[id_col].strip() == tx_id.strip():
+                try:
+                    col = headers.index(field) + 1
+                except ValueError:
+                    return False
+                _sheets_retry(ws.update_cell, row_idx, col, new_value)
                 if "Modified_At" in headers:
                     mod_col = headers.index("Modified_At") + 1
-                    ws.update_cell(i + 2, mod_col, datetime.utcnow().isoformat())
+                    _sheets_retry(ws.update_cell, row_idx, mod_col, datetime.utcnow().isoformat())
                 return True
         return False
+
+    def edit_transaction_fields(self, tx_id: str, fields: dict) -> list:
+        """T-209: Update multiple fields in ONE read + N writes (was N reads + N writes).
+        Returns list of field names that were successfully updated."""
+        ws = self._ws("Transactions")
+        all_vals = _sheets_retry(ws.get_all_values)
+        if not all_vals:
+            return []
+        headers = all_vals[0]
+        for row_idx, row in enumerate(all_vals[1:], start=2):
+            id_col = headers.index("ID") if "ID" in headers else 0
+            if len(row) > id_col and row[id_col].strip() == tx_id.strip():
+                updated = []
+                for field, value in fields.items():
+                    if field not in headers:
+                        continue
+                    col = headers.index(field) + 1
+                    try:
+                        _sheets_retry(ws.update_cell, row_idx, col, str(value))
+                        updated.append(field)
+                    except Exception as _e:
+                        import logging as _log
+                        _log.getLogger(__name__).warning(f"edit_transaction_fields: {field}: {_e}")
+                if updated and "Modified_At" in headers:
+                    mod_col = headers.index("Modified_At") + 1
+                    try:
+                        _sheets_retry(ws.update_cell, row_idx, mod_col, datetime.utcnow().isoformat())
+                    except Exception:
+                        pass
+                return updated
+        return []  # tx_id not found
 
     def delete_transaction(self, tx_id: str) -> bool:
         """Soft-delete: set Deleted=TRUE (kept for backward compat, prefer hard_delete_by_tx_id)."""
@@ -1172,6 +1208,11 @@ class SheetsClient:
     def update_transaction_field(self, sheet_id: str, tx_id: str,
                                  field: str, value: str) -> bool:
         return self._env_sheets(sheet_id).edit_transaction(tx_id, field, value)
+
+    def update_transaction_fields(self, sheet_id: str, tx_id: str, fields: dict) -> list:
+        """T-209: Update multiple fields in ONE read. Returns list of updated field names."""
+        self._cache.invalidate(f"txns_{sheet_id}")
+        return self._env_sheets(sheet_id).edit_transaction_fields(tx_id, fields)
 
     def soft_delete_transaction(self, sheet_id: str, tx_id: str) -> bool:
         """Soft-delete: sets Deleted=TRUE flag. Kept for backward compat."""
