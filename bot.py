@@ -4569,18 +4569,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             session._lang_shift_count = 0
             session._lang_shift_candidate = None
 
-        # T-189: pre-parse bulk delete IDs from user message BEFORE agent runs.
-        # When user says "удали abc12345 def67890 ...", detect all 8-char hex IDs.
-        # Storing them here ensures the confirm button always uses ALL IDs,
-        # regardless of whether the agent passes them correctly to present_options.
+        # T-189/T-225: pre-parse delete IDs from user message BEFORE agent runs.
+        # Works for BOTH single and multiple IDs.
+        # Storing here bypasses BUG-011 validation (which fails on stale cache).
         _tx_id_re = re.compile(r'\b([0-9a-f]{8})\b')
         _found_ids = _tx_id_re.findall(text.lower())
         _delete_keywords = ("удал", "видал", "delete", "дел ", "del ", "стер", "убр", "прибр", "remove")
-        if len(_found_ids) >= 2 and any(kw in text.lower() for kw in _delete_keywords):
+        if _found_ids and any(kw in text.lower() for kw in _delete_keywords):
+            # T-225: handle single ID too (was >= 2 before)
             session._user_bulk_delete_ids = _found_ids
-            logger.info(f"T-189: pre-parsed {len(_found_ids)} tx IDs from user message for bulk delete")
+            logger.info(f"T-189/T-225: pre-parsed {len(_found_ids)} tx ID(s): {_found_ids}")
         elif not any(kw in text.lower() for kw in _delete_keywords):
-            # Clear if user is doing something unrelated
             session._user_bulk_delete_ids = None
 
         # ── T-200: Language shift detection — ask once after 3 messages in other lang ──
