@@ -2,7 +2,15 @@
 1. `SESSION_LOG.md` — full history: actions, decisions, pending, state
 2. `DEV_PROD_STATE.md` — what's on dev vs main, what's waiting GO, test/prod resource table
 3. `CLAUDE_WORKING_GUIDE.md` — architecture, file map (section 4), schemas. Read before any code change.
-4. Run relevant tests before every push
+4. Check PROD `error_log` for recent errors (last 24h):
+   ```python
+   import psycopg2
+   conn = psycopg2.connect("postgresql://postgres:wNIAWTyudNvUJxnDlaaFejcIRyLLnNVY@interchange.proxy.rlwy.net:19732/railway")
+   cur = conn.cursor()
+   cur.execute("SELECT ts, error_type, context FROM error_log WHERE ts > NOW() - INTERVAL '24 hours' ORDER BY ts DESC LIMIT 10")
+   ```
+   If errors found → create task(s), investigate before writing code.
+5. Run relevant tests before every push
 
 ## ⚠️ Mandatory Self-Testing After EVERY Fix
 
