@@ -48,15 +48,20 @@ Before running a dup detection test, verify:
 python3 scripts/sync_prod_after_deploy.py
 ```
 
-This script syncs PROD to match TEST/dev state:
-1. **BotMenu** — reset_to_defaults in PROD Admin Sheet
-2. **Transactions headers** — verify ID column at K1 in PROD Budget file
-3. **UserAliases tab** — ensure exists in PROD Admin (name normalization)
-4. **CategoryAliases tab** — ensure exists in PROD Admin (category normalization)
-5. **FX_Rates tab** — verify exists in PROD Budget file
+This script verifies PROD structure (read-only by default):
+1. **BotMenu** — reset_to_defaults (config-only, no user data)
+2. **Transactions headers** — checks Row 1 only; asks confirmation before fixing
+3. **UserAliases tab** — creates with seed if missing; never overwrites existing
+4. **CategoryAliases tab** — creates with seed if missing; never overwrites existing
+5. **FX_Rates tab** — READ-ONLY existence/freshness check; never writes data
+6. **Envelope Config** — READ-ONLY check; reports if missing keys
+7. **Users/Envelopes** — READ-ONLY count check
 
-**Never push to main without running this script.** Skipping it leaves PROD
-in a broken state (wrong headers → bulk delete fails, missing tabs → aliases don't work).
+⚠️ **Script never modifies FX rates, transaction data, or any user data.**
+Data changes (if needed) require explicit confirmation from Mikhail.
+
+**Never push to main without running this script.** Missing tabs → aliases don't work,
+wrong headers → bulk delete fails.
 
 **After every `git push`** — update `DEV_PROD_STATE.md`:
 - `git push dev` → add row to DEV table with commit hash + task + description
