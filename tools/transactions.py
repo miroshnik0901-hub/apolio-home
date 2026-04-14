@@ -150,33 +150,36 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         params["force_add"] = True  # skip duplicate detection
 
     # ── Validation against reference data ────────────────────────────────
+    # T-211: skip get_reference_data entirely in batch_mode (force_new=True skips anyway)
+    # This saves 1 read per batch item = 7 reads for 7 items.
+    if batch_mode or params.get("force_new"):
+        issues = {}  # no validation in batch mode
+    else:
+        issues = {}
     try:
-        ref = sheets.get_reference_data(envelope["file_id"])
-        issues = _validate_transaction_params(params, ref)
-        if issues:
-            unknown = issues["unknown"]
-            sug = issues["suggestions"]
-            known = issues["known"]
-
-            lines = []
-            for field, val in unknown.items():
-                s = sug.get(field, [])
-                hint = f"Похожие: {', '.join(s)}" if s else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}"
-                lines.append(f"• {field} = «{val}» — не найдено. {hint}")
-
-            return {
-                "status": "confirm_required",
-                "type": "unknown_values",
-                "message": (
-                    "⚠️ Неизвестные значения:\n" + "\n".join(lines)
-                ),
-                "unknown_fields": unknown,
-                "suggestions": sug,
-                "hint_for_agent": (
-                    "Ask the user: pick one of the suggested values, or confirm "
-                    "creating a new one? If user confirms new value, call again with force_new=true."
-                ),
-            }
+        if not batch_mode:
+            ref = sheets.get_reference_data(envelope["file_id"])
+            issues = _validate_transaction_params(params, ref)
+            if issues:
+                unknown = issues["unknown"]
+                sug = issues["suggestions"]
+                known = issues["known"]
+                lines = []
+                for field, val in unknown.items():
+                    s = sug.get(field, [])
+                    hint = f"Похожие: {', '.join(s)}" if s else f"Известные: {', '.join(known.get(field + 's', known.get(field, [])))}"
+                    lines.append(f"• {field} = «{val}» — не найдено. {hint}")
+                return {
+                    "status": "confirm_required",
+                    "type": "unknown_values",
+                    "message": "⚠️ Неизвестные значения:\n" + "\n".join(lines),
+                    "unknown_fields": unknown,
+                    "suggestions": sug,
+                    "hint_for_agent": (
+                        "Ask the user: pick one of the suggested values, or confirm "
+                        "creating a new one? If user confirms new value, call again with force_new=true."
+                    ),
+                }
     except Exception:
         pass  # validation is best-effort; don't block the write
 
@@ -218,8 +221,8 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                 _pre_eur = in_amount
             else:
                 try:
-                    _fx_ws2 = sheets._env_sheets(envelope["file_id"])._ws("FX_Rates")
-                    _fx_rows2 = _fx_ws2.get_all_records()
+                    # T-211: use cached get_fx_rates (no raw gspread call)
+                    _fx_rows2 = sheets.get_fx_rates(envelope["file_id"])
                     _fx_row2 = next(
                         (r for r in _fx_rows2 if r.get("Month") == date[:7]), None
                     )
@@ -329,8 +332,9 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         try:
             month = date[:7]  # YYYY-MM
             file_id = envelope["file_id"]
-            fx_ws = sheets._env_sheets(file_id)._ws("FX_Rates")
-            fx_rows = fx_ws.get_all_records()
+            # T-211: use cached get_fx_rates (5-min TTL via _static_cache).
+            # OLD: fx_ws.get_all_records() — uncached, hit quota on every batch item.
+            fx_rows = sheets.get_fx_rates(file_id)
             fx_row = next((r for r in fx_rows if r.get("Month") == month), None)
             if fx_row:
                 # FX_Rates columns are named EUR_PLN, EUR_UAH, EUR_USD etc.

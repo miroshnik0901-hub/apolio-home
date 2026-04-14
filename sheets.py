@@ -1205,6 +1205,23 @@ class SheetsClient:
             self._cache.set(cache_key, result)
         return result
 
+    def get_fx_rates(self, sheet_id: str) -> list:
+        """T-211: Return all FX_Rates rows, cached for 5 min (rates change monthly).
+        Replaces per-item uncached gspread calls in tool_add_transaction."""
+        cache_key = f"fx_{sheet_id}"
+        cached = self._static_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            ws = self._env_sheets(sheet_id)._ws("FX_Rates")
+            rows = _sheets_retry(ws.get_all_records)
+            self._static_cache.set(cache_key, rows)
+            return rows
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f"get_fx_rates({sheet_id}): {e}")
+            return []
+
     def update_transaction_field(self, sheet_id: str, tx_id: str,
                                  field: str, value: str) -> bool:
         return self._env_sheets(sheet_id).edit_transaction(tx_id, field, value)
