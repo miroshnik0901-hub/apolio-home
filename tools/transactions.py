@@ -114,7 +114,8 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "tram": "Public Transport", "трамвай": "Public Transport",
     "cab": "Taxi", "uber": "Taxi", "bolt": "Taxi",
     # Health
-    "dentist": "Dental", "дантист": "Dental", "стоматолог": "Dental",
+    "dentist": "Dental", "dentale": "Dental", "dental": "Dental",
+    "дантист": "Dental", "стоматолог": "Dental", "odontoiatra": "Dental",
     "врач": "Doctor", "лікар": "Doctor", "clinic": "Doctor",
     "аптека": "Pharmacy", "drugs": "Pharmacy", "medicine": "Pharmacy",
     # Personal
