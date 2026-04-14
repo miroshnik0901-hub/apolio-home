@@ -2094,6 +2094,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(i18n.ts("access_denied", "ru"))
         return
 
+
     role = tg_user.get("role", "viewer")
     session = get_session(query.from_user.id, query.from_user.first_name, role)
 
@@ -5325,6 +5326,37 @@ def main():
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND, handle_message
     ))
+
+    # T-220: Global error handler — logs ALL unhandled PTB exceptions to DB
+    async def _global_error_handler(update: object, context) -> None:
+        import traceback as _tb
+        exc = context.error
+        tb_str = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+        logger.error(f"[T-220] Unhandled exception: {exc}", exc_info=exc)
+        try:
+            uid = 0
+            sid = ""
+            raw = ""
+            if isinstance(update, Update):
+                uid = update.effective_user.id if update.effective_user else 0
+                sess = _sessions.get(uid)
+                sid = getattr(sess, "session_id", "") or ""
+                if update.message:
+                    raw = (update.message.text or "")[:200]
+                elif update.callback_query:
+                    raw = f"callback:{update.callback_query.data or ''}"[:200]
+            await appdb.log_error(
+                error_type=type(exc).__name__,
+                context=str(exc)[:500],
+                traceback_str=tb_str[:2000],
+                raw_input=raw,
+                user_id=uid,
+                session_id=sid,
+            )
+        except Exception as _le:
+            logger.warning(f"[T-220] log_error failed: {_le}")
+
+    app.add_error_handler(_global_error_handler)
 
     webhook_url = os.environ.get("WEBHOOK_URL")
     if webhook_url:

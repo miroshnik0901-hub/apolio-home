@@ -1230,3 +1230,87 @@ async def deactivate_goal(goal_id: int) -> bool:
     except Exception as e:
         logger.warning(f"[DB] deactivate_goal failed: {e}")
         return False
+
+
+# ── T-220: Error logging ───────────────────────────────────────────────────────
+
+_ERROR_TABLE_CREATED = False
+
+async def ensure_error_log_table() -> bool:
+    """Create error_log table if it doesn't exist. Called once on startup."""
+    global _ERROR_TABLE_CREATED
+    if _ERROR_TABLE_CREATED:
+        return True
+    pool = await get_pool()
+    if pool is None:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS error_log (
+                    id          SERIAL PRIMARY KEY,
+                    ts          TIMESTAMPTZ DEFAULT NOW(),
+                    user_id     BIGINT DEFAULT 0,
+                    session_id  VARCHAR(32) DEFAULT '',
+                    error_type  VARCHAR(100) DEFAULT '',
+                    context     TEXT DEFAULT '',
+                    traceback   TEXT DEFAULT '',
+                    raw_input   TEXT DEFAULT ''
+                )
+            """)
+        _ERROR_TABLE_CREATED = True
+        return True
+    except Exception as e:
+        logger.warning(f"[DB] ensure_error_log_table failed: {e}")
+        return False
+
+
+async def log_error(
+    error_type: str,
+    context: str = "",
+    traceback_str: str = "",
+    raw_input: str = "",
+    user_id: int = 0,
+    session_id: str = "",
+) -> bool:
+    """T-220: Persist error to DB for post-mortem debugging (test + prod)."""
+    pool = await get_pool()
+    if pool is None:
+        return False
+    try:
+        await ensure_error_log_table()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO error_log
+                   (user_id, session_id, error_type, context, traceback, raw_input)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                user_id,
+                session_id[:32],
+                error_type[:100],
+                context[:500],
+                traceback_str[:2000],
+                raw_input[:500],
+            )
+        return True
+    except Exception as e:
+        logger.warning(f"[DB] log_error failed: {e}")
+        return False
+
+
+async def get_recent_errors(limit: int = 20) -> list[dict]:
+    """T-220: Fetch recent errors for /errors admin command."""
+    pool = await get_pool()
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT ts, user_id, error_type, context, traceback
+                   FROM error_log
+                   ORDER BY ts DESC LIMIT $1""",
+                limit,
+            )
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"[DB] get_recent_errors failed: {e}")
+        return []

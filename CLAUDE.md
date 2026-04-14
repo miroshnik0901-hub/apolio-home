@@ -40,6 +40,24 @@ Before running a dup detection test, verify:
 - Whether previous bug runs left stale duplicates
 - Expected result: N dups out of M total (not "all M match because M were added by bug")
 
+## ⚠️ Mandatory Post-PROD Deploy Checklist (T-221)
+
+**After every `git push main`** — run this immediately:
+
+```bash
+python3 scripts/sync_prod_after_deploy.py
+```
+
+This script syncs PROD to match TEST/dev state:
+1. **BotMenu** — reset_to_defaults in PROD Admin Sheet
+2. **Transactions headers** — verify ID column at K1 in PROD Budget file
+3. **UserAliases tab** — ensure exists in PROD Admin (name normalization)
+4. **CategoryAliases tab** — ensure exists in PROD Admin (category normalization)
+5. **FX_Rates tab** — verify exists in PROD Budget file
+
+**Never push to main without running this script.** Skipping it leaves PROD
+in a broken state (wrong headers → bulk delete fails, missing tabs → aliases don't work).
+
 **After every `git push`** — update `DEV_PROD_STATE.md`:
 - `git push dev` → add row to DEV table with commit hash + task + description
 - `git push main` → move DEV rows to MAIN section, update "last commit on main"
