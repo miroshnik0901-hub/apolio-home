@@ -14,7 +14,7 @@ def _current_month() -> str:
 
 async def tool_get_summary(params: dict, session: SessionContext,
                             sheets: SheetsClient, auth: AuthManager) -> Any:
-    envelope_id = params.get("envelope_id") or session.current_envelope_id
+    envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
     if not auth.can_access_envelope(session.user_id, envelope_id):
         return {"error": "Permission denied."}
 
@@ -89,7 +89,7 @@ async def tool_get_summary(params: dict, session: SessionContext,
 
 async def tool_get_budget_status(params: dict, session: SessionContext,
                                   sheets: SheetsClient, auth: AuthManager) -> Any:
-    envelope_id = params.get("envelope_id") or session.current_envelope_id
+    envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
     if not auth.can_access_envelope(session.user_id, envelope_id):
         return {"error": "Permission denied."}
 
@@ -136,7 +136,7 @@ async def tool_get_contribution_status(params: dict, session: SessionContext,
     plus the cumulative balance from the first transaction (T-167).
     Uses the split rules configured in Admin Config sheet.
     """
-    envelope_id = params.get("envelope_id") or session.current_envelope_id
+    envelope_id = params.get("envelope_id") or session.current_envelope_id or "MM_BUDGET"
     if not auth.can_access_envelope(session.user_id, envelope_id):
         return {"error": "Permission denied."}
 
