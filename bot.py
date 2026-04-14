@@ -3866,6 +3866,37 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         # ── END BUG-008 FIX ───────────────────────────────────────────────
 
+    # ── T-233: cb_force_reprocess — re-trigger photo processing after dedup block ──
+    elif data == "cb_force_reprocess":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+        media_data = getattr(session, "_force_reprocess_media", None)
+        file_id = getattr(session, "_force_reprocess_file_id", None)
+        caption = getattr(session, "_force_reprocess_caption", "")
+        if not media_data:
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="⚠️ Session expired. Please resend the photo.",
+            )
+            return
+        # Remove hash from processed set so normal flow can add it again
+        _photo_hash = hashlib.md5(media_data).hexdigest()
+        _hashes = getattr(session, "_processed_photo_hashes", set())
+        _hashes.discard(_photo_hash)
+        # Clear stored media
+        session._force_reprocess_media = None
+        session._force_reprocess_file_id = None
+        session._force_reprocess_caption = ""
+        session._force_reprocess_hash = None
+        # Re-add to batch and trigger processing directly (no 4s delay)
+        batch = [{"data": media_data, "file_id": file_id, "caption": caption}]
+        session._photo_batch = batch
+        await ctx.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        await _do_process_photo_batch(session, query.message.chat_id, ctx.bot, lang)
+        return
+
     # ── T-168: cb_split_separate — add each item as separate transaction ──────
     elif data == "cb_split_separate":
         receipt = getattr(session, "pending_receipt", None)
@@ -4958,14 +4989,37 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _processed_hashes = getattr(session, "_processed_photo_hashes", set())
         session._processed_photo_hashes = _processed_hashes
 
-        if _photo_hash in _processed_hashes:
+        # T-233: check if force-reprocess was requested (user clicked the button)
+        _force_reprocess = getattr(session, "_force_reprocess_hash", None) == _photo_hash
+        if _force_reprocess:
+            session._force_reprocess_hash = None  # consume the flag
+
+        if _photo_hash in _processed_hashes and not _force_reprocess:
+            # T-233: show "Process anyway" button instead of hard blocking
             _already_msg = {
-                "ru": "📋 Эти транзакции уже были обработаны ранее в этой сессии.",
-                "uk": "📋 Ці транзакції вже були оброблені раніше в цій сесії.",
+                "ru": "📋 Это фото уже обрабатывалось в этой сессии.",
+                "uk": "📋 Це фото вже оброблялось в цій сесії.",
                 "en": "📋 This photo was already processed in this session.",
                 "it": "📋 Questa foto è già stata elaborata in questa sessione.",
             }
-            await update.message.reply_text(_already_msg.get(lang, _already_msg["ru"]))
+            _retry_btn = {
+                "ru": "🔄 Обработать снова",
+                "uk": "🔄 Обробити знову",
+                "en": "🔄 Process anyway",
+                "it": "🔄 Elabora comunque",
+            }
+            # Store hash so button handler can unlock it
+            session._force_reprocess_hash = _photo_hash
+            session._force_reprocess_media = media_data
+            session._force_reprocess_file_id = media_file_id
+            session._force_reprocess_caption = caption
+            await update.message.reply_text(
+                _already_msg.get(lang, _already_msg["ru"]),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(_retry_btn.get(lang, _retry_btn["ru"]),
+                                         callback_data="cb_force_reprocess")
+                ]])
+            )
             return
 
         _processed_hashes.add(_photo_hash)
