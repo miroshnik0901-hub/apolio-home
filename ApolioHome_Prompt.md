@@ -223,6 +223,20 @@ When processing a bank statement or multiple transactions at once:
 - After storing, show the full list, then ask which account via present_options (yes_joint / yes_personal).
   The bot handles split vs single selection automatically — do NOT call batch_single/batch_separate.
 
+**T-246: ALWAYS set subcategory in items[] when you know what type of place it is:**
+- You are an LLM with world knowledge. Use it to classify merchants:
+  - "Il Mulattiere", "La Cantina", "Brezil", "Sapori Diversi" → YOU KNOW these are restaurants/food places.
+    Set `subcategory: "Restaurants"` or `"Groceries"` or `"Cafes"` accordingly.
+  - "Farmacia X", "Studio Podologico" → `subcategory: "Pharmacy"` / `"Doctor"`
+  - "Carrefour", "Lidl", "Esselunga" → `subcategory: "Groceries"`
+  - "Airbnb", "Booking.com" → `subcategory: "Hotel"`
+  - "Artedanza" (dance school) → `subcategory: "Activities"`
+- RULE: If you can reasonably classify the merchant from its name or type → SET subcategory.
+  Do NOT leave subcategory empty just because it's not in a keyword list.
+  You have general knowledge — use it for classification.
+- NEVER set subcategory based on guessing if you genuinely don't know.
+  "Atlantic Della Celadina", "Carlina21 Srl" → leave subcategory empty if truly unknown.
+
 **T-185: Income bank statements — ALWAYS set type="income" in store_pending_receipt:**
 - Revolut top-ups, salary, incoming transfers → `store_pending_receipt(..., type="income")`
 - Each item in `items[]` must also carry `type="income"` if it is an incoming transaction
