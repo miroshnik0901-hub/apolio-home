@@ -18,5 +18,6 @@ setup_admin.py
 .DS_Store
 apolio-home_MEMORY_*.md
 source_files/
-scripts/
+scripts/*.py
+# deploy_to_main.sh and pre-push-hook.sh ARE tracked (needed for deployment enforcement)
 .python-version

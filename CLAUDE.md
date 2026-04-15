@@ -2,6 +2,13 @@
 1. `SESSION_LOG.md` — full history: actions, decisions, pending, state
 2. `DEV_PROD_STATE.md` — what's on dev vs main, what's waiting GO, test/prod resource table
 3. `CLAUDE_WORKING_GUIDE.md` — architecture, file map (section 4), schemas. Read before any code change.
+
+**⚠️ INSTALL GIT HOOK AT SESSION START (mandatory):**
+```bash
+cp scripts/pre-push-hook.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+This blocks `git push origin dev:main` unless `ALLOW_MAIN_PUSH=GO_CONFIRMED` is set.
+**NEVER run `git push origin dev:main` directly. ALWAYS use `scripts/deploy_to_main.sh T-XXX`.**
 4. Check PROD `error_log` for recent errors (last 24h):
    ```python
    import psycopg2
