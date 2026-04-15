@@ -739,15 +739,20 @@ class EnvelopeSheets:
         except Exception:
             _col_ltr = chr(ord("A") + min(width - 1, 25))
         total_rows = len(all_rows)
-        # Step 1: clear the ENTIRE data area (including sparse tail where old rows hide)
-        if total_rows > 1:
-            empty_block = [[""] * width for _ in range(total_rows - 1)]
-            _sheets_retry(ws.update, empty_block, f"A2:{_col_ltr}{total_rows}",
-                          value_input_option="USER_ENTERED")
-        # Step 2: write sorted data back at top
         end_row = 1 + len(padded)
+        # T-235: use single update call instead of clear+write (saves 1 write, less quota).
+        # Write sorted rows to A2:end_row — this overwrites existing data.
+        # Then clear any extra rows that might exist beyond end_row (handles row count shrinkage).
         _sheets_retry(ws.update, padded, f"A2:{_col_ltr}{end_row}",
-                      value_input_option="USER_ENTERED")
+                      value_input_option="USER_ENTERED", max_attempts=3, base_delay=5.0)
+        if total_rows > end_row:
+            # Clear trailing rows if sheet had more rows than sorted data
+            empty_tail = [[""] * width for _ in range(total_rows - end_row)]
+            try:
+                _sheets_retry(ws.update, empty_tail, f"A{end_row+1}:{_col_ltr}{total_rows}",
+                              value_input_option="USER_ENTERED")
+            except Exception:
+                pass  # best-effort clear of sparse tail
         return len(padded)
 
     def sum_expenses(self, month: str) -> float:
@@ -1335,7 +1340,9 @@ class SheetsClient:
         if isinstance(row, list):
             env = self._env_sheets(sheet_id)
             # T-183: wrap with retry — batch writes trigger 429 after ~4 rapid requests
-            _sheets_retry(env._ws("Transactions").append_row, row)
+            # T-242: increase retries for append — quota can exhaust mid-batch on 16+ items
+            _sheets_retry(env._ws("Transactions").append_row, row,
+                          max_attempts=3, base_delay=5.0)
             return row[10]  # tx_id is at index 10 (col K) in new column order
         return self._env_sheets(sheet_id).add_transaction(row)
 
