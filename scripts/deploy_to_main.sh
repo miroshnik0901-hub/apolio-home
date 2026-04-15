@@ -40,5 +40,5 @@ elif [[ "$CONFIRM" != "GO" ]]; then
 fi
 
 echo "✅ $TASK_ID has Confirm=GO — deploying to main..."
-git push origin dev:main
+ALLOW_MAIN_PUSH=GO_CONFIRMED git push origin dev:main
 echo "✅ Deployed. Update task: Deploy=DEPLOYED, Branch=main"
