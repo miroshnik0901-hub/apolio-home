@@ -1314,3 +1314,35 @@ async def get_recent_errors(limit: int = 20) -> list[dict]:
     except Exception as e:
         logger.warning(f"[DB] get_recent_errors failed: {e}")
         return []
+
+
+async def get_merchant_subcategory(user_id: int, note: str) -> str | None:
+    """T-245: Look up learned merchant→subcategory mapping from agent_learning.
+    Returns subcategory string if found with confidence >= 0.6, else None.
+    Checks note against saved trigger_text using substring match.
+    """
+    if not is_ready() or not note:
+        return None
+    try:
+        note_lower = note.lower().strip()
+        async with acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT trigger_text, learned_json, confidence
+                   FROM agent_learning
+                   WHERE user_id = $1 AND event_type = 'merchant_subcategory'
+                     AND confidence >= 0.6
+                   ORDER BY confidence DESC, last_seen_ts DESC""",
+                user_id,
+            )
+            import json as _j
+            for row in rows:
+                trigger = row["trigger_text"].lower()
+                # Match if trigger is substring of note or note is substring of trigger
+                if trigger in note_lower or note_lower in trigger:
+                    learned = _j.loads(row["learned_json"])
+                    sub = learned.get("subcategory", "")
+                    if sub:
+                        return sub
+    except Exception:
+        pass
+    return None

@@ -424,15 +424,24 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     subcategory = params.get("subcategory", "")
     note = params.get("note", "")
 
-    # T-237: infer subcategory from note text when agent/batch doesn't provide it
+    # T-237/T-245: infer subcategory — merchant memory first, then keyword aliases
     if not subcategory and note and category.lower() != "income":
         try:
-            _ref_for_sub = sheets.get_reference_data(envelope["file_id"])
-            _known_subs = _ref_for_sub.get("subcategories", [])
-            _sheets_inst = _ref_for_sub.get("_sheets_instance")
-            subcategory = _infer_subcategory(note, _known_subs, _sheets_inst)
-            if subcategory:
+            # T-245: check learned merchant→subcategory mappings first
+            import db as _db
+            _uid = getattr(session, "user_id", 0)
+            _learned_sub = await _db.get_merchant_subcategory(_uid, note)
+            if _learned_sub:
+                subcategory = _learned_sub
                 params["subcategory"] = subcategory
+            else:
+                # T-237: keyword-based inference
+                _ref_for_sub = sheets.get_reference_data(envelope["file_id"])
+                _known_subs = _ref_for_sub.get("subcategories", [])
+                _sheets_inst = _ref_for_sub.get("_sheets_instance")
+                subcategory = _infer_subcategory(note, _known_subs, _sheets_inst)
+                if subcategory:
+                    params["subcategory"] = subcategory
         except Exception:
             pass  # inference is best-effort
 
@@ -713,6 +722,27 @@ async def tool_edit_transaction(params: dict, session: SessionContext,
         envelope_id=envelope_id,
         snapshot={"field": field, "new_value": new_value}
     )
+
+    # T-245: auto-save merchant memory when subcategory is corrected
+    if field == "Subcategory" and new_value:
+        try:
+            import db as _db
+            # Find the note of this transaction to use as trigger_text
+            existing = sheets.get_transactions(file_id)
+            tx = next((t for t in existing if t.get("ID") == tx_id), None)
+            note = tx.get("Note", "") if tx else ""
+            if note:
+                await _db.save_learning(
+                    user_id=getattr(session, "user_id", 0),
+                    event_type="merchant_subcategory",
+                    trigger_text=note,
+                    learned={"subcategory": new_value},
+                    confidence_delta=0.1,
+                    envelope_id=envelope_id or "",
+                )
+        except Exception:
+            pass  # best-effort, don't block the edit
+
     return {"status": "ok", "message": f"✓ Updated {field} → {new_value} ({tx_id})"}
 
 
