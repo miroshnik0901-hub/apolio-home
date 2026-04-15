@@ -712,15 +712,12 @@ class EnvelopeSheets:
         Falls back to read-sort-write if native sort fails.
         """
         ws = self._ws("Transactions")
-        # T-235: Native sort (ws.sort() batchUpdate) returns success but does NOT actually
-        # reorder rows on this sheet — confirmed by testing: reply={'replies':[{}]} but data
-        # unchanged. Root cause unknown (may be gspread version or sheet properties).
-        # Always use read-sort-write. It costs 1 read + 2 writes but is reliable.
+        # T-235: Small delay before read — Sheets API has eventual consistency.
+        # append_row writes may not be immediately visible to get_all_values.
+        # Root cause also: Railway deployment overlap (2 instances run concurrently).
+        # This delay reduces the window where sort sees stale/partial data.
+        import time as _t; _t.sleep(1.5)
 
-        # Read-sort-write with FULL CLEAR to handle sparse sheets.
-        # Previously only wrote rows 2-N but left old data at rows N+1..end.
-        # Sparse sheets (many empty rows in middle) have data at e.g. rows 856-860
-        # which persisted after a write to rows 2-42.
         all_rows = _sheets_retry(ws.get_all_values)
         if len(all_rows) < 2:
             return 0
