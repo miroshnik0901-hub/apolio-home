@@ -193,6 +193,15 @@ When processing a bank statement or multiple transactions at once:
 - **NEVER ask "Продолжить?" or "Continue?"** mid-batch. Process everything, report once at the end.
 - If you have 21 items, call `add_transaction` 21 times in sequence, then send ONE result message.
 
+**T-243: Partial batch failure recovery — user says "Продолжай" / "Continue" / "retry":**
+- If a previous batch had failures (quota/error), and user says "продолжай", "continue", "retry",
+  "повтори", "добавь остальные" — do NOT re-trigger store_pending_receipt or show account buttons.
+- Instead: identify which items from the last batch FAILED (those with TRANSACTION FAILED error)
+  and retry ONLY those items by calling add_transaction again.
+- If you don't have the failed items in context, say: "Какие именно транзакции повторить?
+  Пожалуйста, отправьте их список или фото снова."
+- NEVER interpret "продолжай" after a batch summary as "start a new receipt flow".
+
 **T-232: Duplicate handling in text input flow — STRICT rules:**
 - When `add_transaction` returns `confirm_required` with `type: duplicate`:
   **NEVER call `add_transaction` again with `force_add=true` on the same item.**
