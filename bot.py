@@ -4043,8 +4043,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     item_cat = "Salary"
                 elif any(kw in _ic_note for kw in ("transfer", "перевод", "переказ")):
                     item_cat = "Top-up"
-                elif item_cat in ("Other", "other", "OTHER", ""):
-                    item_cat = "Top-up"  # safe default for unclassified income
+                elif item_cat.lower() not in ("top-up", "salary"):
+                    # T-249: any unrecognized income category → Top-up
+                    # Catches "Income", "income", "Other", "" etc. from agent
+                    item_cat = "Top-up"
             if item_amount <= 0:
                 failed.append(f"✗ {item_name}: amount=0, skipped")
                 continue
@@ -4283,8 +4285,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 _single_cat = "Salary"
             elif any(kw in _sn_note for kw in ("transfer", "перевод", "переказ")):
                 _single_cat = "Top-up"
-            elif _single_cat in ("Other", "other", "OTHER", ""):
-                _single_cat = "Top-up"
+            elif _single_cat.lower() not in ("top-up", "salary"):
+                _single_cat = "Top-up"  # T-249: "Income" etc → Top-up
         add_params = {
             "amount": receipt.get("total_amount", 0),
             "currency": receipt.get("currency", "EUR"),
