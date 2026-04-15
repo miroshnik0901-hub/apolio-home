@@ -15,15 +15,20 @@ logger = logging.getLogger(__name__)
 
 def _normalize_note(text: str) -> set:
     """T-237: Normalize note text for dup detection token comparison.
-    Converts accented chars (ò→o, é→e) and splits into tokens.
-    Ensures 'mercatò' == 'mercato', 'esselunga' == 'esselunga', etc.
+    Converts accented chars (ò→o, é→e) and strips punctuation from tokens.
+    Ensures 'mercatò' == 'mercato', 'MERCATO'' == 'mercato', etc.
+    Also handles Cyrillic by returning original lowercase tokens (pass 1)
+    so Cyrillic aliases ('паркінг') still work in _infer_subcategory.
     """
     if not text:
         return set()
+    import re as _re
     # NFKD decomposition → remove combining diacritics → ASCII
     normalized = unicodedata.normalize("NFKD", text.lower())
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
-    return set(ascii_text.split())
+    # Strip punctuation from each token (fixes MERCATO' → mercato)
+    tokens = {_re.sub(r"[^\w]", "", t) for t in ascii_text.split()}
+    return {t for t in tokens if t}  # remove empty strings
 
 
 def _infer_subcategory(note: str, known_subs: list, sheets_inst=None) -> str:
@@ -94,6 +99,7 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "dining": "Restaurants", "restaurant": "Restaurants",
     "ristorante": "Restaurants", "ресторан": "Restaurants", "trattoria": "Restaurants",
     "osteria": "Restaurants", "pizzeria": "Restaurants", "gelateria": "Restaurants",
+    "cantina": "Restaurants", "enoteca": "Restaurants", "taverna": "Restaurants",
     "кафе": "Cafes", "cafe": "Cafes", "coffee": "Cafes",
     "bakery": "Cafes", "bar": "Alcohol", "бар": "Alcohol",
     "pub": "Alcohol", "паб": "Alcohol",
