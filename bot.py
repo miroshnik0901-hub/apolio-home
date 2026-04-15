@@ -4213,6 +4213,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=_with_menu_btn(lang=lang),
         )
         # T-192: present cross-currency dup enrichment prompts one by one
+        # T-252: add asyncio.sleep + try-except to handle FloodWait after batch sends
         if _pending_cross_dups:
             _cd0 = _pending_cross_dups[0]
             session._dup_receipt = _cd0["receipt"]
@@ -4224,7 +4225,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             _cd0_ex_eur = float(_cd0.get("existing_eur") or 0)
             _cd0_ex_date = _cd0.get("existing_date", "")
             _cd0_new_note = _cd0["receipt"]["merchant"]
-            _cd0_new_amt = _cd0["add_params"]["amount"]
+            _cd0_new_amt = float(_cd0["add_params"].get("amount") or 0)
             _cd0_new_cur = _cd0["add_params"]["currency"]
             _cd0_msg = (
                 f"⚠️ Можливий дублікат:\n"
@@ -4237,11 +4238,35 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton(i18n.ts("dup_add_new", lang), callback_data="cb_dup_add_new")],
                 [InlineKeyboardButton(i18n.ts("dup_cancel", lang), callback_data="cb_dup_cancel")],
             ])
-            await ctx.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=_cd0_msg,
-                reply_markup=_cd0_btns,
-            )
+            try:
+                import asyncio as _aio
+                await _aio.sleep(0.5)  # T-252: avoid FloodWait after rapid batch sends
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=_cd0_msg,
+                    reply_markup=_cd0_btns,
+                )
+            except Exception as _dup_send_err:
+                logger.error(f"T-252: dup question send failed: {_dup_send_err}", exc_info=True)
+                await _db_log_error(
+                    error_type="T-252:dup_question_send_failed",
+                    context=f"note={_cd0_new_note} amt={_cd0_new_amt} cur={_cd0_new_cur}: {str(_dup_send_err)[:200]}",
+                    exc=_dup_send_err,
+                    user_id=getattr(session, "user_id", 0),
+                )
+                # T-252: fallback — inform user the dup question failed
+                try:
+                    _dup_fail_msg = (
+                        f"⚠️ Не вдалося показати питання про дублікат: {_cd0_new_note}.\n"
+                        f"Перевірте вручну чи є такий запис вже в таблиці."
+                    )
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=_dup_fail_msg,
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                except Exception:
+                    pass
         return
 
     # ── T-168: cb_split_single — add as one merged transaction ────────────────
