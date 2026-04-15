@@ -945,6 +945,23 @@ class ApolioAgent:
             f"Always {_response_lang_name}."
         )
 
+        # T-247: Inject failed batch items context for "Продолжай" retry flow
+        failed_items = getattr(session, "_failed_batch_items", None)
+        if failed_items:
+            _fi_list = ", ".join(
+                f"{i.get('name','?')} ({i.get('amount','?')} {i.get('currency','EUR')})"
+                for i in failed_items[:10]
+            )
+            system += (
+                f"\n\n---\n\n## FAILED BATCH ITEMS (need retry)\n"
+                f"The previous batch add had {len(failed_items)} failed transactions due to quota limits:\n"
+                f"{_fi_list}\n\n"
+                f"If user says 'продолжай', 'continue', 'retry', 'повтори', 'добавь остальные' "
+                f"or similar — retry ONLY these {len(failed_items)} failed items by calling "
+                f"add_transaction for each one. Do NOT call store_pending_receipt again. "
+                f"Use the account from session: {getattr(session, '_failed_batch_account', 'Joint')}."
+            )
+
         # T-065/T-067: Inject pending receipt context so agent remembers photo analysis
         pending_receipt = getattr(session, "pending_receipt", None)
         if pending_receipt:

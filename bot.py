@@ -4183,6 +4183,21 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             summary_lines.append(_sort_warn.get(lang, _sort_warn["uk"]))
         if failed:
             summary_lines += [f"\n⚠️ Не вдалося ({len(failed)}):"] + failed
+            # T-247: store failed items in session so agent can retry them on "Продолжай"
+            # Extract original item dicts for the failed ones
+            _failed_names = {f.split(":")[0].lstrip("✗ ").strip() for f in failed}
+            session._failed_batch_items = [
+                i for i in items
+                if (i.get("name") or i.get("merchant") or "") in _failed_names
+            ]
+            session._failed_batch_receipt = receipt
+            session._failed_batch_account = account
+        else:
+            # All succeeded — clear any stale failed state
+            session._failed_batch_items = []
+            session._failed_batch_receipt = None
+            session._failed_batch_account = None
+
         bal_line = _quick_balance_line(session, lang)
         if bal_line:
             summary_lines.append(f"\n{bal_line}")
