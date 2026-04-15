@@ -127,6 +127,12 @@ reference data. No need to ask "на что?" — the category word IS the answe
 - Type: expense
 - Category: make best guess from text
 
+**T-248: ALWAYS use POSITIVE amounts (NO EXCEPTIONS):**
+- Bank statements (Revolut, Monobank, Privatbank) show expenses as negative: -72.20 EUR, -150 EUR.
+- **ALWAYS pass the absolute value.** `-72.20` → `amount: 72.20`. The `type` field (expense/income) encodes direction.
+- NEVER pass negative amounts to `store_pending_receipt` items or `add_transaction`.
+- Income (incoming transfers) always have positive amount + `type: "income"`.
+
 **Currency detection rules (CRITICAL — NO EXCEPTIONS):**
 - **NEVER perform currency conversion.** Do NOT multiply by an exchange rate. Do NOT show "X UAH → Y EUR". Store the original amount AS-IS.
 - If the statement is in UAH (₴, гривень, hryvnia) → set `currency="UAH"` and use the UAH amount directly (e.g. 7805 UAH, NOT 195.13 EUR)

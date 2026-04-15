@@ -419,6 +419,12 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     now = datetime.utcnow().isoformat()
     date = params.get("date") or _today()
     amount = params["amount"]
+    # T-248: bank statements pass negative amounts for expenses — use abs() always
+    try:
+        if float(amount) < 0:
+            amount = abs(float(amount))
+    except (ValueError, TypeError):
+        pass
     currency = params.get("currency", "EUR")
     category = params.get("category", "")
     subcategory = params.get("subcategory", "")

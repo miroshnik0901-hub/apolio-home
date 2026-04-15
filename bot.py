@@ -4010,6 +4010,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             item_amount = safe_float(
                 item.get("amount") or item.get("total_amount") or item.get("price") or 0
             )
+            # T-248: Revolut/bank statements pass negative amounts for expenses (-72 EUR).
+            # Always use absolute value — type=expense/income encodes direction.
+            if item_amount < 0:
+                item_amount = abs(item_amount)
             item_date = item.get("date") or receipt.get("date") or ""
             item_cat = item.get("category") or receipt.get("category") or "Other"
             # T-184: per-item who (e.g. "Maryna" vs "Mikhail" in bank statements);
