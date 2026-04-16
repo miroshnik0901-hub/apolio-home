@@ -60,7 +60,7 @@ Before running a dup detection test, verify:
 **After every `git push main`** — run this immediately:
 
 ```bash
-python3 scripts/sync_prod_after_deploy.py
+python3 scripts/ap_sync_prod.py
 ```
 
 This script verifies PROD structure (read-only by default):

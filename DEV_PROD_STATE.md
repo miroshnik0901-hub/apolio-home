@@ -23,7 +23,7 @@
 - Category/subcategory aliases (60+ variants → canonical)
 - User aliases: Marina→Maryna, Миша→Mikhail + Telegram ID auto-assign
 - Error logging: PostgreSQL error_log table + global PTB handler
-- Post-deploy sync script: scripts/sync_prod_after_deploy.py
+- Post-deploy sync script: scripts/ap_sync_prod.py
 - Staging environment setup (separate Test Admin sheet, Railway staging vars)
 
 **⚠️ NOT yet on production (waiting GO):**

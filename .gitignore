@@ -10,14 +10,10 @@ __pycache__/
 logs/
 *.log
 *.gsheet
-encode_service_account.py
-get_oauth_token.py
-get_telegram_id.py
-setup.py
 setup_admin.py
 .DS_Store
 apolio-home_MEMORY_*.md
 source_files/
-scripts/*.py
+# scripts/*.py ARE tracked — needed for deploy workflow
 # deploy_to_main.sh and pre-push-hook.sh ARE tracked (needed for deployment enforcement)
 .python-version

@@ -106,11 +106,11 @@ wise.py           157  Wise CSV import.    ⚠️ DO NOT TOUCH without instructi
 ### scripts/ — ops scripts
 
 ```
-sync_prod_after_deploy.py  Post-PROD verifier (9 checks). Run after every git push main.
-encode_service_account.py  Encodes SA JSON → base64 for env var
-get_oauth_token.py         OAuth token helper
-get_telegram_id.py         Get Telegram user ID
-setup.py                   Initial environment setup
+ap_sync_prod.py    Post-PROD verifier (9 checks). Run after every git push main.
+ap_encode_sa.py    Encodes SA JSON → base64 for env var
+ap_get_oauth.py    OAuth token helper
+ap_get_tg_id.py    Get Telegram user ID
+ap_setup_env.py    Initial environment setup
 ```
 
 ### tests/
@@ -135,7 +135,7 @@ apolio_home_logo/      SVG/PNG brand assets
 **Files NOT to touch without explicit instruction:**
 `tools/wise.py`, `tools/fx.py`, `tools/config_tools.py`,
 `setup_admin.py`, `setup_sheets_v2.py`,
-`scripts/encode_service_account.py`, `scripts/get_telegram_id.py`
+`scripts/ap_encode_sa.py`, `scripts/ap_get_tg_id.py`
 
 ---
 
