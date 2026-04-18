@@ -633,6 +633,17 @@ SYS: dict[str, dict[str, str]] = {
     "dup_cancelled": {
         "ru": "Операция отменена.", "uk": "Операцію скасовано.", "en": "Operation cancelled.", "it": "Operazione annullata.",
     },
+    # ── T-254: Batch recap — compact summary after cross-currency dup queue drains ──
+    "batch_recap_header": {
+        "ru": "📊 Итог:", "uk": "📊 Підсумок:", "en": "📊 Summary:", "it": "📊 Riepilogo:",
+    },
+    "batch_recap_line": {
+        # compact one-liner: ✅ added · 🔄 updated · ❌ cancelled · of N total
+        "ru": "✅ Добавлено: {added}  🔄 Обновлено: {updated}  ❌ Отменено: {cancelled}  (из {total})",
+        "uk": "✅ Додано: {added}  🔄 Оновлено: {updated}  ❌ Скасовано: {cancelled}  (з {total})",
+        "en": "✅ Added: {added}  🔄 Updated: {updated}  ❌ Cancelled: {cancelled}  (of {total})",
+        "it": "✅ Aggiunte: {added}  🔄 Aggiornate: {updated}  ❌ Annullate: {cancelled}  (su {total})",
+    },
     # ── T-143: Bulk delete ──
     "del_bulk": {
         "ru": "Удалить все ({n})", "uk": "Видалити всі ({n})", "en": "Delete all ({n})", "it": "Elimina tutti ({n})",
