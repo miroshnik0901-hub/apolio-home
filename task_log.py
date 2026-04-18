@@ -193,7 +193,13 @@ class TaskLog:
         row[COL_DEPLOY - 1] = deploy
         row[COL_CONFIRM - 1] = ""
 
-        self._ws.append_row(row, value_input_option="USER_ENTERED")
+        # T-256: insert at row 2 (right under header) instead of append_row.
+        # Reason: archiveClosed() Apps Script physically pushes CLOSED rows to
+        # the absolute bottom of the sheet; gspread's append_row then lands
+        # new tasks BELOW the CLOSED block where user cannot see them.
+        # Inserting at index=2 keeps new tasks visible at the top, consistent
+        # with the "Sort by Date (newest first)" Apps Script menu action.
+        self._ws.insert_row(row, index=2, value_input_option="USER_ENTERED")
         return self._fmt_id(task_id)
 
     def update_task(
