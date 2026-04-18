@@ -3386,6 +3386,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     text=i18n.ts("dup_cancelled", lang),
                     reply_markup=_with_menu_btn(lang=lang),
                 )
+                # T-254: bump recap counter (cancel)
+                if getattr(session, "_batch_recap_enabled", False):
+                    session._batch_recap_cancelled = getattr(session, "_batch_recap_cancelled", 0) + 1
                 # T-192: no early return — fall through to present next queued dup
             else:
                 # ── Update / Add-new ─────────────────────────────────────────
@@ -3437,6 +3440,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 msg = (result.get("message") or result.get("error") or "") if isinstance(result, dict) else str(result)
                 if not msg or not msg.strip():
                     msg = "✓ Готово" if dup_action == "update" else "✓ Додано"
+
+                # T-254: bump recap counter only on actual success (no "error" key / no exception)
+                _ok = isinstance(result, dict) and not result.get("error")
+                if _ok and getattr(session, "_batch_recap_enabled", False):
+                    if dup_action == "update":
+                        session._batch_recap_updated = getattr(session, "_batch_recap_updated", 0) + 1
+                    elif dup_action == "add_new":
+                        session._batch_recap_added = getattr(session, "_batch_recap_added", 0) + 1
 
                 # Save receipt to PostgreSQL
                 if receipt:
@@ -3528,6 +3539,37 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     text=_cdn_msg,
                     reply_markup=_cdn_btns,
                 )
+            else:
+                # T-254: queue drained — emit compact batch recap once.
+                # Only when a batch recap was armed (i.e. came from cb_split_separate).
+                if (getattr(session, "_batch_recap_enabled", False)
+                        and not getattr(session, "_batch_recap_sent", False)):
+                    _ra = int(getattr(session, "_batch_recap_added", 0) or 0)
+                    _ru = int(getattr(session, "_batch_recap_updated", 0) or 0)
+                    _rc = int(getattr(session, "_batch_recap_cancelled", 0) or 0)
+                    _rt = int(getattr(session, "_batch_recap_total", 0) or 0)
+                    _recap = (
+                        i18n.ts("batch_recap_header", lang) + "\n" +
+                        i18n.ts("batch_recap_line", lang).format(
+                            added=_ra, updated=_ru, cancelled=_rc, total=_rt,
+                        )
+                    )
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=_recap,
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                    # mark sent + reset batch state (also clears any leftover failed/recap bits)
+                    session._batch_recap_sent = True
+                    session._batch_recap_enabled = False
+                    session._batch_recap_added = 0
+                    session._batch_recap_updated = 0
+                    session._batch_recap_cancelled = 0
+                    session._batch_recap_total = 0
+                    session._failed_batch_items = []
+                    session._failed_batch_receipt = None
+                    session._failed_batch_account = None
+                    session._pending_cross_dups = []
         except Exception as e:
             logger.error(f"Duplicate decision handler failed: {e}", exc_info=True)
             await ctx.bot.send_message(
@@ -4210,6 +4252,19 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text="\n".join(summary_lines),
             reply_markup=_with_menu_btn(lang=lang),
         )
+        # T-254: init batch recap counters so cb_dup_<action> can emit final summary
+        # when the cross-currency dup queue drains. Enabled only when there IS a queue.
+        if _pending_cross_dups:
+            session._batch_recap_enabled = True
+            session._batch_recap_added = total_added          # successes from phase 1
+            session._batch_recap_updated = 0                   # dup → update existing
+            session._batch_recap_cancelled = 0                 # dup → cancelled by user
+            session._batch_recap_total = total_items           # total items in receipt
+            session._batch_recap_sent = False
+        else:
+            # no dup queue → nothing to recap, clear any stale flag
+            session._batch_recap_enabled = False
+            session._batch_recap_sent = True
         # T-192: present cross-currency dup enrichment prompts one by one
         if _pending_cross_dups:
             _cd0 = _pending_cross_dups[0]
@@ -4300,6 +4355,34 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         msg = result.get("message", "") if isinstance(result, dict) else str(result)
         if isinstance(result, dict) and "error" in result:
             msg = f"⚠️ {result['error']}"
+
+        # T-255: persist per-item detail to parsed_data so the merged Sheets row
+        # stays compact while full items (merchant, amount, category, qty) remain
+        # queryable via get_receipt / parsed_data.payload.items
+        if tx_id and receipt:
+            try:
+                _pd_single = {
+                    "transaction_id": tx_id,
+                    "merchant": receipt.get("merchant", "") or "Multiple merchants",
+                    "date": receipt.get("date") or add_params.get("date", ""),
+                    "total_amount": receipt.get("total_amount", 0),
+                    "currency": receipt.get("currency", "EUR"),
+                    "items": receipt.get("items", []) or [],
+                    "ai_summary": receipt.get("ai_summary", ""),
+                    "raw_text": receipt.get("raw_text", ""),
+                    "tg_file_id": receipt.get("tg_file_id", ""),
+                    "category": _single_cat,
+                    "who": receipt.get("who") or session.user_name,
+                    "account": account,
+                }
+                await agent._tool_save_receipt(_pd_single, session, sheets, auth)
+                logger.info(
+                    f"T-255: single-row receipt details saved to parsed_data "
+                    f"tx={tx_id} items={len(_pd_single['items'])}"
+                )
+            except Exception as _sr_err:
+                logger.warning(f"T-255: save_receipt for cb_split_single failed: {_sr_err}")
+
         bal_line = _quick_balance_line(session, lang)
         if bal_line:
             msg += f"\n\n{bal_line}"
