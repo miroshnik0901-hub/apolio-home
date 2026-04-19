@@ -4,7 +4,10 @@ from datetime import datetime
 from typing import Optional
 from sheets import AdminSheets
 
-DEFAULT_ENVELOPE = "MM_BUDGET"
+# T-259: No hardcoded DEFAULT_ENVELOPE — it must be resolved per-user from
+# Admin.Users.envelopes (first entry). Previous hardcode "MM_BUDGET" broke
+# TEST where envelope_id=TEST_BUDGET, causing weekly report → "❌ Envelope not found".
+# See _resolve_default_envelope() below.
 
 
 class AuthManager:
@@ -160,14 +163,53 @@ class SessionContext:
 # In-memory session store (keyed by user_id)
 _sessions: dict = {}
 
+# T-259: Registered AuthManager, set by bot.py at startup.
+# Used by get_session() to resolve the default envelope for a user from
+# Admin.Users.envelopes — removes the previous DEFAULT_ENVELOPE="MM_BUDGET"
+# hardcode that broke TEST (where envelope_id=TEST_BUDGET).
+_registered_auth: Optional["AuthManager"] = None
+
+
+def register_auth_manager(auth_manager: "AuthManager") -> None:
+    """Register the AuthManager instance so get_session() can resolve
+    the user's default envelope from Admin.Users.envelopes.
+    Call this once at startup, right after instantiating AuthManager.
+    """
+    global _registered_auth
+    _registered_auth = auth_manager
+
+
+def _resolve_default_envelope(user_id: int) -> Optional[str]:
+    """Return the first envelope assigned to user_id in Admin.Users.envelopes,
+    or None if unknown. Used as the default for new sessions (T-259).
+    """
+    if _registered_auth is None:
+        return None
+    try:
+        user = _registered_auth.get_user(user_id)
+        if user:
+            envs = user.get("envelopes", []) or []
+            if envs:
+                return envs[0]
+    except Exception as e:
+        print(f"[get_session] Failed to resolve default envelope for {user_id}: {e}")
+    return None
+
 
 def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
-    """Return existing session or create a new one for the given user."""
+    """Return existing session or create a new one for the given user.
+
+    Default envelope is resolved from Admin.Users.envelopes (first entry) —
+    NO hardcode. T-259 removed the previous DEFAULT_ENVELOPE="MM_BUDGET" which
+    broke TEST (envelope_id=TEST_BUDGET). Requires register_auth_manager() to
+    have been called at startup; if not, current_envelope_id stays None and
+    downstream code must handle None (bot.py:1291-1296 fallback path already does).
+    """
     if user_id not in _sessions:
         session = SessionContext(user_id, user_name, role)
-        # Auto-set default envelope for ALL roles (not just admin/contributor).
         # T-104: readonly users need an envelope too, otherwise they see nothing.
-        session.current_envelope_id = DEFAULT_ENVELOPE
+        # T-259: resolve from Admin.Users.envelopes instead of hardcoded default.
+        session.current_envelope_id = _resolve_default_envelope(user_id)
         _sessions[user_id] = session
     else:
         # Refresh name and role on each call
@@ -175,5 +217,5 @@ def get_session(user_id: int, user_name: str, role: str) -> SessionContext:
         _sessions[user_id].role = role
         # Restore default if envelope was lost (e.g. process restart)
         if not _sessions[user_id].current_envelope_id:
-            _sessions[user_id].current_envelope_id = DEFAULT_ENVELOPE
+            _sessions[user_id].current_envelope_id = _resolve_default_envelope(user_id)
     return _sessions[user_id]
