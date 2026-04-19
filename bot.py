@@ -4743,108 +4743,18 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
     if captions:
         text = " | ".join(captions)
     elif n_photos == 1:
-        # T-261: photo prompt now branches by photo type so bank statements (≥3 tx rows)
-        # go through aggregate_bank_statement FIRST instead of LLM-counting in store_pending_receipt.
-        _photo_auto_analyze = {
-            "ru": (
-                "Проанализируй это изображение полностью. "
-                "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
-                "ВЫБОР ПУТИ:\n"
-                "(A) Если это БАНКОВСКАЯ ВЫПИСКА с ≥3 транзакциями (таблица дата/сумма/описание, "
-                "часто содержит пары преавторизация↔отмена, например WOG/OKKO) — "
-                "СНАЧАЛА вызови aggregate_bank_statement(rows=[…]) с типами "
-                "{debit, credit, preauth, cancellation}. ЦИФРЫ из его summary используй ДОСЛОВНО. "
-                "Затем, если хочешь предложить запись — store_pending_receipt с items[] из "
-                "fact_expense_rows (НЕ из preauth/cancellation), потом present_options.\n"
-                "(B) Если это обычный чек/счёт/одна транзакция — store_pending_receipt с данными, "
-                "потом present_options с кнопками выбора счёта.\n"
-                "НЕ вызывай add_transaction. НЕ считай и не суммируй сам — для выписок только через "
-                "aggregate_bank_statement. Покажи мне список всего, что ты нашёл."
-            ),
-            "uk": (
-                "Проаналізуй це зображення повністю. "
-                "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
-                "ВИБІР ШЛЯХУ:\n"
-                "(A) Якщо це БАНКІВСЬКА ВИПИСКА з ≥3 транзакціями (таблиця дата/сума/опис, "
-                "часто містить пари тимчасово заблоковано↔скасування, напр. WOG/OKKO) — "
-                "СПОЧАТКУ виклич aggregate_bank_statement(rows=[…]) з типами "
-                "{debit, credit, preauth, cancellation}. ЦИФРИ з його summary використовуй ДОСЛІВНО. "
-                "Потім, якщо хочеш запропонувати запис — store_pending_receipt з items[] із "
-                "fact_expense_rows (НЕ з preauth/cancellation), потім present_options.\n"
-                "(B) Якщо це звичайний чек/рахунок/одна транзакція — store_pending_receipt з даними, "
-                "потім present_options з кнопками вибору рахунку.\n"
-                "НЕ викликай add_transaction. НЕ рахуй і не сумуй сам — для виписок тільки через "
-                "aggregate_bank_statement. Покажи мені список усього, що ти побачив."
-            ),
-            "en": (
-                "Analyze this image fully. "
-                "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
-                "PATH SELECTION:\n"
-                "(A) If this is a BANK STATEMENT with ≥3 transaction rows (table of date/amount/desc, "
-                "often contains preauth↔cancellation pairs e.g. WOG/OKKO) — "
-                "FIRST call aggregate_bank_statement(rows=[…]) with types "
-                "{debit, credit, preauth, cancellation}. Use the returned summary numbers VERBATIM. "
-                "Then, if you want to propose recording — store_pending_receipt with items[] from "
-                "fact_expense_rows (NOT preauth/cancellation), then present_options.\n"
-                "(B) If it's a regular receipt/bill/single transaction — store_pending_receipt with data, "
-                "then present_options with account buttons.\n"
-                "Do NOT call add_transaction. Do NOT count or sum yourself — for statements only via "
-                "aggregate_bank_statement. Show me everything you found."
-            ),
-            "it": (
-                "Analizza questa immagine completamente. "
-                "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
-                "SCELTA PERCORSO:\n"
-                "(A) Se è un ESTRATTO CONTO con ≥3 transazioni (tabella data/importo/descrizione, "
-                "spesso contiene coppie preavviso↔storno, p.es. WOG/OKKO) — "
-                "PRIMA chiama aggregate_bank_statement(rows=[…]) con tipi "
-                "{debit, credit, preauth, cancellation}. Usa i numeri del summary ALLA LETTERA. "
-                "Poi, se vuoi proporre la registrazione — store_pending_receipt con items[] da "
-                "fact_expense_rows (NON da preauth/cancellation), poi present_options.\n"
-                "(B) Se è uno scontrino/fattura normale/singola transazione — store_pending_receipt "
-                "con i dati, poi present_options con i pulsanti del conto.\n"
-                "NON chiamare add_transaction. NON contare o sommare tu stesso — per gli estratti solo "
-                "tramite aggregate_bank_statement. Mostrami tutto ciò che hai trovato."
-            ),
-        }
-        text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
+        # Single English prompt. Routing logic (aggregate_bank_statement vs store_pending_receipt)
+        # lives in the SYSTEM prompt (ApolioHome_Prompt.md § BEHAVIOR: BATCH TRANSACTIONS).
+        # The user turn stays minimal so the model executes tools instead of narrating them.
+        # Reply language is driven by the ongoing session language, not by this prompt.
+        text = f"[Photo from user] Analyze it and follow the photo-flow rules in your system prompt. Reply in the user's language ({lang})."
     else:
-        # Multiple photos without captions — batch analysis prompt
-        _batch_prompt = {
-            "ru": (
-                f"Пользователь отправил {n_photos} фото. Это могут быть разные документы "
-                "одного платежа (карточный чек, фискальный чек, заказ и т.д.). "
-                "Проанализируй ВСЕ фото, объедини информацию в ОДНУ транзакцию. "
-                "Извлеки: сумму, дату, заведение, позиции, НДС — всё, что есть. "
-                "Вызови store_pending_receipt ОДИН раз со всей собранной информацией. "
-                "Не записывай транзакцию — только предложи подтвердить."
-            ),
-            "uk": (
-                f"Користувач надіслав {n_photos} фото. Це можуть бути різні документи "
-                "одного платежу (картковий чек, фіскальний чек, замовлення тощо). "
-                "Проаналізуй ВСІ фото, об'єднай інформацію в ОДНУ транзакцію. "
-                "Витягни: суму, дату, заклад, позиції, ПДВ — все, що є. "
-                "Виклич store_pending_receipt ОДИН раз з усією зібраною інформацією. "
-                "Не записуй транзакцію — лише запропонуй підтвердити."
-            ),
-            "en": (
-                f"The user sent {n_photos} photos. These may be different documents "
-                "of the SAME payment (card slip, fiscal receipt, order, etc.). "
-                "Analyze ALL photos, merge info into ONE transaction. "
-                "Extract: amount, date, merchant, items, VAT — everything available. "
-                "Call store_pending_receipt ONCE with all collected info. "
-                "Do NOT record the transaction — only propose confirmation."
-            ),
-            "it": (
-                f"L'utente ha inviato {n_photos} foto. Possono essere documenti diversi "
-                "dello STESSO pagamento (scontrino, ricevuta fiscale, ordine ecc.). "
-                "Analizza TUTTE le foto, unisci le informazioni in UNA transazione. "
-                "Estrai: importo, data, esercente, voci, IVA — tutto disponibile. "
-                "Chiama store_pending_receipt UNA volta con tutte le info raccolte. "
-                "NON registrare la transazione — solo proponi conferma."
-            ),
-        }
-        text = _batch_prompt.get(lang, _batch_prompt["en"])
+        # Same principle for multi-photo: tiny user turn, routing is in the system prompt.
+        text = (
+            f"[{n_photos} photos from user] These may be different documents of the SAME "
+            "payment. Analyze all of them together, merge into ONE transaction, and follow the "
+            f"multi-photo rule in your system prompt. Reply in the user's language ({lang})."
+        )
 
     # Send "thinking" indicator
     _thinking_phrases = {
