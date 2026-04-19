@@ -684,6 +684,59 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "aggregate_bank_statement",
+        "description": (
+            "Aggregate structured rows extracted from a bank statement photo. "
+            "Returns deterministic counts, sums, and preauth↔cancellation pairing. "
+            "MANDATORY for bank statements with ≥3 rows: first extract rows from the photo as "
+            "structured objects, then call this tool. DO NOT count or sum rows yourself — "
+            "LLM arithmetic on long tables is unreliable. Use the returned `summary` verbatim in reply. "
+            "Input row type ∈ {debit, credit, preauth, cancellation}. preauth (тимчасово заблоковано / "
+            "preavviso / авторизація) paired with cancellation (скасування / скасовано / storno) "
+            "within ±7 days and ±1% amount → net 0, not counted as expense. "
+            "Unmatched preauth = real expense (funds still held). "
+            "Unmatched cancellation = refund (reduces expenses)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["rows"],
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "description": (
+                        "List of row dicts extracted from the statement. Each row: "
+                        "{date: 'YYYY-MM-DD' or 'DD.MM.YYYY', description: str, amount: number (positive), "
+                        "currency: str (e.g. 'UAH','EUR'), type: 'debit'|'credit'|'preauth'|'cancellation'}."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date":        {"type": "string"},
+                            "description": {"type": "string"},
+                            "amount":      {"type": "number"},
+                            "currency":    {"type": "string"},
+                            "type": {
+                                "type": "string",
+                                "enum": ["debit", "credit", "preauth", "cancellation"],
+                            },
+                        },
+                        "required": ["amount", "type"],
+                    },
+                },
+                "pair_window_days": {
+                    "type": "integer",
+                    "default": 7,
+                    "description": "Max days between preauth and cancellation to pair.",
+                },
+                "amount_tolerance_pct": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Max % difference between preauth and cancellation amount to pair.",
+                },
+            },
+        },
+    },
 ]
 
 # ── System prompt loader ───────────────────────────────────────────────────────
@@ -1216,6 +1269,8 @@ class ApolioAgent:
             "present_options":          self._tool_present_options,
             # Store receipt data in session for cross-message persistence
             "store_pending_receipt":    self._tool_store_pending_receipt,
+            # T-261: deterministic bank-statement aggregation (no LLM math)
+            "aggregate_bank_statement": self._tool_aggregate_bank_statement,
         }
 
         handler = dispatch.get(name)
@@ -1230,7 +1285,8 @@ class ApolioAgent:
                             "get_contribution_status", "refresh_dashboard",
                             "save_learning", "save_receipt", "get_reference_data",
                             "present_options", "store_pending_receipt",
-                            "update_dashboard_config", "get_receipt"):
+                            "update_dashboard_config", "get_receipt",
+                            "aggregate_bank_statement"):
                 self.sheets.write_audit(
                     session.user_id, session.user_name,
                     name, session.current_envelope_id,
@@ -2003,3 +2059,65 @@ class ApolioAgent:
                 "Respond in the USER's language."
             ),
         }
+
+    async def _tool_aggregate_bank_statement(self, params: dict, session: SessionContext,
+                                              sheets: SheetsClient, auth: AuthManager):
+        """T-261: deterministic aggregation of bank statement rows.
+
+        Thin wrapper around tools.bank_statement.aggregate_bank_statement — the real
+        logic is pure Python. This wrapper exists only so the LLM can reach it via
+        the standard tool-dispatch mechanism.
+
+        No Sheets / DB writes. No side effects. Idempotent.
+        """
+        from tools.bank_statement import aggregate_bank_statement
+
+        rows = params.get("rows") or []
+        if not isinstance(rows, list):
+            return {"error": "rows must be a list of objects"}
+        if not rows:
+            return {
+                "status": "ok",
+                "summary": {
+                    "expense_count": 0, "income_count": 0,
+                    "cancellation_count": 0, "preauth_count": 0,
+                    "matched_pairs_count": 0,
+                    "total_expenses": 0.0, "total_income": 0.0,
+                    "total_cancellations_amount": 0.0,
+                    "currency": "UAH",
+                },
+                "warnings": ["empty rows list — nothing to aggregate"],
+                "hint_for_agent": "No rows to aggregate. Ask the user to re-upload the statement photo.",
+            }
+
+        try:
+            pair_window_days = int(params.get("pair_window_days", 7))
+        except (TypeError, ValueError):
+            pair_window_days = 7
+        try:
+            amount_tolerance_pct = float(params.get("amount_tolerance_pct", 1.0))
+        except (TypeError, ValueError):
+            amount_tolerance_pct = 1.0
+
+        try:
+            result = aggregate_bank_statement(
+                rows,
+                pair_window_days=pair_window_days,
+                amount_tolerance_pct=amount_tolerance_pct,
+            )
+        except Exception as e:
+            logger.exception("aggregate_bank_statement failed")
+            return {"error": f"aggregation failed: {e}"}
+
+        s = result["summary"]
+        # Compact hint so LLM uses these numbers verbatim instead of recounting.
+        result["hint_for_agent"] = (
+            f"Use these numbers VERBATIM — do NOT recount or re-sum. "
+            f"Fact expenses: {s['expense_count']} rows, total {s['total_expenses']} {s['currency']}. "
+            f"Income: {s['income_count']} rows, total {s['total_income']} {s['currency']}. "
+            f"Preauth/cancellation pairs matched: {s['matched_pairs_count']} (net 0). "
+            f"Unmatched preauth: {len(result['unmatched_preauth'])} (counted as expense). "
+            f"Unmatched cancellation: {len(result['unmatched_cancellation'])} (counted as refund). "
+            f"Respond in the USER's language. If warnings present, mention the ANOMALIES briefly."
+        )
+        return result
