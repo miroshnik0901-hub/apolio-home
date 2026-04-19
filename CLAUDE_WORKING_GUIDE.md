@@ -55,7 +55,7 @@ bot.py           5522  Entry point: PTB handlers, keyboards, callback routing
                        cb_dup_* — enrich/skip/cancel dup buttons; T-192 queue for batch dups
                        cb_del_bulk — batch delete (T-194: 1 read + N deletes)
                        cb_force_reprocess — T-233: retry photo when T-162 dedup blocked it
-agent.py         1988  Agentic loop, 27 tools, Claude API, _build_context()
+agent.py         2005  Agentic loop, 30 tools, Claude API, _build_context()
                        store_pending_receipt: items[], type (T-185), per-item who (T-186)
 sheets.py        1569  SheetsClient, SheetsCache, AdminSheets, EnvelopeSheets
                        _sheets_retry(): backoff 2/4/8s for 429/503
