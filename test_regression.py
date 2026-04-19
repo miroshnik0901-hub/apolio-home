@@ -728,6 +728,9 @@ args, _ = parser.parse_known_args()
 
 TEST_FILE_ID = os.getenv("TEST_FILE_ID", "196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788")
 TEST_ADMIN_ID = os.getenv("TEST_ADMIN_ID", "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM")
+# B-007 (T-258): the live-Sheets test in section 3.5 must use the TEST envelope ID,
+# not MM_BUDGET (which exists only in the PROD admin sheet).
+TEST_ENVELOPE_ID = os.getenv("TEST_ENVELOPE_ID", "TEST_BUDGET")
 
 
 def _get_sheets_client():
@@ -815,7 +818,7 @@ async def test_add_delete_roundtrip():
     finally:
         os.environ["ADMIN_SHEETS_ID"] = orig or ""
 
-    session = _make_session(envelope_id="MM_BUDGET")
+    session = _make_session(envelope_id=TEST_ENVELOPE_ID)
     if not session:
         skip("3.5 add/delete roundtrip", "session build failed")
         return SKIP_SENTINEL
@@ -854,7 +857,7 @@ async def test_add_delete_roundtrip():
     assert found[0].get("Note") == "QA_TEST_DELETE_ME", "Note mismatch"
 
     # Delete it — confirmed=True required (two-step flow)
-    del_params = {"tx_id": tx_id, "envelope_id": "MM_BUDGET", "confirmed": True}
+    del_params = {"tx_id": tx_id, "envelope_id": TEST_ENVELOPE_ID, "confirmed": True}
     del_result = await tool_delete_transaction(del_params, session, sc, auth)
     assert del_result.get("deleted") is True, f"Delete failed: {del_result}"
 
