@@ -145,26 +145,61 @@ function sortByStatus() {
   ss.toast('Sorted: OPEN → IN PROCESS → ON HOLD → DISCUSSION → BLOCKED → CLOSED');
 }
 
-// ─── Archive CLOSED: push all CLOSED rows to the bottom ──────────────────────
+// ─── Archive CLOSED: physically push all CLOSED rows to the very bottom ─────
+// Active tasks → top of sheet (rows 2..N).
+// CLOSED tasks → absolute bottom of sheet (rows maxRows-C+1 .. maxRows).
+// Between them — empty rows (visual "bottom of page" effect, not just "below others").
 function archiveClosed() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME);
   const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
   if (lastRow < 3) return;
 
-  const helperCol = sheet.getLastColumn() + 1;
-  const statusVals = sheet.getRange(2, COL.STATUS, lastRow - 1, 1).getValues();
-  const flags = statusVals.map(r => [String(r[0]).toUpperCase() === 'CLOSED' ? 1 : 0]);
-  sheet.getRange(2, helperCol, lastRow - 1, 1).setValues(flags);
+  // 1) Read all data rows
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const active = [];
+  const closed = [];
+  for (const row of data) {
+    if (String(row[COL.STATUS - 1] || '').toUpperCase() === 'CLOSED') {
+      closed.push(row);
+    } else {
+      active.push(row);
+    }
+  }
 
-  const dataRange = sheet.getRange(2, 1, lastRow - 1, helperCol);
-  dataRange.sort([
-    { column: helperCol, ascending: true },
-    { column: COL.DATE, ascending: false }
-  ]);
+  // 2) Sort each group by Date desc (newest first within its block)
+  const dateIdx = COL.DATE - 1;
+  const dateKey = v => v instanceof Date ? v.getTime() : String(v);
+  active.sort((a, b) => (dateKey(a[dateIdx]) > dateKey(b[dateIdx]) ? -1 : 1));
+  closed.sort((a, b) => (dateKey(a[dateIdx]) > dateKey(b[dateIdx]) ? -1 : 1));
 
-  sheet.getRange(2, helperCol, lastRow - 1, 1).clearContent();
-  ss.toast('CLOSED tasks moved to bottom');
+  // 3) Make sure sheet has enough rows for active block + visual gap + closed block
+  const desiredMax = Math.max(sheet.getMaxRows(), active.length + closed.length + 50);
+  if (sheet.getMaxRows() < desiredMax) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), desiredMax - sheet.getMaxRows());
+  }
+  const maxRows = sheet.getMaxRows();
+
+  // 4) Wipe the old data block (rows 2..lastRow)
+  sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+
+  // 5) Write active at top (rows 2..active.length+1)
+  if (active.length > 0) {
+    sheet.getRange(2, 1, active.length, lastCol).setValues(active);
+  }
+
+  // 6) Write closed at the absolute bottom (rows maxRows-closed.length+1 .. maxRows)
+  if (closed.length > 0) {
+    const closedStart = maxRows - closed.length + 1;
+    sheet.getRange(closedStart, 1, closed.length, lastCol).setValues(closed);
+  }
+
+  ss.toast(
+    `Active: ${active.length} (rows 2–${active.length + 1}). ` +
+    `CLOSED: ${closed.length} (rows ${maxRows - closed.length + 1}–${maxRows}).`,
+    'Archived to bottom of page', 5
+  );
 }
 
 // ─── Audit: highlight tasks with missing Topic or Deploy ─────────────────────
