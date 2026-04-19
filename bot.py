@@ -3351,6 +3351,88 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_with_menu_btn(lang=lang),
             )
 
+    # ── T-253: cb_pair_<action> — refund+expense pair decision ─────────
+    elif data.startswith("cb_pair_"):
+        pair_action = data[8:]  # "delete" or "keep"
+        await query.answer()
+        try:
+            existing_tx_id = getattr(session, "_pair_existing_tx_id", "")
+            pair_add_params = getattr(session, "_pair_add_params", {})
+            # Clear pair context immediately
+            session._pair_existing_tx_id = None
+            session._pair_add_params = None
+
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+
+            if pair_action == "delete":
+                # Hard-delete existing tx + skip writing the new one
+                if not existing_tx_id:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text="⚠️ Context lost — try again.",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                    return
+                try:
+                    # Resolve budget file id via current envelope
+                    _envs = sheets.get_envelopes()
+                    _eid = session.current_envelope_id or "MM_BUDGET"
+                    _env = next((e for e in _envs if e.get("ID") == _eid), None)
+                    _file_id = _env.get("file_id") if _env else None
+                    ok = False
+                    if _file_id:
+                        # hard_delete on env-scoped sheet
+                        ok = sheets._env_sheets(_file_id).hard_delete_by_tx_id(existing_tx_id)
+                    if ok:
+                        await ctx.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=f"✅ {i18n.ts('pair_deleted', lang)}",
+                            reply_markup=_with_menu_btn(lang=lang),
+                        )
+                    else:
+                        await ctx.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=f"⚠️ {i18n.ts('pair_delete_failed', lang)}",
+                            reply_markup=_with_menu_btn(lang=lang),
+                        )
+                except Exception as e:
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⚠️ {i18n.ts('pair_delete_failed', lang)} ({e})",
+                        reply_markup=_with_menu_btn(lang=lang),
+                    )
+                return
+
+            # pair_action == "keep": record the new tx anyway (force_add bypasses
+            # pair AND dup detection on re-call)
+            if not pair_add_params:
+                await ctx.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="⚠️ Context lost — try again.",
+                    reply_markup=_with_menu_btn(lang=lang),
+                )
+                return
+            from tools.transactions import tool_add_transaction
+            pair_add_params["force_add"] = True
+            result = await tool_add_transaction(pair_add_params, session, sheets, auth)
+            msg = (result.get("message") or result.get("error") or "") if isinstance(result, dict) else str(result)
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=msg or "✅",
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+            return
+        except Exception as e:
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ {i18n.ts('error_generic', lang).format(err=e)}",
+                reply_markup=_with_menu_btn(lang=lang),
+            )
+            return
+
     # ── T-139: cb_dup_<action> — duplicate transaction decision ─────────
     elif data.startswith("cb_dup_"):
         dup_action = data[7:]  # "update", "add_new", "cancel"
@@ -3699,6 +3781,29 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "type": "expense",
                 }
                 result = await tool_add_transaction(add_params, session, sheets, auth)
+
+                # T-253: refund+expense pair detected — offer delete-both
+                if (isinstance(result, dict)
+                        and result.get("status") == "confirm_required"
+                        and result.get("type") == "refund_pair"):
+                    session._pair_existing_tx_id = result.get("existing_tx_id", "")
+                    session._pair_add_params = add_params
+                    pair_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            i18n.ts("pair_delete_both", lang),
+                            callback_data="cb_pair_delete",
+                        )],
+                        [InlineKeyboardButton(
+                            i18n.ts("pair_keep_both", lang),
+                            callback_data="cb_pair_keep",
+                        )],
+                    ])
+                    await ctx.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=result.get("message", ""),
+                        reply_markup=pair_buttons,
+                    )
+                    return
 
                 # T-139: smart duplicate handling — present options to user
                 if (isinstance(result, dict)
@@ -4378,6 +4483,28 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "type": _single_type,
         }
         result = await tool_add_transaction(add_params, session, sheets, auth)
+        # T-253: refund+expense pair detected — offer delete-both
+        if (isinstance(result, dict)
+                and result.get("status") == "confirm_required"
+                and result.get("type") == "refund_pair"):
+            session._pair_existing_tx_id = result.get("existing_tx_id", "")
+            session._pair_add_params = add_params
+            pair_buttons = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    i18n.ts("pair_delete_both", lang),
+                    callback_data="cb_pair_delete",
+                )],
+                [InlineKeyboardButton(
+                    i18n.ts("pair_keep_both", lang),
+                    callback_data="cb_pair_keep",
+                )],
+            ])
+            await ctx.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=result.get("message", ""),
+                reply_markup=pair_buttons,
+            )
+            return
         tx_id = result.get("tx_id", "") if isinstance(result, dict) else ""
         msg = result.get("message", "") if isinstance(result, dict) else str(result)
         if isinstance(result, dict) and "error" in result:

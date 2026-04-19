@@ -201,6 +201,116 @@ def test_column_order():
     return True
 
 
+@test("1.12 T-253: refund pair detect — opposite types + same merchant + EUR match")
+def test_pair_detect_basic_eur():
+    from tools.transactions import _detect_refund_pair, _normalize_note
+    existing = [{
+        "ID": "TX-OLD-1", "Date": "2026-04-10", "Type": "expense",
+        "Amount_Orig": 50.00, "Currency_Orig": "EUR",
+        "Category": "Clothes", "Note": "Zara purchase",
+    }]
+    hit = _detect_refund_pair(
+        date="2026-04-15", amount=50.00, currency="EUR", tx_type="income",
+        in_note_tokens=_normalize_note("Zara refund"), pre_eur=50.00,
+        existing_txs=existing,
+    )
+    assert hit is not None, "Should detect pair"
+    assert hit.get("type") == "refund_pair"
+    assert hit.get("existing_tx_id") == "TX-OLD-1"
+    return True
+
+
+@test("1.13 T-253: refund pair — same type does NOT match")
+def test_pair_same_type_skipped():
+    from tools.transactions import _detect_refund_pair, _normalize_note
+    existing = [{
+        "ID": "TX-1", "Date": "2026-04-10", "Type": "expense",
+        "Amount_Orig": 50.00, "Currency_Orig": "EUR",
+        "Category": "Clothes", "Note": "Zara",
+    }]
+    # New tx is also expense → not a pair (it's a duplicate, handled elsewhere)
+    hit = _detect_refund_pair(
+        date="2026-04-15", amount=50.00, currency="EUR", tx_type="expense",
+        in_note_tokens=_normalize_note("Zara"), pre_eur=50.00,
+        existing_txs=existing,
+    )
+    assert hit is None, "Same-type should not be a pair"
+    return True
+
+
+@test("1.14 T-253: refund pair — Top-up category blacklisted")
+def test_pair_topup_skipped():
+    from tools.transactions import _detect_refund_pair, _normalize_note
+    existing = [{
+        "ID": "TX-TOP", "Date": "2026-04-10", "Type": "income",
+        "Amount_Orig": 100.00, "Currency_Orig": "EUR",
+        "Category": "Top-up", "Note": "Bank transfer",
+    }]
+    # New expense of 100€ at "Bank transfer" merchant — must NOT pair with Top-up
+    hit = _detect_refund_pair(
+        date="2026-04-15", amount=100.00, currency="EUR", tx_type="expense",
+        in_note_tokens=_normalize_note("Bank transfer"), pre_eur=100.00,
+        existing_txs=existing,
+    )
+    assert hit is None, "Top-up income must never pair with random expense"
+    return True
+
+
+@test("1.15 T-253: refund pair — empty note skipped (no merchant overlap possible)")
+def test_pair_empty_note_skipped():
+    from tools.transactions import _detect_refund_pair
+    existing = [{
+        "ID": "TX-2", "Date": "2026-04-10", "Type": "expense",
+        "Amount_Orig": 50.00, "Currency_Orig": "EUR",
+        "Category": "Other", "Note": "",
+    }]
+    # No merchant info on either side → can't safely match on amount alone
+    hit = _detect_refund_pair(
+        date="2026-04-15", amount=50.00, currency="EUR", tx_type="income",
+        in_note_tokens=set(), pre_eur=50.00,
+        existing_txs=existing,
+    )
+    assert hit is None, "Empty notes must not produce a pair"
+    return True
+
+
+@test("1.16 T-253: refund pair — different merchant tokens skipped")
+def test_pair_different_merchant():
+    from tools.transactions import _detect_refund_pair, _normalize_note
+    existing = [{
+        "ID": "TX-3", "Date": "2026-04-10", "Type": "expense",
+        "Amount_Orig": 50.00, "Currency_Orig": "EUR",
+        "Category": "Clothes", "Note": "Zara",
+    }]
+    hit = _detect_refund_pair(
+        date="2026-04-15", amount=50.00, currency="EUR", tx_type="income",
+        in_note_tokens=_normalize_note("Amazon refund"), pre_eur=50.00,
+        existing_txs=existing,
+    )
+    assert hit is None, "Different merchants should not pair"
+    return True
+
+
+@test("1.17 T-253: i18n keys exist for pair flow in 4 langs")
+def test_pair_i18n_keys():
+    import i18n
+    keys = ["pair_delete_both", "pair_keep_both", "pair_deleted", "pair_delete_failed"]
+    for k in keys:
+        for lang in ("ru", "uk", "en", "it"):
+            v = i18n.ts(k, lang)
+            assert v and v != k, f"Missing i18n {k}/{lang}"
+    return True
+
+
+@test("1.18 T-253: bot.py has cb_pair_ handler + buttons")
+def test_pair_bot_wiring():
+    src = (ROOT / "bot.py").read_text()
+    assert 'cb_pair_' in src, "Missing cb_pair_ handler in bot.py"
+    assert 'pair_delete_both' in src, "Missing pair_delete_both button wiring"
+    assert 'refund_pair' in src, "Missing refund_pair status check"
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2: Unit tests (mocked Sheets/DB)
 # ─────────────────────────────────────────────────────────────────────────────

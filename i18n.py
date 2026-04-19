@@ -633,6 +633,27 @@ SYS: dict[str, dict[str, str]] = {
     "dup_cancelled": {
         "ru": "Операция отменена.", "uk": "Операцію скасовано.", "en": "Operation cancelled.", "it": "Operazione annullata.",
     },
+    # ── T-253: Refund+expense pair options ──
+    "pair_delete_both": {
+        "ru": "🗑 Удалить обе", "uk": "🗑 Видалити обидві",
+        "en": "🗑 Delete both", "it": "🗑 Elimina entrambe",
+    },
+    "pair_keep_both": {
+        "ru": "➕ Записать всё равно", "uk": "➕ Записати все одно",
+        "en": "➕ Record anyway", "it": "➕ Registra comunque",
+    },
+    "pair_deleted": {
+        "ru": "Обе записи удалены — чистый ноль.",
+        "uk": "Обидва записи видалено — чистий нуль.",
+        "en": "Both entries deleted — net zero.",
+        "it": "Entrambe le voci eliminate — saldo zero.",
+    },
+    "pair_delete_failed": {
+        "ru": "Не удалось удалить существующую запись. Новая не записана.",
+        "uk": "Не вдалося видалити існуючий запис. Нову не записано.",
+        "en": "Failed to delete existing entry. New one was not recorded.",
+        "it": "Impossibile eliminare la voce esistente. La nuova non è stata registrata.",
+    },
     # ── T-254: Batch recap — compact summary after cross-currency dup queue drains ──
     "batch_recap_header": {
         "ru": "📊 Итог:", "uk": "📊 Підсумок:", "en": "📊 Summary:", "it": "📊 Riepilogo:",

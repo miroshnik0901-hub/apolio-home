@@ -12,9 +12,19 @@ Deploy values (col I, set by Claude):
     FAILED   — deploy attempted but failed
 
 Confirm values (col J, set by Mikhail):
-    GO       — approved to push
-    HOLD     — wait, don't deploy yet
+    GO       — approved to push TO MAIN (PROD)
+    HOLD     — wait, don't deploy to PROD yet
     (empty)  — not yet reviewed
+
+⚠️ DEV vs PROD rule (critical — do not misread):
+    - Work on DEV/staging (branch `dev`, bot @ApolioHomeTestBot) does NOT require GO.
+      Claude executes the plan on dev autonomously: write code → push dev → run
+      staging tests → self-test → set Deploy=READY. Never ask Mikhail for permission
+      to work on dev — just do it.
+    - GO (Confirm=GO) is Mikhail's authorization for PROD deploy ONLY
+      (branch `main`, bot @ApolioHomeBot). Claude must NOT push to main without GO.
+    - "Waiting for GO" = "code is on dev, tested, Deploy=READY, paused before main push".
+      It does NOT mean "waiting before writing code or before pushing to dev".
 
 Reopen-after-deploy rule:
     If a task is reopened (Status → OPEN) after a deploy, Claude must:

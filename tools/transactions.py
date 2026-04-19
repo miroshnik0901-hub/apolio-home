@@ -90,6 +90,115 @@ def _date_range_for_dup(date: str) -> tuple:
     except Exception:
         return (date, date)
 
+
+def _date_range_for_pair(date: str, days: int = 14) -> tuple:
+    """T-253: Return (date_from, date_to) with ±N day tolerance for refund-pair detection.
+    Refunds typically arrive 3-14 days after the original expense, so default 14.
+    """
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").date()
+        return (str(d - timedelta(days=days)), str(d + timedelta(days=days)))
+    except Exception:
+        return (date, date)
+
+
+# T-253: merchants/categories that must NEVER be treated as refund pairs.
+# Top-up = envelope funding transfer; matching a random expense to it would
+# produce false pairs. Add more here if new non-user-facing income types appear.
+_PAIR_BLACKLIST_CATEGORIES = {"top-up", "transfer", "funding"}
+
+
+def _detect_refund_pair(
+    date: str,
+    amount: float,
+    currency: str,
+    tx_type: str,
+    in_note_tokens: set,
+    pre_eur,
+    existing_txs: list,
+):
+    """T-253: Detect refund+expense pair within ±14 days.
+
+    A pair = opposite Type (expense vs income) + matching amount
+    (EUR strict / non-EUR ±5% / cross-currency via Amount_EUR ±5%)
+    + overlapping merchant tokens + not in blacklist categories.
+
+    Returns a confirm_required dict if a pair is detected, else None.
+    Empty note on either side = skip (can't safely match on amount alone).
+    """
+    tx_type_l = (tx_type or "expense").lower()
+    if tx_type_l not in ("expense", "income"):
+        return None
+    opposite_type = "income" if tx_type_l == "expense" else "expense"
+    in_cur = currency.upper()
+
+    for ex in existing_txs:
+        ex_type_l = str(ex.get("Type", "expense")).lower()
+        if ex_type_l != opposite_type:
+            continue
+
+        # Skip top-up / transfer rows on either side of the match
+        ex_cat_l = str(ex.get("Category", "")).lower()
+        if ex_cat_l in _PAIR_BLACKLIST_CATEGORIES:
+            continue
+
+        ex_cur = str(ex.get("Currency_Orig", "EUR")).upper()
+
+        # ── Amount match (compare absolute values) ──────────────────────
+        if ex_cur == in_cur:
+            try:
+                ex_amount = float(ex.get("Amount_Orig") or 0)
+            except (ValueError, TypeError):
+                ex_amount = 0.0
+            if in_cur == "EUR":
+                same_amount = abs(abs(ex_amount) - abs(amount)) < 0.01
+            else:
+                tol = max(abs(amount) * 0.05, 0.5)
+                same_amount = abs(abs(ex_amount) - abs(amount)) <= tol
+            if not same_amount:
+                continue
+        else:
+            # Cross-currency: compare via Amount_EUR
+            if pre_eur is None or pre_eur <= 0:
+                continue
+            try:
+                ex_eur = float(ex.get("Amount_EUR") or 0)
+            except (ValueError, TypeError):
+                ex_eur = 0.0
+            if ex_eur <= 0:
+                continue
+            eur_tol = max(abs(pre_eur) * 0.05, 0.5)
+            if abs(abs(ex_eur) - abs(pre_eur)) > eur_tol:
+                continue
+
+        # ── Merchant overlap required ───────────────────────────────────
+        ex_tokens = _normalize_note(ex.get("Note", ""))
+        if not in_note_tokens or not ex_tokens:
+            continue
+        if not in_note_tokens & ex_tokens:
+            continue
+
+        # Pair found
+        ex_amount_display = ex.get("Amount_Orig", "")
+        return {
+            "status": "confirm_required",
+            "type": "refund_pair",
+            "message": (
+                f"🔄 Нашёл пару: {ex.get('Date','')} · "
+                f"{ex_amount_display} {ex_cur} · {ex.get('Category','')} · "
+                f"{ex.get('Note','')} ({ex_type_l}). "
+                f"Новая запись — {tx_type_l} на ту же сумму у того же мерчанта. "
+                f"Обе можно удалить — получится чистый ноль."
+            ),
+            "existing_tx_id": ex.get("ID", ""),
+            "hint_for_agent": (
+                "Refund pair detected. User will choose: delete both "
+                "(hard-delete existing + skip write) or keep both."
+            ),
+        }
+    return None
+
+
 # T-218: Category/subcategory alias map — covers common agent-generated variants.
 # Keys are lowercase aliases; values are canonical names (matching Sheets list).
 # Updated via AdminSheets CategoryAliases tab (get_category_aliases).
@@ -477,6 +586,56 @@ async def tool_add_transaction(params: dict, session: SessionContext,
                     break
         except Exception:
             pass
+
+    # ── T-253: Refund+expense pair detection (±14 days) ──────────────────
+    # Before the narrow ±1-day dup check, look across a wider window for a
+    # matching tx of OPPOSITE Type (expense<->income) with the same merchant+
+    # amount. That's a refund pair: the real-world money moved out and back in,
+    # so net = 0 and the user prefers both rows physically deleted.
+    # Skipped when force_add=true (user already confirmed "add anyway") or
+    # batch_mode (items in the same batch are pre-reviewed).
+    if not params.get("force_add"):
+        try:
+            in_note_tokens = _normalize_note(params.get("note", ""))
+            try:
+                in_amount_v = float(amount)
+            except (ValueError, TypeError):
+                in_amount_v = 0.0
+            in_cur_v = currency.upper()
+            # Cross-currency support: reuse same FX-based pre-EUR calc as dup block
+            _pre_eur_pair = None
+            if in_cur_v == "EUR":
+                _pre_eur_pair = in_amount_v
+            else:
+                try:
+                    _fx_rows_p = sheets.get_fx_rates(envelope["file_id"])
+                    _fx_row_p = next(
+                        (r for r in _fx_rows_p if r.get("Month") == date[:7]), None
+                    )
+                    if _fx_row_p:
+                        _rate_p = float(_fx_row_p.get(f"EUR_{in_cur_v}", 0) or 0)
+                        if _rate_p:
+                            _pre_eur_pair = round(in_amount_v / _rate_p, 2)
+                except Exception:
+                    pass
+            _pair_from, _pair_to = _date_range_for_pair(date, days=14)
+            existing_pair = sheets.get_transactions(
+                envelope["file_id"],
+                {"date_from": _pair_from, "date_to": _pair_to, "limit": 500},
+            )
+            pair_hit = _detect_refund_pair(
+                date=date,
+                amount=in_amount_v,
+                currency=in_cur_v,
+                tx_type=params.get("type", "expense"),
+                in_note_tokens=in_note_tokens,
+                pre_eur=_pre_eur_pair,
+                existing_txs=existing_pair,
+            )
+            if pair_hit:
+                return pair_hit
+        except Exception:
+            pass  # pair check is best-effort; don't block the write
 
     # ── Duplicate detection (T-030 / T-182 / T-192) ──────────────────────
     # Checks: same date + amount within tolerance + note overlap.
