@@ -68,7 +68,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from sheets import SheetsClient, safe_float
-from auth import AuthManager, get_session
+from auth import AuthManager, get_session, register_auth_manager
 from agent import ApolioAgent
 from tools.conversation_log import ConversationLogger, make_session_id
 # receipt_store.py removed from architecture — receipts stored in PostgreSQL only
@@ -77,6 +77,9 @@ import db as appdb
 # Initialise shared clients
 sheets = SheetsClient()
 auth = AuthManager(sheets)
+# T-259: let get_session() resolve default envelope from Admin.Users.envelopes
+# instead of the old DEFAULT_ENVELOPE="MM_BUDGET" hardcode.
+register_auth_manager(auth)
 agent = ApolioAgent(sheets, auth)
 receipt_store = None  # deprecated — kept for backward compat, not used
 conv_logger: Optional[ConversationLogger] = None
@@ -86,12 +89,14 @@ _TEST_ADMIN_ID = "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM"
 
 
 def _get_active_file_id() -> str:
-    """Return the budget file_id for the default envelope (MM_BUDGET).
-    Reads from Admin → Envelopes tab — no hardcoded budget file IDs."""
+    """Return the budget file_id for the first Active envelope in Admin → Envelopes.
+    T-259: was previously hardcoded to only look up ID="MM_BUDGET", which
+    returned empty on TEST (where the active envelope is TEST_BUDGET).
+    On any environment the Admin sheet should only have one Active row."""
     try:
         envs = sheets.get_envelopes()
         for e in envs:
-            if e.get("ID") == "MM_BUDGET" and str(e.get("Active", "")).upper() == "TRUE":
+            if str(e.get("Active", "")).upper() == "TRUE" and e.get("file_id"):
                 return e["file_id"]
     except Exception:
         pass
@@ -820,25 +825,51 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
                 pct_share = round(amt / total * 100) if total else 0
                 lines.append(f"  👤 {who}: {amt:,.0f} EUR  ({pct_share}%)")
 
-        # T-094: User balance (obligations / credits) in report
+        # T-094 / T-260: User balance (obligations / credits) in report.
+        # T-260: switched to the same "потрібно внести / переплата / борг"
+        # format used by _build_balance_line_async (bot.py:500-543) instead of
+        # the old confusing "X внесено · Y доля → ±Z EUR". The "доля" column
+        # was read as "my share of joint expenses", but it's actually
+        # obligation = min + split% of joint; negative "доля" for the low
+        # contributor looked like a bug. Reusing the existing clean format
+        # keeps vocabulary consistent across reports.
         try:
             from intelligence import compute_contribution_status
             snap = compute_contribution_status(sheets, env_id, month=period)
             if snap.get("status") == "ok" and len(snap.get("split_users", [])) > 1:
                 balances = snap.get("balances", {})
                 assets = snap.get("assets", {})
-                user_shares = snap.get("user_shares", {})
+                cur = snap.get("currency", "EUR")
                 lines.append("")
                 lines.append(i18n.tu("contrib_balance", lang))
+                _needs_lbl = {
+                    "ru": "нужно внести", "uk": "потрібно внести",
+                    "en": "needs to fund", "it": "da versare",
+                }
+                _contributed_lbl = {
+                    "ru": "внесено", "uk": "внесено",
+                    "en": "contributed", "it": "versato",
+                }
                 for u in snap["split_users"]:
-                    a = safe_float(assets.get(u, 0))
-                    s = safe_float(user_shares.get(u, 0))
-                    b = safe_float(balances.get(u, 0))
-                    status_icon = "✅" if b >= 0 else "⚠️"
-                    bal_str = f"+{b:,.0f}" if b > 0 else f"{b:,.0f}"
-                    lines.append(
-                        f"  {status_icon} {u}: {a:,.0f} внесено · {s:,.0f} доля → <b>{bal_str} EUR</b>"
-                    )
+                    credit  = safe_float(balances.get(u, 0))
+                    contrib = safe_float(assets.get(u, 0))
+                    if credit < 0:
+                        lines.append(
+                            f"  ⚠️ <b>{u}</b>: {abs(credit):,.0f} {cur} "
+                            f"({_needs_lbl.get(lang, 'нужно внести')}) · "
+                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                        )
+                    elif credit > 0:
+                        lines.append(
+                            f"  ✅ <b>{u}</b>: +{credit:,.0f} {cur} "
+                            f"({i18n.ts('bal_overpaid', lang)}) · "
+                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                        )
+                    else:
+                        lines.append(
+                            f"  ✅ <b>{u}</b>: 0 {cur} · "
+                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                        )
         except Exception:
             pass
 

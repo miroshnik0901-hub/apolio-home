@@ -253,10 +253,17 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
 
         split_users_raw  = env_config.get("split_users", "")
         split_users      = [u.strip() for u in split_users_raw.split(",") if u.strip()]
-        base_contributor = env_config.get("base_contributor", "Mikhail")
+        # A-011: read base_contributor strictly from Config — no "Mikhail" fallback.
+        # Empty/missing is a Config data error and must be surfaced, not silently masked.
+        base_contributor = env_config.get("base_contributor", "")
+        if not base_contributor:
+            logger.warning(
+                f"compute_contribution_status: base_contributor missing from "
+                f"env_config for {envelope_id}. Check Config tab."
+            )
 
         if not split_users:
-            split_users = [base_contributor]
+            split_users = [base_contributor] if base_contributor else []
 
         # Detect new per-user model (min_<user> / split_<user> keys in Config).
         _has_per_user_min = any(f"min_{u}" in env_config for u in split_users)
@@ -533,9 +540,15 @@ def compute_cumulative_balance(sheets: SheetsClient, envelope_id: str) -> dict:
         env_config = sheets.read_envelope_config(file_id) if file_id else {}
         split_users_raw = env_config.get("split_users", "")
         split_users = [u.strip() for u in split_users_raw.split(",") if u.strip()]
-        base_contributor = env_config.get("base_contributor", "Mikhail")
+        # A-011: no "Mikhail" fallback — read strictly from Config.
+        base_contributor = env_config.get("base_contributor", "")
+        if not base_contributor:
+            logger.warning(
+                f"compute_cumulative_balance: base_contributor missing from "
+                f"env_config for {envelope_id}. Check Config tab."
+            )
         if not split_users:
-            split_users = [base_contributor]
+            split_users = [base_contributor] if base_contributor else []
 
         all_txns = sheets.get_transactions(file_id)
         # Filter out soft-deleted
