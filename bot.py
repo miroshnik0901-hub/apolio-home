@@ -4743,34 +4743,68 @@ async def _do_process_photo_batch(session, chat_id: int, bot, lang: str):
     if captions:
         text = " | ".join(captions)
     elif n_photos == 1:
+        # T-261: photo prompt now branches by photo type so bank statements (≥3 tx rows)
+        # go through aggregate_bank_statement FIRST instead of LLM-counting in store_pending_receipt.
         _photo_auto_analyze = {
             "ru": (
                 "Проанализируй это изображение полностью. "
                 "Извлеки ВСЕ данные: суммы, даты, категории, кто платил — точно как на фото. "
-                "Вызови store_pending_receipt с данными, затем present_options с кнопками выбора счёта. "
-                "НЕ вызывай add_transaction. "
-                "Покажи мне список всего, что ты нашёл."
+                "ВЫБОР ПУТИ:\n"
+                "(A) Если это БАНКОВСКАЯ ВЫПИСКА с ≥3 транзакциями (таблица дата/сумма/описание, "
+                "часто содержит пары преавторизация↔отмена, например WOG/OKKO) — "
+                "СНАЧАЛА вызови aggregate_bank_statement(rows=[…]) с типами "
+                "{debit, credit, preauth, cancellation}. ЦИФРЫ из его summary используй ДОСЛОВНО. "
+                "Затем, если хочешь предложить запись — store_pending_receipt с items[] из "
+                "fact_expense_rows (НЕ из preauth/cancellation), потом present_options.\n"
+                "(B) Если это обычный чек/счёт/одна транзакция — store_pending_receipt с данными, "
+                "потом present_options с кнопками выбора счёта.\n"
+                "НЕ вызывай add_transaction. НЕ считай и не суммируй сам — для выписок только через "
+                "aggregate_bank_statement. Покажи мне список всего, что ты нашёл."
             ),
             "uk": (
                 "Проаналізуй це зображення повністю. "
                 "Витягни ВСІ дані: суми, дати, категорії, хто платив — точно як на фото. "
-                "Виклич store_pending_receipt з даними, потім present_options з кнопками вибору рахунку. "
-                "НЕ викликай add_transaction. "
-                "Покажи мені список усього, що ти побачив."
+                "ВИБІР ШЛЯХУ:\n"
+                "(A) Якщо це БАНКІВСЬКА ВИПИСКА з ≥3 транзакціями (таблиця дата/сума/опис, "
+                "часто містить пари тимчасово заблоковано↔скасування, напр. WOG/OKKO) — "
+                "СПОЧАТКУ виклич aggregate_bank_statement(rows=[…]) з типами "
+                "{debit, credit, preauth, cancellation}. ЦИФРИ з його summary використовуй ДОСЛІВНО. "
+                "Потім, якщо хочеш запропонувати запис — store_pending_receipt з items[] із "
+                "fact_expense_rows (НЕ з preauth/cancellation), потім present_options.\n"
+                "(B) Якщо це звичайний чек/рахунок/одна транзакція — store_pending_receipt з даними, "
+                "потім present_options з кнопками вибору рахунку.\n"
+                "НЕ викликай add_transaction. НЕ рахуй і не сумуй сам — для виписок тільки через "
+                "aggregate_bank_statement. Покажи мені список усього, що ти побачив."
             ),
             "en": (
                 "Analyze this image fully. "
                 "Extract ALL data: amounts, dates, categories, who paid — exactly as shown. "
-                "Call store_pending_receipt with the data, then present_options with account buttons. "
-                "Do NOT call add_transaction. "
-                "Show me everything you found."
+                "PATH SELECTION:\n"
+                "(A) If this is a BANK STATEMENT with ≥3 transaction rows (table of date/amount/desc, "
+                "often contains preauth↔cancellation pairs e.g. WOG/OKKO) — "
+                "FIRST call aggregate_bank_statement(rows=[…]) with types "
+                "{debit, credit, preauth, cancellation}. Use the returned summary numbers VERBATIM. "
+                "Then, if you want to propose recording — store_pending_receipt with items[] from "
+                "fact_expense_rows (NOT preauth/cancellation), then present_options.\n"
+                "(B) If it's a regular receipt/bill/single transaction — store_pending_receipt with data, "
+                "then present_options with account buttons.\n"
+                "Do NOT call add_transaction. Do NOT count or sum yourself — for statements only via "
+                "aggregate_bank_statement. Show me everything you found."
             ),
             "it": (
                 "Analizza questa immagine completamente. "
                 "Estrai TUTTI i dati: importi, date, categorie, chi ha pagato — esattamente come mostrato. "
-                "Chiama store_pending_receipt con i dati, poi present_options con i pulsanti del conto. "
-                "NON chiamare add_transaction. "
-                "Mostrami tutto ciò che hai trovato."
+                "SCELTA PERCORSO:\n"
+                "(A) Se è un ESTRATTO CONTO con ≥3 transazioni (tabella data/importo/descrizione, "
+                "spesso contiene coppie preavviso↔storno, p.es. WOG/OKKO) — "
+                "PRIMA chiama aggregate_bank_statement(rows=[…]) con tipi "
+                "{debit, credit, preauth, cancellation}. Usa i numeri del summary ALLA LETTERA. "
+                "Poi, se vuoi proporre la registrazione — store_pending_receipt con items[] da "
+                "fact_expense_rows (NON da preauth/cancellation), poi present_options.\n"
+                "(B) Se è uno scontrino/fattura normale/singola transazione — store_pending_receipt "
+                "con i dati, poi present_options con i pulsanti del conto.\n"
+                "NON chiamare add_transaction. NON contare o sommare tu stesso — per gli estratti solo "
+                "tramite aggregate_bank_statement. Mostrami tutto ciò che hai trovato."
             ),
         }
         text = _photo_auto_analyze.get(lang, _photo_auto_analyze["en"])
