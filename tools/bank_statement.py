@@ -236,15 +236,20 @@ def aggregate_bank_statement(
     if refund_amount > 0:
         total_expenses -= refund_amount
 
+    # Strip internal-only non-JSON-serializable fields (datetime) before returning.
+    # Bug 2026-04-20: agent.py json.dumps(result) crashed on _date_obj in rows.
+    def _clean(rows):
+        return [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+
     return {
         "total_rows": len(norm_rows),
         "preauth_count": len(preauths),
         "cancellation_count": len(cancellations),
         "matched_pairs": len(matched_pairs),
-        "unmatched_preauth": unmatched_preauth,
-        "unmatched_cancellation": unmatched_cancellations,
-        "fact_expense_rows": fact_expense_rows,
-        "income_rows": credits,
+        "unmatched_preauth": _clean(unmatched_preauth),
+        "unmatched_cancellation": _clean(unmatched_cancellations),
+        "fact_expense_rows": _clean(fact_expense_rows),
+        "income_rows": _clean(credits),
         "summary": {
             "expense_count": len(fact_expense_rows),
             "income_count": len(credits),

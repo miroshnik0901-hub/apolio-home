@@ -1128,7 +1128,9 @@ class ApolioAgent:
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result),
+                        # default=str handles datetime / Decimal / any non-JSON object
+                        # by falling back to str(obj) instead of raising TypeError.
+                        "content": json.dumps(result, default=str, ensure_ascii=False),
                     })
                     # Collect for DB: skip read-only / noisy tools
                     _SKIP_LOG_TOOLS = {
