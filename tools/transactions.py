@@ -384,10 +384,8 @@ async def tool_add_transaction(params: dict, session: SessionContext,
     # ── Validation against reference data ────────────────────────────────
     # T-211: skip get_reference_data entirely in batch_mode (force_new=True skips anyway)
     # This saves 1 read per batch item = 7 reads for 7 items.
-    if batch_mode or params.get("force_new"):
-        issues = {}  # no validation in batch mode
-    else:
-        issues = {}
+    # [Audit A-009] removed dead conditional that assigned {} in both branches.
+    issues = {}
     try:
         if not batch_mode:
             ref = sheets.get_reference_data(envelope["file_id"])
