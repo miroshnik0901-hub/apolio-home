@@ -30,8 +30,22 @@ try:
     creds = Credentials.from_service_account_info(sa_json, scopes=[
         'https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive'])
     gc = gspread.authorize(creds)
-    ADMIN_ID = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
-    MM_ID    = "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+
+    # A-003 (T-258): default to TEST sheets; allow override via env vars.
+    # PROD IDs are accepted ONLY when ALLOW_PROD_READ=1 is explicitly set.
+    # This prevents an accidental local run from touching PROD data.
+    PROD_ADMIN_ID = "1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk"
+    PROD_MM_ID    = "1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ"
+    TEST_ADMIN_ID = "1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM"
+    TEST_MM_ID    = "196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788"
+    ADMIN_ID = os.getenv("ADMIN_SHEETS_ID", TEST_ADMIN_ID)
+    MM_ID    = os.getenv("MM_BUDGET_SHEETS_ID", TEST_MM_ID)
+    if (ADMIN_ID == PROD_ADMIN_ID or MM_ID == PROD_MM_ID) and os.getenv("ALLOW_PROD_READ") != "1":
+        raise RuntimeError(
+            "PROD sheet IDs detected in tests/run_all.py without ALLOW_PROD_READ=1. "
+            "Tests must run against TEST sheets. Unset ADMIN_SHEETS_ID/MM_BUDGET_SHEETS_ID "
+            "or set ALLOW_PROD_READ=1 if you really intend to read PROD."
+        )
     SHEETS_OK = True
 except Exception as e:
     print(f"⚠️  Sheets setup failed: {e}"); SHEETS_OK = False
