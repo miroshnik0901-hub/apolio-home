@@ -1,70 +1,47 @@
 # Apolio Home — Dev / Prod State Tracker
-# Updated automatically by Claude after every `git push` to dev or main.
+# Updated by Claude after every `git push` to dev or main.
 # Read this at the START of every session to understand what's deployed where.
 
 ---
 
-## Current State (2026-04-15)
+## Current State (2026-04-18)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**Last commit on main:** `5b662f6` (T-239: batch dup pre-fetch fallback)
-**Status:** ✅ DEPLOYED. Bot responding. Railway auto-deploy triggered.
-**Deployed:** 2026-04-15. Post-deploy sync: 9/9 ✅. PROD manually re-sorted (40 rows).
-
-### What's new in this PROD release (T-152..T-221):
-- Sheets API caching + 429 retry with backoff
-- Cross-currency duplicate detection (UAH vs EUR)
-- Bank statement: separate transactions, income type fix
-- Dashboard redesign (HISTORY table)
-- Cumulative balance (compute_cumulative_balance fix)
-- Bulk delete: batch N-delete, pre-parse IDs
-- Language system: session.lang as sole source, shift detection
-- Navigation UX: Деталі (was Аналітика), top-3 categories in Бюджет
-- Category/subcategory aliases (60+ variants → canonical)
-- User aliases: Marina→Maryna, Миша→Mikhail + Telegram ID auto-assign
-- Error logging: PostgreSQL error_log table + global PTB handler
-- Post-deploy sync script: scripts/ap_sync_prod.py
-- Staging environment setup (separate Test Admin sheet, Railway staging vars)
-
-**⚠️ NOT yet on production (waiting GO):**
-- T-172 to T-194 — all listed below in DEV section
-
----
+**origin/main:** `7b2325e` — T-254 + T-255: batch recap after dup resolution + consolidate items on save-as-one
+**Status:** ✅ DEPLOYED on 2026-04-18 19:43 via cherry-pick onto main (ALLOW_MAIN_PUSH=GO_CONFIRMED, Confirm=GO for both)
+**Post-deploy sync:** scripts/ap_sync_prod.py — 9/9 checks passed at 19:45
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**Last commit on dev:** `b7eb662` (same as main — fully synced)
-**Branch:** `dev`
+**origin/dev:** `9527593` — T-254 + T-255 (cherry-picked source) on top of `c9991ad` (T-256) and `0be0234` (AP_FILE_NAMING)
 
-Tasks on dev but NOT yet on main (newest first):
+**Commits on dev not yet on main (newest → oldest):**
 
-| Commit | Task | Description |
-|--------|------|-------------|
-| `d3ddf70` | T-198 | Contribution inactive month display: "без активності" banner, "не внесено" label |
-| `d3a8749` | T-196/197/199 | Float crash fix, analytics income display, month abbr, contribution period selector |
-| `dda6349` | T-195 | Hardcode income category (Top-up/Salary) + localize account question |
-| `564097b` | T-194 | Batch bulk delete: 1 read + N deletes. Eliminates 429 quota errors on bulk delete |
-| `f46cf5b` | T-192 | Batch dup enrichment prompt: queues dups after batch, shows Update/Add/Cancel one by one |
-| `873ca63` | T-192 | Cross-currency dup detection: EUR vs UAH compared via Amount_EUR ±5% |
-| `91cb469` | T-190+T-191 | BUG-010 suppressed by stale bulk state fix; agent stops mid-batch fix |
-| `bde3949` | T-188+T-189 | No currency conversion in prompt; bulk delete pre-parse IDs from user message |
-| `fe4ec91` | T-185+T-186 | Income type=expense fix; Maryna who detection from item note |
-| `83642a9` | T-187 | Bulk delete regression fix (1-of-N) |
-| `fd8c17b` | T-184+T-185 | cb_split_separate: receipt type, per-item who, batch_mode skips N×2 quota |
-| `e1e9ddb` | T-183 | Batch write: _sheets_retry on append_row, skip_sort in loop + 1 sort after |
-| `d78f2ca` | T-182 | Dup detection: currency match + ±5% tolerance for non-EUR + note token overlap |
-| `3524255` | T-181 | Echo account+split choices in chat; fix amount field variants in cb_split_separate |
-| *(earlier)* | T-172..T-180 | Various fixes: sheets retry, contribution history, dashboard redesign |
+| Commit | Task | Description | Deploy status |
+|--------|------|-------------|---------------|
+| `c9991ad` | T-256 | task_log.add_task uses insert_row(index=2) — new rows above CLOSED block | OPEN, Deploy=READY, no Confirm=GO |
+| `0be0234` | AP_FILE_NAMING | scripts/ + mcp/sheets_mcp.py renamed ap_* | no linked task — tooling-only |
+| `72d7a46` | T-252 | dup question FloodWait fix | DISCUSSION — waiting GO |
+| `6a4614e` | T-249 | income 'Income' → 'Top-up' fix | DISCUSSION — waiting GO |
 
-**Deploy status:** All DISCUSSION+READY, waiting Mikhail's GO (Confirm=GO in Task Log)
+**OPEN/DISCUSSION tasks in Task Log (as of 2026-04-18):**
+
+| Task ID | Status | Topic |
+|---------|--------|-------|
+| T-256 | OPEN | task_log insert_row(index=2) — fix already on dev, needs GO |
+| T-253 | OPEN | refund pair auto-detection (pending implementation) |
+| T-252 | DISCUSSION | dup question FloodWait |
+| T-250 | DISCUSSION | malformed income row (PROD search negative) |
+| T-249 | DISCUSSION | Income→Top-up category fix |
+| T-019, T-045, T-059, T-060, T-064 | ON HOLD | stagnant 11+ days — review cadence needed (A-020) |
 
 ---
 
 ## How to Read This File
 
-- **Before any session**: check what's on dev vs main to understand current deploy gap
-- **After `git push dev`**: add a row to the DEV table above
-- **After `git push main`** (on GO): move all DEV rows to MAIN, update last commit
-- **Never merge to main without GO from Mikhail** (see CLAUDE.md)
+- **Before any session:** check what's on dev vs main to understand current deploy gap.
+- **After `git push dev`:** add a row to the DEV table above with commit hash + task + description.
+- **After `git push main` (on GO):** move DEV rows to MAIN section, update "last commit on main".
+- **Never merge to main without GO from Mikhail** (see CLAUDE.md).
 
 ---
 
@@ -76,19 +53,30 @@ Tasks on dev but NOT yet on main (newest first):
 | Admin Sheet | `1YAVdvRI-CHwk_WdISzTAymfhzLAy4pC_nTFM13v5eYM` | `1Pt5KwSL-9Zgr-tREg6Ek5mlDQhi86rMKIQmLPR4wzOk` |
 | Budget File | `196ALLnRbAeICuAsI6tuGr84IXg_oW4GY0ayDaUZr788` | `1erXflbF2V7HyxjrJ9-QKU4u68HJBBQmUkjZDLE_RhpQ` |
 | Envelope ID | `TEST_BUDGET` | `MM_BUDGET` |
-| DB | maglev.proxy.rlwy.net:17325 | interchange.proxy.rlwy.net:19732 |
+| DB | maglev.proxy.rlwy.net:17325 (no password in .env — A-021) | interchange.proxy.rlwy.net:19732 |
 | Railway env ID | `1e6973d7-2c9c-48a3-8197-b61fd4174ba4` | `08e40bf3-cbe4-4a80-be54-1f291c21fe0d` |
 
 ⚠️ NEVER mix test and prod resources. Test data → Test Admin only.
 
 ---
 
-## Known Differences: Staging vs Production
+## Data / Health Snapshot (2026-04-17)
 
-| Area | Staging | Production | Since |
-|------|---------|-----------|-------|
-| Bulk delete | Batch (1 read) | Sequential (N reads) | T-194 pending |
-| Cross-currency dup | EUR vs UAH via Amount_EUR ±5% | No cross-currency check | T-192 pending |
-| Income type detection | 3-layer: schema+category+prompt | Broken (type=expense) | T-185 pending |
-| Bulk delete ID parsing | Pre-parsed from user text | Comma-only check | T-187 pending |
-| Dashboard | 2-section: SNAPSHOT+HISTORY | Same structure | T-174 (deployed) |
+| Metric | PROD | TEST |
+|--------|------|------|
+| error_log last 24h | 0 | unreachable (A-021) |
+| conversation_log total / max ts | 646 / 2026-04-16 19:37 UTC | unreachable |
+| Transactions active | ~86 | 41 |
+| Transactions missing Subcategory | ~1% (backfilled) | ~73% (30/41) — A-016 |
+| Dashboard updated_at | fresh per deploy | stale (2026-04-14 10:03 UTC) — A-017 |
+
+---
+
+## Audit notes (ITER 1 — 2026-04-17)
+
+See `AUDIT_PLAN.md` / `AUDIT_TASKS.md` for the 22 findings from this iteration.
+Top TEST-MODE-only fixes applied on this pass:
+- A-001: this file (regenerated from real git state)
+- A-002: CLAUDE_WORKING_GUIDE.md tool count (26+1 → 30)
+- A-009: dead branch in tools/transactions.py:387-390 removed
+- Others pending ITER 2/3 or Mikhail confirmation.
