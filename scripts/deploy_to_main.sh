@@ -96,15 +96,21 @@ fi
 echo "    ✓ Confirm=GO"
 
 # ── Choose deploy strategy ────────────────────────────────────────────────────
-echo "[2/4] Strategy: $MODE${SHA:+ (sha=$SHA)}${DRY_RUN:+ DRY_RUN}"
+DRY_RUN_LABEL=""
+[[ $DRY_RUN -eq 1 ]] && DRY_RUN_LABEL=" DRY_RUN"
+echo "[2/4] Strategy: $MODE${SHA:+ (sha=$SHA)}${DRY_RUN_LABEL}"
 
-# Detect whether we're on a FUSE-mounted repo (.git/objects writes fail)
+# Detect whether we're on a FUSE-mounted repo (.git/objects writes fail).
+# Some FUSE mounts allow touch (creates a placeholder) but block rm — detect both.
 FUSE_FALLBACK=0
-if ! touch .git/objects/.write_test_$$ 2>/dev/null; then
+_fuse_probe=".git/objects/.write_test_$$"
+if ! touch "$_fuse_probe" 2>/dev/null; then
     FUSE_FALLBACK=1
     echo "    ⚠️  Local .git/objects is read-only (FUSE) — will use /tmp clone"
-else
-    rm -f .git/objects/.write_test_$$
+elif ! rm -f "$_fuse_probe" 2>/dev/null; then
+    FUSE_FALLBACK=1
+    echo "    ⚠️  Local .git/objects touch OK but rm fails (FUSE partial) — will use /tmp clone"
+    # Best-effort: leave the probe file behind; on FUSE it's often a no-op write anyway.
 fi
 
 # ── Execute deploy ────────────────────────────────────────────────────────────
