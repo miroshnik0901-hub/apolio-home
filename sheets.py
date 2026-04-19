@@ -1218,6 +1218,16 @@ class SheetsClient:
             )
             return {}
 
+    def invalidate_env_config(self, file_id: str) -> None:
+        """[Audit A-014] Public cache-invalidation hook for env Config.
+
+        Preferred over poking `sheets._cfg_cache` from other modules (e.g.
+        intelligence.py), which couples callers to cache internals.
+        """
+        if not file_id:
+            return
+        self._cfg_cache.invalidate(f"env_config_{file_id}")
+
     def ensure_envelope_config(self, envelope_id: str) -> dict:
         """Check envelope's Config tab and write any missing split/budget keys.
 

@@ -245,8 +245,8 @@ def compute_contribution_status(sheets: SheetsClient, envelope_id: str,
             logger.warning(f"compute_contribution_status: empty env_config for file_id={file_id[:20] if file_id else 'none'} — retrying once")
             try:
                 env_config = sheets.read_envelope_config(file_id) or {}
-                # Invalidate cache so next read is fresh
-                sheets._cfg_cache.invalidate(f"env_config_{file_id}")
+                # [Audit A-014] Invalidate cache via public API so next read is fresh
+                sheets.invalidate_env_config(file_id)
                 env_config = sheets.read_envelope_config(file_id) or {}
             except Exception as _e:
                 logger.error(f"compute_contribution_status: retry also failed: {_e}")
