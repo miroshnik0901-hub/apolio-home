@@ -39,6 +39,7 @@
 | T-273 | OPEN | DEPLOYED | on main as `3913c85` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
 | T-274 | OPEN | DEPLOYED | on main as `9721c6b` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
 | T-276 | OPEN | — | NEW bug 2026-04-20 12:45: bank-statement add result shows only compact T-254 recap — per-item bulk_added_header list missing ("стандартная схема" regression). Hypothesis: cross-dup queue drain path at bot.py:3664 suppresses the bulk_added_header emit from bot.py:4374. Pending investigation. |
+| T-277 | OPEN | — | NEW bug 2026-04-20 12:55: T-265 regression — after aggregate_bank_statement agent emits plain-text question "Записать...?" WITHOUT present_options → no inline buttons, dead-end UX. Hypothesis: soft system-prompt rule drifted; hint_for_agent at agent.py:2138 doesn't mandate the next tool chain. Layered fix: (1) harden hint_for_agent, (2) bot.py safety net auto-injects T-076 buttons if agent skipped present_options. |
 | T-275 | DISCUSSION | — | Agent clarification UX feature. Design spec written into Apolio Comment (2026-04-20 11:55). MVP slice: triggers 1+2, filtered batch, `agent_learning` reuse. Awaiting Mikhail spec review. |
 | T-256 | DISCUSSION | READY | on dev as `c9991ad`. task_log insert_row(index=2). Awaiting Mikhail GO for PROD cherry-pick. |
 | T-262 | OPEN | — | Unblocked by T-261 PROD deploy 2026-04-20. Ready for retest on @ApolioHomeBot. |
