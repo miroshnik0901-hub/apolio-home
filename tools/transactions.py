@@ -817,6 +817,30 @@ async def tool_add_transaction(params: dict, session: SessionContext,
         sheets.add_transaction(envelope["file_id"], row)
     except Exception as e:
         logger.error(f"sheets.add_transaction failed for {tx_id}: {e}", exc_info=True)
+        # T-266: persist to error_log for post-mortem (previously only logger.error)
+        try:
+            import traceback as _tb
+            import asyncio as _asyncio
+            import db as _db_err
+            _coro = _db_err.log_error(
+                error_type="sheets_add_transaction_failed",
+                context=f"tx_id={tx_id} envelope={envelope.get('file_id','')} user={session.user_id}",
+                traceback_str=_tb.format_exc(),
+                raw_input=str(row)[:500],
+                user_id=session.user_id,
+                session_id=getattr(session, "session_id", "") or "",
+            )
+            # Fire-and-forget: we're already inside an async tool, schedule but don't block error return.
+            try:
+                _loop = _asyncio.get_event_loop()
+                if _loop.is_running():
+                    _asyncio.ensure_future(_coro)
+                else:
+                    _loop.run_until_complete(_coro)
+            except Exception:
+                pass
+        except Exception as _log_err:
+            logger.warning(f"[T-266] log_error failed: {_log_err}")
         # T-212: keep TRANSACTION FAILED prefix (test compatibility) but clean raw JSON
         import re as _re
         _err_str = str(e)

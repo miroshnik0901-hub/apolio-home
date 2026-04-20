@@ -1326,7 +1326,22 @@ class ApolioAgent:
 
             return result
         except Exception as e:
+            # T-266: persist to error_log so post-mortem analysis of silent tool
+            # failures is possible. Previously only logger.error → lost on redeploy.
             logger.error(f"Tool {name} failed: {e}", exc_info=True)
+            try:
+                import traceback as _tb
+                import db as _db_err
+                await _db_err.log_error(
+                    error_type=f"tool_{name}_failed",
+                    context=f"tool={name} user={session.user_id} params={json.dumps(params)[:200]}",
+                    traceback_str=_tb.format_exc(),
+                    raw_input=json.dumps(params, default=str)[:500],
+                    user_id=session.user_id,
+                    session_id=getattr(session, "session_id", "") or "",
+                )
+            except Exception as _log_err:
+                logger.warning(f"[T-266] log_error failed: {_log_err}")
             return {"error": str(e)}
 
     # ── Intelligence tool handlers ────────────────────────────────────────
