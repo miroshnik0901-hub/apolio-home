@@ -533,11 +533,18 @@ def _quick_balance_line(session, lang: str = "ru") -> str:
                     oblig = safe_float(obligations.get(u, 0))
                     if all_negative and credit < 0:
                         # Show as "needs to fund joint account by X"
+                        # T-269: "внесено" was hardcoded ru; contrib had no currency. Now
+                        # uses i18n.bal_contributed and appends {cur} for unit clarity.
                         _needs_lbl = {
                             "ru": "нужно внести", "uk": "потрібно внести",
                             "en": "needs to fund", "it": "da versare",
                         }
-                        parts.append(f"  ⚠️ {u}: {abs(credit):,.0f} {cur} ({_needs_lbl.get(lang, 'потрібно внести')}) · внесено {contrib:,.0f}")
+                        _contrib_lbl = i18n.ts("bal_contributed", lang)
+                        parts.append(
+                            f"  ⚠️ {u}: {abs(credit):,.0f} {cur} "
+                            f"({_needs_lbl.get(lang, 'потрібно внести')}) · "
+                            f"{_contrib_lbl} {contrib:,.0f} {cur}"
+                        )
                     elif credit > 0:
                         parts.append(f"  ✅ {u}: +{credit:,.2f} {cur} ({i18n.ts('bal_overpaid', lang)})")
                     elif credit < 0:
@@ -842,14 +849,13 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
                 cur = snap.get("currency", "EUR")
                 lines.append("")
                 lines.append(i18n.tu("contrib_balance", lang))
+                # T-269: contrib field now carries {cur} for unit clarity; "внесено"
+                # label now routes through i18n.bal_contributed (was local dict).
                 _needs_lbl = {
                     "ru": "нужно внести", "uk": "потрібно внести",
                     "en": "needs to fund", "it": "da versare",
                 }
-                _contributed_lbl = {
-                    "ru": "внесено", "uk": "внесено",
-                    "en": "contributed", "it": "versato",
-                }
+                _contrib_lbl = i18n.ts("bal_contributed", lang)
                 for u in snap["split_users"]:
                     credit  = safe_float(balances.get(u, 0))
                     contrib = safe_float(assets.get(u, 0))
@@ -857,18 +863,18 @@ async def _build_report_html(session, period: str = "current", lang: str = "ru")
                         lines.append(
                             f"  ⚠️ <b>{u}</b>: {abs(credit):,.0f} {cur} "
                             f"({_needs_lbl.get(lang, 'нужно внести')}) · "
-                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                            f"{_contrib_lbl} {contrib:,.0f} {cur}"
                         )
                     elif credit > 0:
                         lines.append(
                             f"  ✅ <b>{u}</b>: +{credit:,.0f} {cur} "
                             f"({i18n.ts('bal_overpaid', lang)}) · "
-                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                            f"{_contrib_lbl} {contrib:,.0f} {cur}"
                         )
                     else:
                         lines.append(
                             f"  ✅ <b>{u}</b>: 0 {cur} · "
-                            f"{_contributed_lbl.get(lang, 'внесено')} {contrib:,.0f}"
+                            f"{_contrib_lbl} {contrib:,.0f} {cur}"
                         )
         except Exception:
             pass
@@ -4354,10 +4360,14 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cur = receipt.get("currency", "EUR")
         total_added = len(added)
         total_items = len([i for i in items if safe_float(i.get("amount") or i.get("price") or 0) > 0])
-        summary_lines = [f"✅ Додано {total_added}/{total_items}:"] + added
+        # T-268: bulk summary header / warnings were hardcoded UK. Now uses i18n per
+        # user's lang (RU/UK/EN/IT).
+        summary_lines = [
+            i18n.ts("bulk_added_header", lang).format(added=total_added, total=total_items)
+        ] + added
         if _pending_cross_dups:
             summary_lines.append(
-                f"\n⚠️ Потенційних дублікатів: {len(_pending_cross_dups)} — питання нижче"
+                "\n" + i18n.ts("bulk_cross_dups_pending", lang).format(n=len(_pending_cross_dups))
             )
         if not _sort_ok and _file_id:
             _sort_warn = {"ru": "⚠️ Сортировка после добавления не выполнена (лимит API). Нажмите «Сортировать» в меню позже.",
@@ -4366,7 +4376,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                           "it": "⚠️ Ordinamento post-aggiunta fallito (limite API). Riprovare."}
             summary_lines.append(_sort_warn.get(lang, _sort_warn["uk"]))
         if failed:
-            summary_lines += [f"\n⚠️ Не вдалося ({len(failed)}):"] + failed
+            # T-268: localized failure header (was hardcoded UK).
+            summary_lines += [
+                "\n" + i18n.ts("bulk_failed_header", lang).format(n=len(failed))
+            ] + failed
             # T-247: store failed items in session so agent can retry them on "Продолжай"
             # Extract original item dicts for the failed ones
             _failed_names = {f.split(":")[0].lstrip("✗ ").strip() for f in failed}

@@ -620,6 +620,10 @@ SYS: dict[str, dict[str, str]] = {
     "bal_cumulative_header": {
         "ru": "⚖️ Накопленный баланс", "uk": "⚖️ Накопичений баланс", "en": "⚖️ Cumulative balance", "it": "⚖️ Saldo cumulativo",
     },
+    # ── T-269: cumulative balance contribution label (was hardcoded ru "внесено" in bot.py) ──
+    "bal_contributed": {
+        "ru": "внесено", "uk": "внесено", "en": "contributed", "it": "versato",
+    },
     # ── T-139: Duplicate transaction options ──
     "dup_update": {
         "ru": "📝 Обновить существующую", "uk": "📝 Оновити існуючу", "en": "📝 Update existing", "it": "📝 Aggiorna esistente",
@@ -664,6 +668,25 @@ SYS: dict[str, dict[str, str]] = {
         "uk": "✅ Додано: {added}  🔄 Оновлено: {updated}  ❌ Скасовано: {cancelled}  (з {total})",
         "en": "✅ Added: {added}  🔄 Updated: {updated}  ❌ Cancelled: {cancelled}  (of {total})",
         "it": "✅ Aggiunte: {added}  🔄 Aggiornate: {updated}  ❌ Annullate: {cancelled}  (su {total})",
+    },
+    # ── T-268: bulk-add summary — previously hardcoded UK in bot.py:4357/4361/4369 ──
+    "bulk_added_header": {
+        "ru": "✅ Добавлено {added}/{total}:",
+        "uk": "✅ Додано {added}/{total}:",
+        "en": "✅ Added {added}/{total}:",
+        "it": "✅ Aggiunte {added}/{total}:",
+    },
+    "bulk_cross_dups_pending": {
+        "ru": "⚠️ Потенциальных дубликатов: {n} — вопрос ниже",
+        "uk": "⚠️ Потенційних дублікатів: {n} — питання нижче",
+        "en": "⚠️ Potential duplicates: {n} — question below",
+        "it": "⚠️ Potenziali duplicati: {n} — domanda sotto",
+    },
+    "bulk_failed_header": {
+        "ru": "⚠️ Не удалось ({n}):",
+        "uk": "⚠️ Не вдалося ({n}):",
+        "en": "⚠️ Failed ({n}):",
+        "it": "⚠️ Non riuscite ({n}):",
     },
     # ── T-143: Bulk delete ──
     "del_bulk": {
