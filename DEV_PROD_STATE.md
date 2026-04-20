@@ -13,12 +13,14 @@
 **Post-deploy sync (2026-04-20 12:45):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout OK (164 rows at 2-165). FX_Rates 12 rows. Summary no #REF!. CategoryAliases 86 aliases, UserAliases 13.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `414fbeb` — T-273+T-274 PRIMARY LAYER: bot.py:4314/4528 row-builder carries subcategory; sheets.py 5 more _sheets_retry-wrapped READ sites; 2 integration tests added. Prev: `44652c6` (docs), `0c7c0ae` (T-273 secondary), `961bc32` (T-274 aliases secondary), `2ec22c0` (T-272 — now on main as `2cd9257`).
+**origin/dev:** `287d3bb` — T-276 restore per-item list alongside T-254 compact recap (7/7 selftest). Prev: `a19db6e` (T-277 safety net + hardened hint_for_agent after aggregate_bank_statement, 7/7 selftest), `62d6c3c` (T-273/T-274/T-275/T-277 status docs), `d4d529d` (T-273/T-274/T-276 PROD deploy docs), `b00432f` (staging verify docs), `865e0e7` (T-273/T-274 primary docs), `414fbeb` (T-273+T-274 primary code).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
+| `287d3bb` | T-276 | bot.py: accumulate _batch_recap_items across phase-1 add + cross-dup drain. Render items list above compact T-254 tally on drain. Adds ↻/✓/✗ markers. tests/t276_recap_items_selftest.py 7/7. Regression 58/58. | READY — awaiting GO |
+| `a19db6e` | T-277 | agent.py: hardened hint_for_agent in _tool_aggregate_bank_statement (MANDATORY tool chain, FORBIDDEN plain text). Session marker triple stashed. _tool_present_options clears marker on T-076 buttons. bot.py: pre-BUG-010 safety net — if markers set + pending_choice empty + response non-empty → synthesize pending_receipt from fact_expense_rows + force T-076 buttons (RU/UK/EN/IT). tests/t277_safety_net_selftest.py 7/7. Regression 58/58. | READY — awaiting GO |
 | `414fbeb` | T-273+T-274 | PRIMARY: bot.py:4314 batch params dict + bot.py:4528 single-row path carry subcategory. sheets.py: 5 more read-path wraps (read_config/get_dashboard_config/get_categories_with_subs/get_accounts_with_types/get_rows_raw) → 12 total _sheets_retry read sites. Added tests/t273_read_retry_selftest.py (5/5) + tests/t274_plumbing_selftest.py (8/8). Regression 58/58. | DEPLOYED as `dc771cd` on main |
 | `0c7c0ae` | T-273 | enrich_transaction 429 → i18n friendly msg + error_log persistence + retry budget bumped (sheets.py get_all_values max_attempts=3/delay=5s) — secondary layer | DEPLOYED as `3913c85` on main |
 | `961bc32` | T-274 | tools/transactions: car-wash aliases (мойка/мийка/lavaggio/carwash → Fuel) + bare `parking` + bigram pass in _infer_subcategory — secondary layer | DEPLOYED as `9721c6b` on main |
@@ -38,8 +40,8 @@
 |---------|--------|--------|---------|
 | T-273 | OPEN | DEPLOYED | on main as `3913c85` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
 | T-274 | OPEN | DEPLOYED | on main as `9721c6b` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
-| T-276 | OPEN | — | NEW bug 2026-04-20 12:45: bank-statement add result shows only compact T-254 recap — per-item bulk_added_header list missing ("стандартная схема" regression). Hypothesis: cross-dup queue drain path at bot.py:3664 suppresses the bulk_added_header emit from bot.py:4374. Pending investigation. |
-| T-277 | OPEN | — | NEW bug 2026-04-20 12:55: T-265 regression — after aggregate_bank_statement agent emits plain-text question "Записать...?" WITHOUT present_options → no inline buttons, dead-end UX. Hypothesis: soft system-prompt rule drifted; hint_for_agent at agent.py:2138 doesn't mandate the next tool chain. Layered fix: (1) harden hint_for_agent, (2) bot.py safety net auto-injects T-076 buttons if agent skipped present_options. |
+| T-276 | IN PROCESS | READY | on dev as `287d3bb`. bot.py drain path now accumulates _batch_recap_items (phase-1 adds + per-dup-resolution lines) and renders above compact T-254 tally. ↻/✓/✗ markers. 7/7 selftest + 58/58 regression. Awaiting GO. |
+| T-277 | IN PROCESS | READY | on dev as `a19db6e`. agent.py hint_for_agent hardened (MANDATORY chain, FORBIDDEN plain-text), session marker triple stashed. bot.py pre-BUG-010 safety net synthesizes pending_receipt + forces T-076 buttons (RU/UK/EN/IT). 7/7 selftest + 58/58 regression. Awaiting GO. |
 | T-275 | DISCUSSION | — | Agent clarification UX feature. Design spec written into Apolio Comment (2026-04-20 11:55). MVP slice: triggers 1+2, filtered batch, `agent_learning` reuse. Awaiting Mikhail spec review. |
 | T-256 | DISCUSSION | READY | on dev as `c9991ad`. task_log insert_row(index=2). Awaiting Mikhail GO for PROD cherry-pick. |
 | T-262 | OPEN | — | Unblocked by T-261 PROD deploy 2026-04-20. Ready for retest on @ApolioHomeBot. |
