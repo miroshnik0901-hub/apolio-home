@@ -51,3 +51,12 @@
 2026-04-20 10:05 | ACTION   | Task Log updated: T-267→Deploy=DEPLOYED, Branch="main (3dcff85)"; T-268/T-269/T-270→Deploy=DEPLOYED, Branch="main (5a30b2d)". Self-contained comments appended (PROD commit + verification).
 2026-04-20 10:05 | STATE    | origin/main=5a30b2d (T-268+T-269+T-270), origin/dev=e1c4fa4 (docs). T-267/T-268/T-269/T-270 all on PROD. DISCUSSION — awaiting Mikhail CLOSE. T-253/T-256/T-257/T-258/T-259/T-260/T-261 also DISCUSSION awaiting CLOSE.
 2026-04-20 10:05 | NEXT     | Apps Script archiveClosed container-bound redeploy (T-267 touches apps_script/task_log_automation.js) — Mikhail must open Extensions > Apps Script and Deploy manually when convenient. Not blocking: old auto-set path is write-then-overwrite. Await Mikhail CLOSE-out on T-267/T-268/T-269/T-270.
+
+2026-04-20 10:27 | CHAT     | Mikhail screenshot: MIX MARKT ITALIA SRL on PROD row 159 had Subcategory='' despite Category=Food. Asked to investigate + fix so agent/fallback detects groceries.
+2026-04-20 10:27 | DECISION | T-271: Mix Markt not in _CATEGORY_ALIASES and LLM didn't apply world knowledge. Fix both layers: aliases (markt/mixmarkt + IT chains) + prompt T-246 example list.
+2026-04-20 10:27 | ACTION   | tools/transactions.py: added markt, mixmarkt, eurospin, penny, todis, iper, famila, despar, crai, naturasi, supermercato, alimentari, panetteria, pescheria, latteria, drogheria, minimarket, in's → Groceries. ApolioHome_Prompt.md T-246: extended merchant example list. test_regression.py §6.6: 15 merchants + 3 negative controls.
+2026-04-20 10:27 | ACTION   | Self-test: py_compile OK. test_regression.py 55/55 passed. Direct integration test _infer_subcategory 15/15 positive + 3/3 negative.
+2026-04-20 10:27 | ACTION   | PROD row 159 backfilled: Subcategory='' → 'Groceries' (direct ws.update_cell on Transactions of PROD Budget).
+2026-04-20 10:27 | ACTION   | Commit 063dcb8 pushed to dev: b0c65d1..063dcb8 dev -> dev. Task Log: T-271 → DISCUSSION, Deploy=READY, Branch='dev (063dcb8)'.
+2026-04-20 10:27 | STATE    | origin/dev=063dcb8, origin/main=5a30b2d. T-271 READY awaiting Mikhail Confirm=GO for PROD cherry-pick.
+2026-04-20 10:27 | NEXT     | Await Mikhail Confirm=GO on T-271 for PROD cherry-pick. Prior DISCUSSION tail: T-253/T-256/T-257/T-258/T-259/T-260/T-261/T-263/T-267/T-268/T-269/T-270 awaiting CLOSE. Apps Script archiveClosed redeploy pending Mikhail manual step.

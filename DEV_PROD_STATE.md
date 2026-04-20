@@ -13,12 +13,14 @@
 **Post-deploy sync (2026-04-20 09:57):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout check hit Google Sheets 429 rate limit (benign — was OK at 09:06). FX_Rates 12 rows. No #REF! in Summary.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `e1c4fa4` — docs(T-268/T-269/T-270): update DEV_PROD_STATE + rotate SESSION_LOG. Previous: `72d0ea1` (T-268+T-269+T-270, also on main as `5a30b2d`), `da4d110` (T-267 docs), `c19fc1c` (T-267 code, also on main as `3dcff85`).
+**origin/dev:** `063dcb8` — T-271: Mix Markt + IT grocery chains → Groceries. Previous: `b0c65d1` (docs PROD deploy 2026-04-20 09:57), `e1c4fa4` (docs rotate SESSION_LOG), `72d0ea1` (T-268+T-269+T-270, also on main as `5a30b2d`), `da4d110` (T-267 docs), `c19fc1c` (T-267 code, also on main as `3dcff85`).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
+| `063dcb8` | T-271 | Mix Markt + IT grocery chains → Groceries (fallback aliases + prompt examples) | DISCUSSION — READY, awaiting Mikhail GO |
+| `b0c65d1` | — | docs: PROD deploy 2026-04-20 09:57 T-267/T-268/T-269/T-270 | no task — docs only |
 | `e1c4fa4` | — | docs: DEV_PROD_STATE + SESSION_LOG rotate | no task — docs only |
 | `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
@@ -49,6 +51,7 @@
 | T-268 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
 | T-269 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
 | T-270 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
+| T-271 | DISCUSSION | READY | on dev as `063dcb8` (2026-04-20 10:xx). PROD row 159 (MIX MARKT ITALIA SRL) backfilled to Subcategory=Groceries. Awaiting Mikhail Confirm=GO for PROD cherry-pick. |
 | T-019, T-045, T-059, T-060, T-064 | ON HOLD | — | Mikhail's own backlog, not Claude's concern (confirmed 2026-04-19). |
 
 ---
