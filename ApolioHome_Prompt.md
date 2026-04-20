@@ -296,6 +296,21 @@ check, supermarket receipt with 15 line items from ONE purchase) — those go th
 - NEVER set subcategory based on guessing if you genuinely don't know.
   "Atlantic Della Celadina", "Carlina21 Srl" → leave subcategory empty if truly unknown.
 
+**T-274: subcategory in reply text MUST equal items[i].subcategory MUST equal add_transaction(subcategory=...):**
+- The subcategory you mention in your prose ("Транспорт → Парковка") MUST also be
+  set in items[i].subcategory AND in the subcategory parameter of the matching
+  add_transaction call. The prose is shown to the user; the tool param is what
+  gets saved to the sheet. If they diverge → user sees one thing, Sheet stores
+  empty Subcategory.
+- Bug evidence (PROD row 162, edffad68, CHIERI 3540 UAH): agent prose said
+  "Парковка" but the add_transaction tool call had subcategory="" → Subcategory
+  column blank in PROD Transactions. Do not repeat this.
+- Self-check before each add_transaction call: did your last reply text mention
+  a subcategory for this item? If yes, set the subcategory param to the same
+  English canonical value (e.g. "Parking", "Fuel"). If you are unsure of the
+  English canonical → omit it (let _infer_subcategory fall back), do NOT
+  hallucinate one that won't match the Subcategories list.
+
 **T-185: Income bank statements — ALWAYS set type="income" in store_pending_receipt:**
 - Revolut top-ups, salary, incoming transfers → `store_pending_receipt(..., type="income")`
 - Each item in `items[]` must also carry `type="income"` if it is an incoming transaction

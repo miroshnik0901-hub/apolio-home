@@ -1131,6 +1131,50 @@ def test_t271_mix_markt_groceries_alias():
     return True
 
 
+@test("6.8 T-274: car-wash + bare 'parking' aliases + bigram matching")
+def test_t274_carwash_parking_bigrams():
+    """Regression for PROD row 162 (CHIERI, edffad68): empty Subcategory despite
+    agent showing 'Парковка' in analysis. Real merchant was 'Мойка' (per Mikhail).
+    Three classes of fix:
+      1. RU/UA/IT car-wash aliases (мойка/мийка/lavaggio/autolavaggio/carwash) → Fuel.
+      2. Bare English 'parking' self-map (had 'parking lot' bigram and 'паркінг'
+         Cyrillic but not single-token EN 'parking').
+      3. Bigram pass — multi-word aliases ('car wash', 'parking lot', 'gas station',
+         'fuel station', 'fast food') now match across token boundaries.
+    Without this all three would still produce empty Subcategory in PROD writes.
+    """
+    from tools import transactions as tt
+    known = ["Fuel", "Parking", "Restaurants", "Cafes"]
+    # Class 1: car-wash variants
+    for note in (
+        "Автомойка центр", "Автомийка Pinerolo", "Lavaggio auto via Roma",
+        "Autolavaggio Express", "carwash 24h", "Мойка Чиери",
+    ):
+        assert tt._infer_subcategory(note, known) == "Fuel", (
+            f"{note!r} must resolve to Fuel via T-274 car-wash aliases"
+        )
+    # Class 2: bare EN 'parking'
+    assert tt._infer_subcategory("Parking 24h Stazione", known) == "Parking"
+    assert tt._infer_subcategory("PARKING TORINO CENTRO", known) == "Parking"
+    # Class 3: bigram matching
+    for note, expected in (
+        ("CAR WASH CENTER", "Fuel"),
+        ("PARKING LOT 5", "Parking"),
+        ("GAS STATION 24", "Fuel"),
+        ("FUEL STATION ESSO", "Fuel"),
+        ("FAST FOOD CHIPS", "Restaurants"),
+    ):
+        assert tt._infer_subcategory(note, known) == expected, (
+            f"{note!r} bigram must resolve to {expected!r} via T-274 bigram pass"
+        )
+    # Negative: original CHIERI without any alias keyword still returns empty
+    # (so T-275 clarification UX has something to trigger on).
+    assert tt._infer_subcategory("46492 CHIERI - CORSO T", known) == "", (
+        "raw CHIERI text without alias keywords must return empty (no false positives)"
+    )
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
