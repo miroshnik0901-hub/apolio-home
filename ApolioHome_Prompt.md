@@ -283,7 +283,11 @@ check, supermarket receipt with 15 line items from ONE purchase) — those go th
   - "Il Mulattiere", "La Cantina", "Brezil", "Sapori Diversi" → YOU KNOW these are restaurants/food places.
     Set `subcategory: "Restaurants"` or `"Groceries"` or `"Cafes"` accordingly.
   - "Farmacia X", "Studio Podologico" → `subcategory: "Pharmacy"` / `"Doctor"`
-  - "Carrefour", "Lidl", "Esselunga" → `subcategory: "Groceries"`
+  - "Carrefour", "Lidl", "Esselunga", "Mix Markt", "Eurospin", "Penny", "Todis",
+    "Iper", "Famila", "Despar", "Crai", "NaturaSì", "Conad", "Pam", "Coop",
+    "Tigros", "Simply" → `subcategory: "Groceries"` (IT/EU supermarket chains)
+  - Any name containing "Markt", "Supermercato", "Alimentari", "Panetteria",
+    "Pescheria", "Latteria", "Drogheria", "Minimarket" → `subcategory: "Groceries"`
   - "Airbnb", "Booking.com" → `subcategory: "Hotel"`
   - "Artedanza" (dance school) → `subcategory: "Activities"`
 - RULE: If you can reasonably classify the merchant from its name or type → SET subcategory.
