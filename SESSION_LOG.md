@@ -67,3 +67,12 @@
 2026-04-20 11:08 | ACTION   | Commit 2ec22c0 on dev: "T-272: wrap workbook open in _sheets_retry (data loss fix)". Pushed origin/dev da821ec..2ec22c0. Task Log T-272 → Deploy=READY, Branch="dev (2ec22c0)", self-contained comment appended. DEV_PROD_STATE.md updated.
 2026-04-20 11:08 | STATE    | origin/dev=2ec22c0 (T-272 fix + §6.7 regression). origin/main=36db8fa (T-271). T-272 DISCUSSION/READY awaiting Mikhail Confirm=GO for PROD cherry-pick. T-271 + T-267/T-268/T-269/T-270 + T-253/T-256/T-257/T-258/T-259/T-260/T-261 all DISCUSSION awaiting CLOSE.
 2026-04-20 11:08 | NEXT     | Await Mikhail Confirm=GO for T-272 PROD deploy. When given: cherry-pick 2ec22c0 onto main via fresh /tmp/apolio-main clone + ALLOW_MAIN_PUSH=GO_CONFIRMED, run py_compile + test_regression, post-deploy ap_sync_prod + error_log 45s spot-check, update Task Log Deploy=DEPLOYED.
+
+2026-04-20 11:20 | CHAT     | Mikhail: "1. do READY-GO  2. resolve status of DEPLOYED-GO". T-272 Confirm=GO confirmed in Task Log (Mikhail set it). Executing both.
+2026-04-20 11:20 | ACTION   | /tmp filled 100% (9.6G/9.6G) with 13 old apolio-* clones owned by prior sandbox UIDs — chmod/rm denied. Relocated fresh clone to /sessions/compassionate-exciting-cray/deploy/apolio-t272-main (5.3G free on /sessions).
+2026-04-20 11:20 | ACTION   | T-272 PROD cherry-pick: 2ec22c0 → main=36db8fa → 2cd9257. Pre-push: py_compile bot/auth/sheets/intelligence/agent OK, test_regression 56/56 PASS. ALLOW_MAIN_PUSH=GO_CONFIRMED push 36db8fa..2cd9257.
+2026-04-20 11:20 | ACTION   | Post-deploy: sync_prod_after_deploy.py 9/9 OK (Transactions 161 rows at 2-162 gap≤0 — incl. backfilled rows 161+162 from T-272 investigation, FX 12 rows, Summary no #REF!). error_log clean 45s post-deploy.
+2026-04-20 11:20 | ACTION   | Task Log T-272 → Deploy=DEPLOYED, Branch="main (2cd9257)", self-contained comment appended.
+2026-04-20 11:20 | ACTION   | Part 2 "resolve status of DEPLOYED-GO": queried Task Log → only T-271 + T-272 matched DEPLOYED+GO+DISCUSSION. Closed both via close_task() API with auth comment citing Mikhail 2026-04-20 chat. Remaining DEPLOYED+GO+DISCUSSION: 0.
+2026-04-20 11:20 | STATE    | origin/main=2cd9257 (T-272). origin/dev=257942e (docs T-272). T-271 + T-272 CLOSED. Open tasks: T-256 (READY on dev, awaiting GO), T-262 (OPEN, retest), T-263 (DISCUSSION, awaiting GO on Phase 1).
+2026-04-20 11:20 | NEXT     | No active work pending. T-256 has Deploy=READY but no Confirm=GO. T-263 Phase 1 awaiting GO. T-262 available for retest after T-261 landed. Await Mikhail next instruction.
