@@ -217,21 +217,58 @@ def aggregate_bank_statement(
 
     unmatched_preauth = [p for j, p in enumerate(preauths) if j not in used_preauth_idx]
 
+    # T-264 (2026-04-20): second pairing pass — cancel ↔ DEBIT.
+    # Why: Monobank/Revolut/Wise/PayPal show statements as "debit" + "cancellation"
+    # (no explicit preauth row). A cancellation whose amount/date matches an
+    # unmatched debit is effectively the same preauth-release pattern — net zero —
+    # so BOTH rows must drop out of fact_expense_rows.
+    # Precedence: preauth↔cancel wins over debit↔cancel (real preauth holds are
+    # more specific). Only remaining cancellations reach this pass.
+    used_debit_idx: set[int] = set()
+    still_unmatched_cancellations = []
+    cancel_debit_pairs = 0
+    for c in unmatched_cancellations:
+        candidates = []
+        for j, d in enumerate(debits):
+            if j in used_debit_idx:
+                continue
+            if not _amounts_match(c["amount"], d["amount"], amount_tolerance_pct):
+                continue
+            if not _dates_within(c["_date_obj"], d["_date_obj"], pair_window_days):
+                continue
+            if c["_date_obj"] and d["_date_obj"]:
+                dist = abs((c["_date_obj"] - d["_date_obj"]).days)
+            else:
+                dist = 999
+            candidates.append((dist, j, d))
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            _, j_best, d_best = candidates[0]
+            used_debit_idx.add(j_best)
+            matched_pairs.append({"debit": d_best, "cancellation": c})
+            cancel_debit_pairs += 1
+        else:
+            still_unmatched_cancellations.append(c)
+
+    unmatched_cancellations = still_unmatched_cancellations
+    unmatched_debits = [d for j, d in enumerate(debits) if j not in used_debit_idx]
+
     if unmatched_cancellations:
         warnings.append(
-            f"{len(unmatched_cancellations)} cancellation(s) without matching preauth — "
+            f"{len(unmatched_cancellations)} cancellation(s) without matching preauth or debit — "
             f"possible refund or data anomaly; treated as negative expense"
         )
 
-    # Real expenses = all debits + unmatched preauths (money out, not released)
-    fact_expense_rows = list(debits) + list(unmatched_preauth)
+    # Real expenses = unmatched debits + unmatched preauths (money out, not released).
+    # Debits that paired with a cancellation are NET ZERO and excluded from counts.
+    fact_expense_rows = list(unmatched_debits) + list(unmatched_preauth)
 
     # Sums
     total_expenses = sum(r["amount"] for r in fact_expense_rows)
     total_income = sum(r["amount"] for r in credits)
     total_cancellations_amount = sum(c["amount"] for c in cancellations)
 
-    # Subtract unmatched cancellations as refunds (reduce expense)
+    # Subtract still-unmatched cancellations as refunds (reduce expense)
     refund_amount = sum(c["amount"] for c in unmatched_cancellations)
     if refund_amount > 0:
         total_expenses -= refund_amount
