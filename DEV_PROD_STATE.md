@@ -13,12 +13,15 @@
 **Post-deploy sync (2026-04-20 09:07):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout OK (151 rows at 2-152). FX_Rates 12 rows. No #REF! in Summary.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `517229a` — T-266: persist tool failures to error_log. T-261/T-264/T-265/T-266 content also on main via cherry-pick chain 2026-04-20 09:06.
+**origin/dev:** `72d0ea1` — T-268 + T-269 + T-270: i18n cleanups + Fuel aliases. Previous: `da4d110` (T-267 docs), `c19fc1c` (T-267 code), `517229a` (T-266, also on main via cherry-pick 2026-04-20 09:06).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
+| `72d0ea1` | T-268+T-269+T-270 | i18n bulk-add summary (RU/UK/EN/IT), bal_contributed i18n + currency on contrib, Fuel aliases (oil/coldi/IT brands) | DISCUSSION/READY — awaiting Mikhail GO |
+| `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
+| `c19fc1c` | T-267 | remove auto-set Deploy=READY on DISCUSSION transition (task_log.py + apps_script) | DISCUSSION/READY — awaiting Mikhail GO |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
 | `7cc19bc` | AUDIT | AUDIT_PLAN/TASKS/CONCLUSION + docs/google_sheets_access.md + WORKING_GUIDE tool count | audit-iter-1 deliverables — no GO |
 | `4dd1137` | apps_script | archiveClosed → physical bottom archive | container-bound Apps Script, not auto-deployed from git |
@@ -43,6 +46,10 @@
 | T-264 | CLOSED | DEPLOYED | on main as `56bb895` (2026-04-20 09:06). Staging-validated via Mikhail screenshot. |
 | T-265 | CLOSED | DEPLOYED | on main as `52b5e20` (2026-04-20 09:06). Staging-validated (buttons after aggregation). |
 | T-266 | CLOSED | DEPLOYED | on main as `3bad49e` (2026-04-20 09:06). Staging self-test wrote 2 rows to error_log. |
+| T-267 | DISCUSSION | READY | on dev as `c19fc1c`. Removes DISCUSSION→Deploy=READY auto-set. Awaiting Mikhail GO. |
+| T-268 | DISCUSSION | READY | on dev as `72d0ea1`. Bulk-add summary i18n (was hardcoded UK). Awaiting Mikhail GO. |
+| T-269 | DISCUSSION | READY | on dev as `72d0ea1`. Cumulative-balance 'внесено' i18n + currency on contrib. Awaiting Mikhail GO. |
+| T-270 | DISCUSSION | READY | on dev as `72d0ea1`. Fuel aliases: oil / coldi / IT brands. Awaiting Mikhail GO. |
 | T-019, T-045, T-059, T-060, T-064 | ON HOLD | — | Mikhail's own backlog, not Claude's concern (confirmed 2026-04-19). |
 
 ---
