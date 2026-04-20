@@ -7,21 +7,20 @@
 ## Current State (2026-04-20)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**origin/main:** `3bad49e` — T-266: persist tool failures to error_log (agent + tool_add_transaction).
-**Status:** ✅ DEPLOYED on 2026-04-20 09:06 via 6-commit cherry-pick chain onto main (T-261 deps + T-264 + T-265 + T-266). Mikhail Confirm=GO set on T-264/T-265/T-266; staging screenshot validated full chain (4 trans, 12,915 UAH, buttons). FUSE /tmp clone fallback used (.env GITHUB_PAT).
-**Recent main history:** `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258 → `7cc46e4` T-257 fixup → `0c51f0e` T-257 → `813256e` T-253 → `7b2325e` T-254+T-255.
-**Post-deploy sync (2026-04-20 09:07):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout OK (151 rows at 2-152). FX_Rates 12 rows. No #REF! in Summary.
+**origin/main:** `5a30b2d` — T-268+T-269+T-270: i18n cleanups + Fuel aliases.
+**Status:** ✅ DEPLOYED on 2026-04-20 09:57 via 2-commit cherry-pick chain onto main (T-267 → T-268+T-269+T-270). Mikhail Confirm=GO received ("do GO"). ap_sync_prod.py 9/9 OK. error_log clean 30s post-deploy. FUSE /tmp/apolio-main clone + .env GITHUB_PAT.
+**Recent main history:** `5a30b2d` T-268+T-269+T-270 → `3dcff85` T-267 → `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258 → `7cc46e4` T-257 fixup → `0c51f0e` T-257 → `813256e` T-253 → `7b2325e` T-254+T-255.
+**Post-deploy sync (2026-04-20 09:57):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout check hit Google Sheets 429 rate limit (benign — was OK at 09:06). FX_Rates 12 rows. No #REF! in Summary.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `72d0ea1` — T-268 + T-269 + T-270: i18n cleanups + Fuel aliases. Previous: `da4d110` (T-267 docs), `c19fc1c` (T-267 code), `517229a` (T-266, also on main via cherry-pick 2026-04-20 09:06).
+**origin/dev:** `e1c4fa4` — docs(T-268/T-269/T-270): update DEV_PROD_STATE + rotate SESSION_LOG. Previous: `72d0ea1` (T-268+T-269+T-270, also on main as `5a30b2d`), `da4d110` (T-267 docs), `c19fc1c` (T-267 code, also on main as `3dcff85`).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
-| `72d0ea1` | T-268+T-269+T-270 | i18n bulk-add summary (RU/UK/EN/IT), bal_contributed i18n + currency on contrib, Fuel aliases (oil/coldi/IT brands) | DISCUSSION/READY — awaiting Mikhail GO |
+| `e1c4fa4` | — | docs: DEV_PROD_STATE + SESSION_LOG rotate | no task — docs only |
 | `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
-| `c19fc1c` | T-267 | remove auto-set Deploy=READY on DISCUSSION transition (task_log.py + apps_script) | DISCUSSION/READY — awaiting Mikhail GO |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
 | `7cc19bc` | AUDIT | AUDIT_PLAN/TASKS/CONCLUSION + docs/google_sheets_access.md + WORKING_GUIDE tool count | audit-iter-1 deliverables — no GO |
 | `4dd1137` | apps_script | archiveClosed → physical bottom archive | container-bound Apps Script, not auto-deployed from git |
@@ -46,10 +45,10 @@
 | T-264 | CLOSED | DEPLOYED | on main as `56bb895` (2026-04-20 09:06). Staging-validated via Mikhail screenshot. |
 | T-265 | CLOSED | DEPLOYED | on main as `52b5e20` (2026-04-20 09:06). Staging-validated (buttons after aggregation). |
 | T-266 | CLOSED | DEPLOYED | on main as `3bad49e` (2026-04-20 09:06). Staging self-test wrote 2 rows to error_log. |
-| T-267 | DISCUSSION | READY | on dev as `c19fc1c`. Removes DISCUSSION→Deploy=READY auto-set. Awaiting Mikhail GO. |
-| T-268 | DISCUSSION | READY | on dev as `72d0ea1`. Bulk-add summary i18n (was hardcoded UK). Awaiting Mikhail GO. |
-| T-269 | DISCUSSION | READY | on dev as `72d0ea1`. Cumulative-balance 'внесено' i18n + currency on contrib. Awaiting Mikhail GO. |
-| T-270 | DISCUSSION | READY | on dev as `72d0ea1`. Fuel aliases: oil / coldi / IT brands. Awaiting Mikhail GO. |
+| T-267 | DISCUSSION | DEPLOYED | on main as `3dcff85` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
+| T-268 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
+| T-269 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
+| T-270 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
 | T-019, T-045, T-059, T-060, T-064 | ON HOLD | — | Mikhail's own backlog, not Claude's concern (confirmed 2026-04-19). |
 
 ---

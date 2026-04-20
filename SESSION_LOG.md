@@ -43,3 +43,11 @@
 
 2026-04-20 09:58 | NEXT     | Await Mikhail Confirm=GO for T-267/T-268/T-269/T-270 PROD deploy. T-261 Task Log now synced.
 2026-04-20 09:53 | ACTION   | SESSION_LOG rotated (16410→6802 bytes). Archive: logs/SESSION_LOG_ARCHIVE_2026-04-20_09-53.md. Mechanical extraction: last STATE+NEXT, all DECISION+PENDING. No interpretation.
+2026-04-20 09:55 | ACTION   | Docs commit e1c4fa4 pushed to dev (DEV_PROD_STATE + rotated SESSION_LOG). Archive logs/SESSION_LOG_ARCHIVE_2026-04-20_09-53.md (gitignored). origin/dev=e1c4fa4.
+2026-04-20 10:05 | CHAT     | Mikhail: "do GO". Executed GO pipeline — T-267/T-268/T-269/T-270 had Confirm=GO already set.
+2026-04-20 10:05 | ACTION   | PROD cherry-pick chain onto main: c19fc1c (T-267) → 3dcff85, then 72d0ea1 (T-268+T-269+T-270) → 5a30b2d. Fresh /tmp/apolio-main clone, ALLOW_MAIN_PUSH=GO_CONFIRMED, GITHUB_PAT from .env. Push: 3bad49e..5a30b2d main -> main.
+2026-04-20 10:05 | ACTION   | Pre-push: py_compile bot/i18n/tools/task_log OK. test_regression.py 54/54 with .env.
+2026-04-20 10:05 | ACTION   | Post-deploy: ap_sync_prod.py 9/9 OK. error_log clean 30s post-deploy. Sparse-layout check hit Sheets 429 rate-limit (non-blocking — verified clean at 09:06 prior run).
+2026-04-20 10:05 | ACTION   | Task Log updated: T-267→Deploy=DEPLOYED, Branch="main (3dcff85)"; T-268/T-269/T-270→Deploy=DEPLOYED, Branch="main (5a30b2d)". Self-contained comments appended (PROD commit + verification).
+2026-04-20 10:05 | STATE    | origin/main=5a30b2d (T-268+T-269+T-270), origin/dev=e1c4fa4 (docs). T-267/T-268/T-269/T-270 all on PROD. DISCUSSION — awaiting Mikhail CLOSE. T-253/T-256/T-257/T-258/T-259/T-260/T-261 also DISCUSSION awaiting CLOSE.
+2026-04-20 10:05 | NEXT     | Apps Script archiveClosed container-bound redeploy (T-267 touches apps_script/task_log_automation.js) — Mikhail must open Extensions > Apps Script and Deploy manually when convenient. Not blocking: old auto-set path is write-then-overwrite. Await Mikhail CLOSE-out on T-267/T-268/T-269/T-270.
