@@ -1047,6 +1047,39 @@ def test_t270_oil_fuel_alias():
     return True
 
 
+@test("6.6 T-271: Mix Markt + IT grocery chains → Groceries")
+def test_t271_mix_markt_groceries_alias():
+    """Regression for PROD row 159: 'MIX MARKT ITALIA SRL' had empty Subcategory
+    despite Category=Food. Tokens [mix, markt, italia, srl] matched no alias.
+    Added markt/mixmarkt + IT chains (Eurospin/Penny/Todis/Iper/Famila/Despar/
+    Crai/NaturaSì) + generic IT shop types (supermercato/alimentari/panetteria/
+    pescheria/latteria/drogheria/minimarket).
+    """
+    from tools import transactions as tt
+    known_subs = ["Fuel", "Parking", "Groceries", "Taxi", "Cafes", "Restaurants"]
+    # T-271 root-cause case
+    assert tt._infer_subcategory("MIX MARKT ITALIA SRL", known_subs) == "Groceries"
+    # IT grocery chains now covered by fallback
+    for merchant in (
+        "EUROSPIN TORINO", "PENNY MARKET MILANO", "TODIS ROMA",
+        "IPER LA GRANDE I", "FAMILA SUPERSTORE", "DESPAR CENTRO",
+        "CRAI PINO TORINESE", "NATURASI BIO",
+    ):
+        assert tt._infer_subcategory(merchant, known_subs) == "Groceries", (
+            f"{merchant} must resolve to Groceries via T-271 aliases"
+        )
+    # Generic IT shop types
+    for shop in (
+        "SUPERMERCATO CONAD", "ALIMENTARI DA MARIO",
+        "PANETTERIA SAN GIUSEPPE", "PESCHERIA DEL PORTO",
+        "LATTERIA CENTRALE", "DROGHERIA MODERNA", "MINIMARKET 24H",
+    ):
+        assert tt._infer_subcategory(shop, known_subs) == "Groceries", (
+            f"{shop} must resolve to Groceries via T-271 aliases"
+        )
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────

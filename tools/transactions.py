@@ -224,6 +224,18 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "kiosco": "Snacks", "kiosk": "Snacks", "bar": "Cafes",
     "sapori": "Groceries", "bontà": "Groceries", "delizia": "Groceries",
     "ortofrutta": "Groceries", "macelleria": "Groceries",
+    # T-271: Mix Markt (DE/RU chain in IT) + more IT grocery chains/generic terms.
+    # Previous gap: 'MIX MARKT ITALIA SRL' on PROD got empty Subcategory because
+    # tokens [mix, markt, italia, srl] matched no alias. Added markt/mixmarkt plus
+    # common IT supermarket chains and food-shop types so fallback catches them
+    # even when the LLM agent forgets to set subcategory in items[].
+    "markt": "Groceries", "mixmarkt": "Groceries",
+    "supermercato": "Groceries", "alimentari": "Groceries",
+    "eurospin": "Groceries", "penny": "Groceries", "todis": "Groceries",
+    "iper": "Groceries", "famila": "Groceries", "despar": "Groceries",
+    "crai": "Groceries", "naturasi": "Groceries", "in's": "Groceries",
+    "panetteria": "Groceries", "pescheria": "Groceries", "latteria": "Groceries",
+    "drogheria": "Groceries", "minimarket": "Groceries",
     "airbnb": "Hotel", "booking": "Hotel", "hotel": "Hotel",
     "rituals": "Personal Care", "kiko": "Personal Care", "mac": "Personal Care",
     "school": "Tuition", "scuola": "Tuition", "university": "Tuition",
