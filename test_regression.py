@@ -1047,6 +1047,57 @@ def test_t270_oil_fuel_alias():
     return True
 
 
+@test("6.7 T-272: add_transaction retries on workbook open failure")
+def test_t272_add_transaction_retries_workbook_open():
+    """Regression for PROD 2026-04-20 08:22 — 2 UAH transactions lost when
+    env._ws("Transactions") failed to resolve (open_by_key raised) BEFORE
+    entering _sheets_retry. Fix: wrap workbook resolution inside the retry
+    lambda, reset env._wb on each attempt.
+
+    Simulates the failure by monkey-patching env._ws to raise a retryable
+    APIError on first call, then succeed.
+    """
+    import sheets as sheets_mod
+    # Fake gspread APIError class with status_code=429
+    import gspread.exceptions as gexc
+    class FakeResponse:
+        status_code = 429
+    class FakeAPIError(gexc.APIError):
+        def __init__(self):
+            self.response = FakeResponse()
+    # Build a fake EnvelopeSheets whose _ws raises 429 first time, then returns a stub
+    calls = {"ws": 0, "append": 0}
+    class StubWs:
+        def append_row(self, row, **kw):
+            calls["append"] += 1
+            return None
+    class FakeEnv:
+        def __init__(self):
+            self._wb = "dirty"  # simulate stale state from failed attempt
+        def _ws(self, name):
+            calls["ws"] += 1
+            if calls["ws"] == 1:
+                raise FakeAPIError()
+            return StubWs()
+    fake_env = FakeEnv()
+    # Monkey-patch _env_sheets on a throwaway SheetsClient-like object
+    class FakeClient:
+        _cache = type("C", (), {"invalidate": lambda self, k: None})()
+        def _env_sheets(self, sheet_id):
+            return fake_env
+        add_transaction = sheets_mod.SheetsClient.add_transaction
+    client = FakeClient()
+    row = ["2026-01-01", 100.0, "EUR", "Test", "", "Test merchant", "Mikhail",
+           100.0, "expense", "Personal", "test0001", "TEST", "bot", "", "ts", "FALSE"]
+    # Should NOT raise — retry kicks in on the 429
+    tx_id = client.add_transaction("fake_sheet", row)
+    assert tx_id == "test0001"
+    assert calls["ws"] == 2, f"expected 2 _ws calls (1 fail + 1 retry), got {calls['ws']}"
+    assert calls["append"] == 1, f"expected 1 append (on 2nd attempt), got {calls['append']}"
+    assert fake_env._wb is None, "env._wb must be cleared before retry to force fresh open"
+    return True
+
+
 @test("6.6 T-271: Mix Markt + IT grocery chains → Groceries")
 def test_t271_mix_markt_groceries_alias():
     """Regression for PROD row 159: 'MIX MARKT ITALIA SRL' had empty Subcategory
