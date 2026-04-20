@@ -1348,8 +1348,16 @@ class SheetsClient:
             env = self._env_sheets(sheet_id)
             # T-183: wrap with retry — batch writes trigger 429 after ~4 rapid requests
             # T-242: increase retries for append — quota can exhaust mid-batch on 16+ items
-            _sheets_retry(env._ws("Transactions").append_row, row,
-                          max_attempts=3, base_delay=5.0)
+            # T-272: wrap workbook+worksheet resolution inside retry, not just append_row.
+            # Previously `env._ws("Transactions")` was evaluated BEFORE entering _sheets_retry,
+            # so a 429/503 on open_by_key() during a batch escaped the retry entirely and
+            # caused silent data loss (PROD 2026-04-20 08:22 — 2 UAH transactions lost).
+            def _do_append():
+                # Force re-resolve workbook on each attempt: if the previous attempt failed
+                # mid-open, _wb may be in an inconsistent state. Clearing forces a clean open.
+                env._wb = None
+                return env._ws("Transactions").append_row(row)
+            _sheets_retry(_do_append, max_attempts=3, base_delay=5.0)
             return row[10]  # tx_id is at index 10 (col K) in new column order
         return self._env_sheets(sheet_id).add_transaction(row)
 
