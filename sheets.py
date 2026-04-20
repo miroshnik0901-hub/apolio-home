@@ -149,8 +149,10 @@ class AdminSheets:
     # ── Config ────────────────────────────────────────────────────────────
 
     def read_config(self) -> dict:
+        # T-273: wrap READ in _sheets_retry — distinct quota bucket from writes,
+        # called on bot init and envelope_config refresh.
         ws = self._ws("Config")
-        rows = ws.get_all_values()
+        rows = _sheets_retry(ws.get_all_values)
         return {row[0]: row[1] for row in rows if len(row) >= 2 and row[0]}
 
     def write_config(self, key: str, value: str):
@@ -185,10 +187,11 @@ class AdminSheets:
     }
 
     def get_dashboard_config(self) -> dict:
-        """Read DashboardConfig tab from Admin sheet. Falls back to defaults if tab missing."""
+        """Read DashboardConfig tab from Admin sheet. Falls back to defaults if tab missing.
+        T-273: wrap in _sheets_retry — distinct READ quota bucket."""
         try:
             ws = self._ws("DashboardConfig")
-            rows = ws.get_all_values()
+            rows = _sheets_retry(ws.get_all_values)
             cfg = dict(self.DASHBOARD_DEFAULTS)
             cfg.update({row[0]: row[1] for row in rows if len(row) >= 2 and row[0]})
             return cfg
@@ -434,7 +437,8 @@ class EnvelopeSheets:
         # Fallback: derive unique categories from existing transactions
         try:
             ws = self._ws("Transactions")
-            all_values = ws.get_all_values()
+            # T-273: wrap READ in _sheets_retry — distinct quota bucket from writes.
+            all_values = _sheets_retry(ws.get_all_values)
             if not all_values:
                 return []
             headers = all_values[0]
@@ -490,7 +494,8 @@ class EnvelopeSheets:
         # Fallback: derive from transactions (no type info)
         try:
             ws = self._ws("Transactions")
-            all_values = ws.get_all_values()
+            # T-273: wrap READ in _sheets_retry — distinct quota bucket.
+            all_values = _sheets_retry(ws.get_all_values)
             if not all_values:
                 return []
             headers = all_values[0]
@@ -690,9 +695,10 @@ class EnvelopeSheets:
         return True
 
     def get_rows_raw(self, start_row: int, end_row: int) -> list[list]:
-        """Return raw cell values for rows start_row..end_row (1-based) from Transactions."""
+        """Return raw cell values for rows start_row..end_row (1-based) from Transactions.
+        T-273: wrap in _sheets_retry — distinct READ quota bucket from writes."""
         ws = self._ws("Transactions")
-        all_rows = ws.get_all_values()
+        all_rows = _sheets_retry(ws.get_all_values)
         result = []
         for r in range(start_row, end_row + 1):
             if r <= len(all_rows):
