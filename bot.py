@@ -4311,10 +4311,19 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if _is_cross_dup:
                 continue
 
+            # T-274 PRIMARY FIX: plumb agent's explicit per-item subcategory into row-builder.
+            # Root cause: bank-statement loop previously built params WITHOUT subcategory,
+            # so even when agent emitted items[i].subcategory="Fuel" it never reached
+            # tool_add_transaction — row got _infer_subcategory() fallback (note-only alias match).
+            # Evidence: PROD row 162 (CHIERI, "Парковка" in agent's analysis) → Subcategory blank.
+            # Fix: take item.subcategory first, fall back to receipt-level, then empty
+            # (empty triggers merchant-memory + _infer_subcategory chain at transactions.py:603).
+            _item_subcategory = item.get("subcategory") or receipt.get("subcategory", "")
             params = {
                 "amount": item_amount,
                 "currency": receipt.get("currency", "EUR"),
                 "category": item_cat,
+                "subcategory": _item_subcategory,
                 "who": item_who,
                 "date": item_date,
                 "note": item_name,
@@ -4516,10 +4525,13 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 _single_cat = "Top-up"
             elif _single_cat.lower() not in ("top-up", "salary"):
                 _single_cat = "Top-up"  # T-249: "Income" etc → Top-up
+        # T-274: receipt-level subcategory propagated for single-row save path
+        # (same rationale as batch loop: agent's explicit value wins over note-only inference).
         add_params = {
             "amount": receipt.get("total_amount", 0),
             "currency": receipt.get("currency", "EUR"),
             "category": _single_cat,
+            "subcategory": receipt.get("subcategory", ""),
             "who": receipt.get("who") or session.user_name,
             "date": receipt.get("date", ""),
             "note": receipt.get("merchant") or "Multiple merchants",
