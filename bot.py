@@ -3508,6 +3508,19 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # T-254: bump recap counter (cancel)
                 if getattr(session, "_batch_recap_enabled", False):
                     session._batch_recap_cancelled = getattr(session, "_batch_recap_cancelled", 0) + 1
+                    # T-276: append per-item line so final recap shows the full list
+                    try:
+                        _c_amt = float((dup_add_params or {}).get("amount") or 0)
+                    except (TypeError, ValueError):
+                        _c_amt = 0.0
+                    _c_cur = (dup_add_params or {}).get("currency", "") or (receipt or {}).get("currency", "")
+                    _c_note = (receipt or {}).get("merchant", "") or (dup_add_params or {}).get("note", "") or "?"
+                    _c_line = f"✗ {_c_note} · {_c_amt:,.2f} {_c_cur}".rstrip()
+                    _items_acc = getattr(session, "_batch_recap_items", None)
+                    if _items_acc is None:
+                        _items_acc = []
+                        session._batch_recap_items = _items_acc
+                    _items_acc.append(_c_line)
                 # T-192: no early return — fall through to present next queued dup
             else:
                 # ── Update / Add-new ─────────────────────────────────────────
@@ -3567,6 +3580,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         session._batch_recap_updated = getattr(session, "_batch_recap_updated", 0) + 1
                     elif dup_action == "add_new":
                         session._batch_recap_added = getattr(session, "_batch_recap_added", 0) + 1
+                    # T-276: append per-item line — update→↻ marker, add_new→✓ marker
+                    try:
+                        _r_amt = float((dup_add_params or {}).get("amount") or 0)
+                    except (TypeError, ValueError):
+                        _r_amt = 0.0
+                    _r_cur = (dup_add_params or {}).get("currency", "") or (receipt or {}).get("currency", "")
+                    _r_note = (receipt or {}).get("merchant", "") or (dup_add_params or {}).get("note", "") or "?"
+                    _r_mark = "↻" if dup_action == "update" else "✓"
+                    _r_line = f"{_r_mark} {_r_note} · {_r_amt:,.2f} {_r_cur}".rstrip()
+                    _items_acc = getattr(session, "_batch_recap_items", None)
+                    if _items_acc is None:
+                        _items_acc = []
+                        session._batch_recap_items = _items_acc
+                    _items_acc.append(_r_line)
 
                 # Save receipt to PostgreSQL
                 if receipt:
@@ -3667,12 +3694,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     _ru = int(getattr(session, "_batch_recap_updated", 0) or 0)
                     _rc = int(getattr(session, "_batch_recap_cancelled", 0) or 0)
                     _rt = int(getattr(session, "_batch_recap_total", 0) or 0)
-                    _recap = (
+                    # T-276: restore per-item list ("standard scheme") alongside
+                    # the T-254 compact tally. Items come from phase-1 successes
+                    # PLUS each dup resolution (update/add_new/cancel).
+                    _items_acc = getattr(session, "_batch_recap_items", None) or []
+                    _recap_header = (
                         i18n.ts("batch_recap_header", lang) + "\n" +
                         i18n.ts("batch_recap_line", lang).format(
                             added=_ra, updated=_ru, cancelled=_rc, total=_rt,
                         )
                     )
+                    if _items_acc:
+                        _recap = "\n".join(_items_acc) + "\n\n" + _recap_header
+                    else:
+                        _recap = _recap_header
                     await ctx.bot.send_message(
                         chat_id=query.message.chat_id,
                         text=_recap,
@@ -3685,6 +3720,7 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     session._batch_recap_updated = 0
                     session._batch_recap_cancelled = 0
                     session._batch_recap_total = 0
+                    session._batch_recap_items = []
                     session._failed_batch_items = []
                     session._failed_batch_receipt = None
                     session._failed_batch_account = None
@@ -4421,10 +4457,16 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             session._batch_recap_cancelled = 0                 # dup → cancelled by user
             session._batch_recap_total = total_items           # total items in receipt
             session._batch_recap_sent = False
+            # T-276: accumulate per-item lines across phase 1 + dup drain so the
+            # final recap reproduces the "standard scheme" (list of operations),
+            # not only the compact Added/Updated/Cancelled tally.
+            # Phase-1 successes: copy the `added` list already built above.
+            session._batch_recap_items = list(added)
         else:
             # no dup queue → nothing to recap, clear any stale flag
             session._batch_recap_enabled = False
             session._batch_recap_sent = True
+            session._batch_recap_items = []
         # T-192: present cross-currency dup enrichment prompts one by one
         # T-252: add asyncio.sleep + try-except to handle FloodWait after batch sends
         if _pending_cross_dups:
