@@ -910,6 +910,54 @@ async def test_db_connectivity():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 5: Task Log behavior (T-267)
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("\n── SECTION 5: Task Log ─────────────────────────────────────────────────")
+
+
+@test("5.1 T-267: update_task(status='DISCUSSION') does NOT auto-set Deploy=READY")
+def test_t267_no_auto_deploy_ready():
+    """Source-level check: the DISCUSSION→Deploy=READY auto-set has been removed
+    from both task_log.py and apps_script/task_log_automation.js."""
+    tl_src = (ROOT / "task_log.py").read_text()
+    # Old line had: `if status == STATUS_DISCUSSION and not row[COL_DEPLOY - 1].strip():`
+    # followed by `updates[COL_DEPLOY] = DEPLOY_READY`.
+    # The auto-set must be gone.
+    assert "updates[COL_DEPLOY] = DEPLOY_READY" not in tl_src, (
+        "task_log.py still auto-sets Deploy=READY on DISCUSSION transition — "
+        "remove that per T-267"
+    )
+    # Double-check: no line combining STATUS_DISCUSSION with DEPLOY_READY assignment
+    import re
+    bad_pattern = re.compile(
+        r"STATUS_DISCUSSION[^\n]*\n[^\n]*DEPLOY_READY", re.MULTILINE
+    )
+    assert not bad_pattern.search(tl_src), (
+        "task_log.py still contains DISCUSSION→DEPLOY_READY auto-set"
+    )
+    # T-267 marker present in rationale
+    assert "T-267" in tl_src, "task_log.py should carry T-267 rationale comment"
+
+    js_src = (ROOT / "apps_script" / "task_log_automation.js").read_text()
+    assert "deployCell.setValue('READY')" not in js_src, (
+        "apps_script still auto-sets Deploy=READY on DISCUSSION — remove per T-267"
+    )
+    assert "T-267" in js_src, "apps_script should carry T-267 rationale comment"
+    return True
+
+
+@test("5.2 T-267: docstring documents explicit Deploy requirement")
+def test_t267_docstring():
+    tl_src = (ROOT / "task_log.py").read_text()
+    # The module docstring must mention the explicit-deploy rule
+    assert "deploy='N/A'" in tl_src or "deploy=\"N/A\"" in tl_src, (
+        "task_log.py docstring should mention deploy='N/A' for no-code tasks"
+    )
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
 
