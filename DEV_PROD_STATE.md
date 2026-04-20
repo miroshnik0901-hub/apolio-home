@@ -42,13 +42,13 @@
 | T-274 | DISCUSSION | DEPLOYED | on main as `9721c6b` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
 | T-276 | DISCUSSION | DEPLOYED | on main as `a68d1e3` (cherry-picked from dev `287d3bb`). bot.py drain accumulates _batch_recap_items (phase-1 adds + per-dup-resolution lines) and renders above compact T-254 tally. Awaiting Mikhail resolve-status. |
 | T-277 | DISCUSSION | DEPLOYED | on main as `9af2c16` (cherry-picked from dev `a19db6e`). agent.py hint_for_agent hardened + bot.py safety net synthesizes pending_receipt + forces T-076 buttons. Awaiting Mikhail resolve-status. |
-| T-275 | IN PROCESS | — | Agent clarification UX feature. Spec approved 2026-04-20 13:53 (Mikhail "put status to DEPLOY" = advance DISCUSSION → IN PROCESS since no valid DEPLOY status). MVP v1 scope: triggers 1+2, filtered batch, `agent_learning` reuse, `✏️ Other` = select existing CategoryAliases only (no free-text). Next: implement v1 code. |
-| T-256 | DISCUSSION | READY | on dev as `c9991ad`. task_log insert_row(index=2). Awaiting Mikhail GO for PROD cherry-pick. |
-| T-262 | OPEN | — | Unblocked by T-261 PROD deploy 2026-04-20. Ready for retest on @ApolioHomeBot. |
-| T-263 | DISCUSSION | — | Phase 1 prompt refactor (trim -28%, no T-261 dep) awaiting Mikhail GO. Phase 2 unblocked by T-261 in PROD. |
+| T-275 | IN PROCESS | — | Agent clarification UX feature. Mikhail directive 2026-04-20 14:xx: субкатегория менее критична чем Категория — если агент не может легко определить subcategory, пропустить поле (leave blank). RESCOPE: drop subcategory clarify from v1; either narrow to category-only clarify or close entirely. Awaiting Mikhail decision. |
+| T-263 | ON HOLD | — | ApolioHome_Prompt.md revision/split/partial extraction to code (475 lines, 26 KB). On hold per Mikhail. |
 | T-019, T-045, T-059, T-060, T-064 | ON HOLD | — | Mikhail's own backlog, not Claude's concern (confirmed 2026-04-19). |
 
 **Closed on 2026-04-20 11:20 per Mikhail "resolve status of DEPLOYED-GO":** T-271 (Mix Markt), T-272 (workbook retry data-loss fix). All other prior DISCUSSION/DEPLOYED/GO tasks (T-253, T-257–T-261, T-267–T-270) already CLOSED by Mikhail earlier.
+
+**Also CLOSED (as of 2026-04-20):** T-256 (task_log insert_row, closed 4/19), T-262 (PROD vs TEST Privatbank screen, closed 4/20). Earlier entries claiming OPEN/DISCUSSION were stale.
 
 **Deploy-state sync note (2026-04-20 13:53):** During the T-276/T-277 push, discovered a stale local `origin/main` ref (showed `9721c6b`) while true remote was at `dc771cd`. `git ls-remote origin main` returned the correct SHA; `git fetch origin` silently skipped the ref update. Worked around with explicit `git fetch origin main:refs/remotes/origin/main`. Prior session's claim that `dc771cd` was pushed at 12:45 is CONFIRMED correct — only the local ref was stale.
 
