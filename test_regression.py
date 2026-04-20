@@ -958,6 +958,96 @@ def test_t267_docstring():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 6: T-268/T-269/T-270 i18n + subcategory fixes (2026-04-20)
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("\n── SECTION 6: i18n + subcategory (T-268/T-269/T-270) ───────────────────")
+
+
+@test("6.1 T-268: bulk-add summary keys exist for all 4 languages")
+def test_t268_bulk_add_i18n():
+    import i18n
+    for key in ("bulk_added_header", "bulk_cross_dups_pending", "bulk_failed_header"):
+        for lang in ("ru", "uk", "en", "it"):
+            txt = i18n.ts(key, lang)
+            assert txt, f"{key}[{lang}] missing"
+            assert "MISSING" not in txt.upper(), f"{key}[{lang}] is MISSING stub"
+    # ru variant must NOT contain UK-specific 'Додано' spelling
+    ru_header = i18n.ts("bulk_added_header", "ru").format(added=4, total=4)
+    assert "Добавлено" in ru_header, f"ru bulk_added_header wrong: {ru_header}"
+    assert "Додано" not in ru_header, "ru variant still contains UK 'Додано'"
+    return True
+
+
+@test("6.2 T-268: bot.py no longer contains hardcoded UK 'Додано {n}/{m}:' literal")
+def test_t268_no_hardcoded_bulk_summary():
+    src = (ROOT / "bot.py").read_text()
+    # The exact hardcoded pattern that was reported in T-262 screenshot.
+    assert "Додано {total_added}/{total_items}" not in src, (
+        "bot.py still has hardcoded UK 'Додано N/M' — should use i18n.bulk_added_header"
+    )
+    assert "⚠️ Потенційних дублікатів: {len(_pending_cross_dups)}" not in src, (
+        "bot.py still has hardcoded UK cross-dups warning — use i18n.bulk_cross_dups_pending"
+    )
+    assert 'f"\\n⚠️ Не вдалося ({len(failed)}):"' not in src, (
+        "bot.py still has hardcoded UK 'Не вдалося' — use i18n.bulk_failed_header"
+    )
+    return True
+
+
+@test("6.3 T-269: bal_contributed i18n key exists for all 4 languages")
+def test_t269_bal_contributed_key():
+    import i18n
+    expected = {"ru": "внесено", "uk": "внесено", "en": "contributed", "it": "versato"}
+    for lang, want in expected.items():
+        got = i18n.ts("bal_contributed", lang)
+        assert got == want, f"bal_contributed[{lang}] = '{got}', want '{want}'"
+    return True
+
+
+@test("6.4 T-269: bot.py balance line carries currency on contrib (no bare '{contrib:,.0f}')")
+def test_t269_contrib_has_currency():
+    src = (ROOT / "bot.py").read_text()
+    # The old pattern ended the contrib value without {cur}. Now every contrib
+    # display line inside the cumulative-balance block must carry {cur} right
+    # after the formatted contrib number.
+    bad = "внесено {contrib:,.0f}"
+    assert bad not in src, (
+        f"bot.py still has '{bad}' without currency — add ' {{cur}}' per T-269"
+    )
+    # hardcoded ru literal "внесено" must be gone from bot.py (only valid source
+    # is i18n.bal_contributed). Note: we search for unquoted Cyrillic "внесено"
+    # used as a display literal in an f-string — by now it should only appear
+    # inside the i18n dict key (in i18n.py), not in bot.py.
+    # But we allow occurrences inside a `_needs_lbl` etc. fallback — just forbid
+    # the specific "· внесено {contrib" pattern that was the bug site.
+    assert "· внесено {contrib" not in src, (
+        "bot.py still contains '· внесено {contrib' — use i18n.bal_contributed"
+    )
+    return True
+
+
+@test("6.5 T-270: _infer_subcategory matches 'oil' and IT fuel brands → Fuel")
+def test_t270_oil_fuel_alias():
+    from tools import transactions as tt
+    known_subs = ["Fuel", "Parking", "Groceries", "Taxi", "Cafes"]
+    # The T-262 bug case
+    assert tt._infer_subcategory("COLDI OIL SERVICE SAS DI,SANREMO,IT", known_subs) == "Fuel"
+    # generic oil token
+    assert tt._infer_subcategory("SHELL OIL 42", known_subs) == "Fuel"
+    # IT brands newly added
+    for brand in ("ERG STATION MILANO", "API STAZIONE", "BEYFIN PISTOIA", "REPSOL MADRID"):
+        assert tt._infer_subcategory(brand, known_subs) == "Fuel", (
+            f"{brand} should resolve to Fuel via T-270 aliases"
+        )
+    # RU/UK tokens
+    assert tt._infer_subcategory("АЗС ОККО КИЇВ", known_subs) == "Fuel"
+    # Negative control — must not mis-classify
+    assert tt._infer_subcategory("TESCO SUPERMARKET", known_subs) == "Groceries"
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
 

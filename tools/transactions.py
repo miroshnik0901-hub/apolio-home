@@ -246,9 +246,15 @@ _CATEGORY_ALIASES: dict[str, str] = {
     # Transport
     "gas": "Fuel", "petrol": "Fuel", "gasoline": "Fuel",
     "бензин": "Fuel", "паливо": "Fuel", "заправка": "Fuel",
-    "fuel station": "Fuel", "gas station": "Fuel",
+    "fuel station": "Fuel", "gas station": "Fuel", "petrol station": "Fuel",
+    # T-270: "oil" is a common token in IT fuel-station names (e.g. COLDI OIL SERVICE
+    # SANREMO). Prior to this change, such notes got no subcategory because no token
+    # matched the Fuel alias set. Also added IT brands Erg, Api, Beyfin.
+    "oil": "Fuel", "olio": "Fuel", "coldi": "Fuel",
     "esso": "Fuel", "shell": "Fuel", "agip": "Fuel", "ip": "Fuel",
     "tamoil": "Fuel", "q8": "Fuel", "eni": "Fuel",
+    "erg": "Fuel", "api": "Fuel", "beyfin": "Fuel", "repsol": "Fuel",
+    "азс": "Fuel", "заправочная": "Fuel",
     "паркінг": "Parking", "парковка": "Parking", "parking lot": "Parking",
     "метро": "Public Transport", "metro": "Public Transport",
     "bus": "Public Transport", "автобус": "Public Transport",
