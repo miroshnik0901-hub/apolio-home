@@ -5501,6 +5501,87 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+    # ── T-277 safety net: aggregate_bank_statement without present_options ──
+    # If agent called aggregate_bank_statement (marker set on session) but then
+    # skipped store_pending_receipt and/or present_options, we'd render a dead-end
+    # plain-text reply ("Записати?") with no buttons — the T-265 regression bug.
+    # Belt-and-braces: detect the marker, synthesize pending_receipt from the
+    # stashed fact_expense_rows if needed, and force the standard T-076 buttons.
+    try:
+        _agg_items = getattr(session, "_aggregate_pending_items", None)
+        _agg_total = getattr(session, "_aggregate_pending_total", None)
+        _agg_currency = getattr(session, "_aggregate_pending_currency", None)
+        _pc_pre = getattr(session, "pending_choice", None)
+        if _agg_items and not _pc_pre and response:
+            logger.warning(
+                "T-277: agent skipped present_options after aggregate_bank_statement — "
+                "injecting T-076 buttons (n=%d, total=%s %s)",
+                len(_agg_items), _agg_total, _agg_currency,
+            )
+            # Build synthetic pending_receipt if store_pending_receipt was also skipped.
+            if not getattr(session, "pending_receipt", None):
+                _items_built = []
+                _first_date = ""
+                _first_merchant = ""
+                for _row in _agg_items:
+                    _desc = (_row.get("description") or _row.get("merchant")
+                             or _row.get("note") or "").strip()
+                    _amt = _row.get("amount") or 0
+                    _row_date = (_row.get("date") or "").strip()
+                    _row_cur = (_row.get("currency") or _agg_currency or "").strip()
+                    _items_built.append({
+                        "name": _desc,
+                        "merchant": _desc,
+                        "amount": _amt,
+                        "date": _row_date,
+                        "currency": _row_cur,
+                    })
+                    if not _first_date and _row_date:
+                        _first_date = _row_date
+                    if not _first_merchant and _desc:
+                        _first_merchant = _desc
+                session.pending_receipt = {
+                    "merchant": _first_merchant,
+                    "date": _first_date,
+                    "total_amount": float(_agg_total or 0),
+                    "currency": _agg_currency or "EUR",
+                    "category": "",        # agent didn't enrich — let user confirm default
+                    "subcategory": "",
+                    "who": session.user_name,
+                    "items": _items_built,
+                    "tg_file_id": media_file_id or "",
+                    "ai_summary": response[:500],
+                    "raw_text": response[:1000],
+                }
+                session.pending_delete_tx = None
+                session._bulk_delete_ids = None
+                session._split_mode_chosen = False
+                session._pending_split_account = None
+                logger.info(
+                    "T-277: synthetic pending_receipt built (n=%d, total=%s %s)",
+                    len(_items_built), _agg_total, _agg_currency,
+                )
+            _t076_labels = {
+                "ru": ("✅ Да. Общий счёт", "✅ Да. Личный счёт", "✏️ Исправить", "❌ Отменить"),
+                "uk": ("✅ Так. Загальний рахунок", "✅ Так. Особистий рахунок", "✏️ Виправити", "❌ Скасувати"),
+                "en": ("✅ Yes. Joint account", "✅ Yes. Personal account", "✏️ Edit", "❌ Cancel"),
+                "it": ("✅ Sì. Conto comune", "✅ Sì. Conto personale", "✏️ Correggere", "❌ Annulla"),
+            }
+            _labels = _t076_labels.get(lang, _t076_labels["ru"])
+            session.pending_choice = [
+                {"label": _labels[0], "value": "yes_joint"},
+                {"label": _labels[1], "value": "yes_personal"},
+                {"label": _labels[2], "value": "correct"},
+                {"label": _labels[3], "value": "cancel"},
+            ]
+            session._receipt_buttons_shown = True
+        # Consume markers either way — one aggregate call → one safety-net pass.
+        session._aggregate_pending_items = None
+        session._aggregate_pending_total = None
+        session._aggregate_pending_currency = None
+    except Exception:
+        logger.exception("T-277: safety net failed — continuing with existing button logic")
+
     # ── BUG-010 + button rendering — wrapped in safety net ──────────────
     # If anything here crashes, the user at least gets the text response.
     try:

@@ -1829,6 +1829,11 @@ class ApolioAgent:
         # Mark receipt buttons as shown to prevent BUG-010 from duplicating them
         if has_receipt_btn:
             session._receipt_buttons_shown = True
+            # T-277: agent correctly called present_options after aggregate — clear marker
+            # so the bot-level safety net does NOT fire a second set of buttons.
+            session._aggregate_pending_items = None
+            session._aggregate_pending_total = None
+            session._aggregate_pending_currency = None
 
         # BUG-008 FIX: If this is a delete confirmation, store the tx_id
         # so cb_choice_ handler can execute deletion deterministically
@@ -2134,7 +2139,21 @@ class ApolioAgent:
             return {"error": f"aggregation failed: {e}"}
 
         s = result["summary"]
+        # T-277: Session marker for the bot-level safety net.
+        # If agent skips store_pending_receipt / present_options below, bot.py will
+        # detect this marker after agent.run() returns and force-inject T-076 buttons.
+        # Keep raw fact_expense_rows so synthesis can build items[] without re-aggregating.
+        fact_rows = result.get("fact_expense_rows", []) or []
+        try:
+            session._aggregate_pending_items = fact_rows
+            session._aggregate_pending_total = float(s.get("total_expenses") or 0)
+            session._aggregate_pending_currency = s.get("currency") or ""
+        except Exception:
+            # SessionContext should always accept attribute writes; fail open if not.
+            logger.exception("T-277: failed to stash aggregate markers on session")
+
         # Compact hint so LLM uses these numbers verbatim instead of recounting.
+        # T-277: hardened — MANDATE the next-tool chain. No plain-text question allowed.
         result["hint_for_agent"] = (
             f"Use these numbers VERBATIM — do NOT recount or re-sum. "
             f"Fact expenses: {s['expense_count']} rows, total {s['total_expenses']} {s['currency']}. "
@@ -2142,6 +2161,15 @@ class ApolioAgent:
             f"Preauth/cancellation pairs matched: {s['matched_pairs_count']} (net 0). "
             f"Unmatched preauth: {len(result['unmatched_preauth'])} (counted as expense). "
             f"Unmatched cancellation: {len(result['unmatched_cancellation'])} (counted as refund). "
-            f"Respond in the USER's language. If warnings present, mention the ANOMALIES briefly."
+            f"\n\n*** MANDATORY NEXT STEPS — NO EXCEPTIONS, NO PLAIN-TEXT QUESTION ***\n"
+            f"  (1) Call `store_pending_receipt` with items[] built VERBATIM from fact_expense_rows "
+            f"(exclude preauth/cancellation/matched-debit rows — only fact_expense_rows). "
+            f"total_amount={s['total_expenses']}, currency={s['currency']}.\n"
+            f"  (2) Call `present_options` with the T-076 confirmation buttons: "
+            f"yes_joint (Joint account), yes_personal (Personal account), correct (Edit), cancel. "
+            f"Localize labels to the USER's language.\n"
+            f"You are FORBIDDEN from replying 'Записати?' / 'Добавить?' / 'Save?' in plain text without "
+            f"calling present_options. Inline buttons are MANDATORY after aggregation. "
+            f"If warnings present, mention the ANOMALIES briefly in the user-facing text that accompanies the buttons."
         )
         return result
