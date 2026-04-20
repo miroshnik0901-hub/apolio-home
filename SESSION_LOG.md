@@ -69,3 +69,9 @@
 2026-04-20 09:07 | ACTION   | Task Log: T-264/T-265/T-266 → Status=CLOSED, Branch=main, Deploy=DEPLOYED with self-contained deploy-detail comments.
 2026-04-20 09:07 | STATE    | origin/main=3bad49e, origin/dev=517229a. Content parity reached for T-261/T-264/T-265/T-266 scope. Dev still has audit refactors + apps_script + AP_FILE_NAMING ahead (awaiting their own GOs).
 2026-04-20 09:07 | NEXT     | Monitor Railway PROD logs for import/runtime errors. Smoke-test a bank-statement photo on @ApolioHomeBot when Mikhail is next active. Proactively ask Mikhail to retroactively set T-261 Confirm=GO (or acknowledge the implicit promotion) so the audit trail is clean.
+
+2026-04-20 10:10 | ACTION   | T-267 created + implemented on dev as c19fc1c. Removed auto-set Deploy=READY on DISCUSSION transition from task_log.py (lines 246-248) and apps_script/task_log_automation.js (line 59). Root cause: diagnostic/docs/research tasks (T-262 today) have no code — Deploy=N/A is correct; auto-setting READY forced manual correction every time.
+2026-04-20 10:10 | ACTION   | test_regression.py SECTION 5 added: 5.1 verifies auto-set code removed from both files; 5.2 verifies docstring documents explicit-Deploy rule. Full suite 49/49 pass.
+2026-04-20 10:10 | DECISION | Comment tag "T-117" in the removed auto-set block was a mistag — T-117 is about Resolved At/Topic, not Deploy. Cleaned up along with the auto-set removal.
+2026-04-20 10:10 | STATE    | origin/dev=c19fc1c, origin/main=3bad49e. T-267 in Task Log: Status=DISCUSSION, Deploy=READY, Branch=dev. Awaiting Mikhail Confirm=GO.
+2026-04-20 10:10 | NEXT     | Await GO on T-267 for PROD cherry-pick. No other autonomous action — dogfood of new behavior successful (update_task explicit deploy= works, no auto-set interference).
