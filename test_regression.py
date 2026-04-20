@@ -1131,6 +1131,52 @@ def test_t271_mix_markt_groceries_alias():
     return True
 
 
+@test("6.9 T-273: enrich_transaction 429 → friendly i18n + error_type, no raw JSON")
+def test_t273_enrich_friendly_429():
+    """Regression for PROD 2026-04-20 09:45 UTC: 429 ReadRequestsPerMinutePerUser
+    inside update_transaction_fields bubbled up as 'Sheets write failed: <huge
+    HttpError JSON>' to user. Now must:
+      1. Return friendly i18n message ('Google Sheets перегружен...').
+      2. Set error_type='sheets_429' so caller can branch on it.
+      3. Strip raw '429', 'Quota exceeded', 'Sheets write failed' from message.
+    Also bumps retry budget on get_all_values inside edit_transaction_fields
+    (max_attempts=3, base_delay=5.0) — verified by reading sheets.py source.
+    """
+    import inspect
+    from tools import transactions as tt
+    from sheets import SheetsClient
+    src = inspect.getsource(tt.tool_enrich_transaction)
+    # Code-level checks (the live integration test ran outside regression suite,
+    # see commit message — regression here verifies the source paths exist).
+    assert "sheets_busy" in src and "sheets_unavailable" in src, (
+        "T-273: enrich_transaction must reference both i18n keys"
+    )
+    assert "sheets_429_read" in src or "sheets_429" in src, (
+        "T-273: enrich_transaction must emit a 429-specific error_type"
+    )
+    assert "log_error" in src, (
+        "T-273: enrich_transaction must persist 429 to error_log"
+    )
+    # i18n keys exist in all 4 langs
+    from i18n import SYS
+    for k in ("sheets_busy", "sheets_unavailable"):
+        for lang in ("ru", "uk", "en", "it"):
+            assert SYS.get(k, {}).get(lang), f"T-273: i18n[{k}][{lang}] missing"
+    # sheets.py read-path retry budget bumped
+    import sheets as _sh_mod
+    sh_src = inspect.getsource(_sh_mod.EnvelopeSheets.edit_transaction_fields)
+    assert "max_attempts=3" in sh_src and "base_delay=5.0" in sh_src, (
+        "T-273: edit_transaction_fields read must use bumped retry budget"
+    )
+    # Old leaky message string is gone from RETURNED dict, not just from
+    # docstring comments (the old line was: return {"error": f"Sheets write
+    # failed: {e}"} — must no longer exist as an f-string return value).
+    assert 'f"Sheets write failed:' not in src, (
+        "T-273: legacy 'Sheets write failed: {e}' f-string return must be removed"
+    )
+    return True
+
+
 @test("6.8 T-274: car-wash + bare 'parking' aliases + bigram matching")
 def test_t274_carwash_parking_bigrams():
     """Regression for PROD row 162 (CHIERI, edffad68): empty Subcategory despite
