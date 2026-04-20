@@ -56,10 +56,10 @@ function onEdit(e) {
         resolvedCell.setValue(new Date());
         resolvedCell.setNumberFormat('yyyy-mm-dd hh:mm');
       }
-      // T-117: auto-set Deploy=READY when moving to DISCUSSION (if empty)
-      if (val === 'DISCUSSION' && !deployCell.getValue()) {
-        deployCell.setValue('READY');
-      }
+      // T-267 (2026-04-20): Deploy is NOT auto-set on DISCUSSION anymore.
+      // Diagnostic/docs/research tasks have no code and must stay Deploy=N/A;
+      // auto-setting READY forced Claude to correct every such case manually.
+      // Explicit Deploy value must be set by Claude via update_task(deploy=...).
     } else if (val === 'OPEN' || val === 'IN PROCESS' || val === 'ON HOLD') {
       resolvedCell.clearContent();
     }

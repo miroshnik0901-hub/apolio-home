@@ -6,10 +6,14 @@ Tab:   task_log
 Cols:  ID | Date | Task | Status | Apolio Comment | Branch | Resolved At | Topic | Deploy | Confirm
 
 Deploy values (col I, set by Claude):
-    N/A      — task doesn't require a deploy
+    N/A      — task doesn't require a deploy (diagnostic / docs / research — no code)
     READY    — code ready, waiting for Mikhail's GO
     DEPLOYED — pushed to main, Railway deployed
     FAILED   — deploy attempted but failed
+
+⚠️ Deploy must be set EXPLICITLY on every update_task. No auto-value on status
+transitions (T-267, 2026-04-20). For tasks with no code deliverable always pass
+deploy='N/A'; for code tasks ready for main push pass deploy='READY'.
 
 Confirm values (col J, set by Mikhail):
     GO       — approved to push TO MAIN (PROD)
@@ -243,9 +247,11 @@ class TaskLog:
                         updates[COL_RESOLVED] = resolved_at or datetime.now().strftime("%Y-%m-%d %H:%M")
                     elif status in {STATUS_OPEN, STATUS_IN_PROCESS, STATUS_ON_HOLD}:
                         updates[COL_RESOLVED] = ""
-                    # T-117: auto-set Deploy=READY when moving to DISCUSSION (if empty)
-                    if status == STATUS_DISCUSSION and not row[COL_DEPLOY - 1].strip():
-                        updates[COL_DEPLOY] = DEPLOY_READY
+                    # T-267 (2026-04-20): Deploy is NOT auto-set on DISCUSSION.
+                    # Previous auto-set (DISCUSSION + empty Deploy → READY) was wrong:
+                    # diagnostic/docs/research tasks have no code to deploy and must
+                    # carry Deploy=N/A. Caller must pass `deploy=` explicitly —
+                    # READY for code tasks ready for PROD push, N/A for no-code tasks.
                 if comment is not None:
                     updates[COL_COMMENT] = comment
                 if branch is not None:
