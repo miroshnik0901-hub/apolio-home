@@ -4,7 +4,7 @@
 
 ---
 
-## Current State (2026-04-20 11:25)
+## Current State (2026-04-20 12:15)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
 **origin/main:** `2cd9257` — T-272: wrap workbook open in _sheets_retry (data loss fix).
@@ -13,12 +13,14 @@
 **Post-deploy sync (2026-04-20 11:20):** `scripts/sync_prod_after_deploy.py` 9/9 OK. Transactions sparse layout OK (161 rows at 2-162, gap≤0). FX_Rates 12 rows. No #REF! in Summary.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `257942e` — docs(T-272): DEV_PROD_STATE + SESSION_LOG. T-272 code=`2ec22c0` (now on main as `2cd9257`). Previous: `da821ec` (docs T-271), `b0c65d1` (PROD deploy docs 04-20 09:57), `e1c4fa4` (docs), `72d0ea1` (T-268+T-269+T-270).
+**origin/dev:** `0c7c0ae` — T-273: enrich_transaction 429 → friendly i18n + error_log instead of raw JSON. Prev: `961bc32` (T-274 car-wash aliases + bigram + prompt), `257942e` (docs T-272), `2ec22c0` (T-272 fix — now on main as `2cd9257`).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
+| `0c7c0ae` | T-273 | enrich_transaction 429 → i18n friendly msg + error_log persistence + retry budget bumped (sheets.py get_all_values max_attempts=3/delay=5s) | READY — awaiting GO |
+| `961bc32` | T-274 | tools/transactions: car-wash aliases (мойка/мийка/lavaggio/carwash → Fuel) + bare `parking` + bigram pass in _infer_subcategory. agent.py items[] schema now documents subcategory. ApolioHome_Prompt rule: prose subcategory MUST equal items[i].subcategory | READY — awaiting GO |
 | `e1c4fa4` | — | docs: DEV_PROD_STATE + SESSION_LOG rotate | no task — docs only |
 | `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
@@ -29,10 +31,13 @@
 | `0be0234` | AP_FILE_NAMING | scripts/ + mcp/sheets_mcp.py renamed ap_* | no linked task — tooling-only |
 | `c9991ad` | T-256 | task_log insert_row(index=2) — new tasks above CLOSED block | DISCUSSION — no Confirm=GO yet |
 
-**OPEN / DISCUSSION tasks in Task Log (as of 2026-04-20 11:25 — all prior DISCUSSION+DEPLOYED+GO closed by Mikhail's "resolve status of DEPLOYED-GO"):**
+**OPEN / DISCUSSION tasks in Task Log (as of 2026-04-20 12:15):**
 
 | Task ID | Status | Deploy | Blocker |
 |---------|--------|--------|---------|
+| T-273 | OPEN | READY | on dev as `0c7c0ae`. enrich_transaction 429 friendly message + error_log. Awaiting Mikhail GO for PROD cherry-pick. |
+| T-274 | OPEN | READY | on dev as `961bc32`. Subcategory plumbing (car-wash/parking/bigram/items-schema). Awaiting Mikhail GO. |
+| T-275 | DISCUSSION | — | Agent clarification UX feature. Design spec written into Apolio Comment (2026-04-20 11:55). MVP slice: triggers 1+2, filtered batch, `agent_learning` reuse. Awaiting Mikhail spec review. |
 | T-256 | DISCUSSION | READY | on dev as `c9991ad`. task_log insert_row(index=2). Awaiting Mikhail GO for PROD cherry-pick. |
 | T-262 | OPEN | — | Unblocked by T-261 PROD deploy 2026-04-20. Ready for retest on @ApolioHomeBot. |
 | T-263 | DISCUSSION | — | Phase 1 prompt refactor (trim -28%, no T-261 dep) awaiting Mikhail GO. Phase 2 unblocked by T-261 in PROD. |
