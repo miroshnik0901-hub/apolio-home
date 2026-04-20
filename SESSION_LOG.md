@@ -47,3 +47,12 @@
 2026-04-20 12:35 | STATE   | dev=414fbeb (T-273+T-274 primary + tests). main=2cd9257 (T-272). T-273 READY, T-274 READY, T-275 DISCUSSION.
 2026-04-20 12:35 | NEXT    | On Mikhail GO → scripts/deploy_to_main.sh T-273 && T-274 → scripts/ap_sync_prod.py → verify error_log clean + live test bank-statement with explicit items[i].subcategory on @ApolioHomeBot.
 2026-04-20 12:38 | ACTION  | Staging verify: error_log clean in last 30min (no crashes post push 414fbeb/865e0e7). conversation_log quiet — no active testing, but import-error check passed (bot process alive on Railway staging).
+2026-04-20 12:45 | CHAT    | Mikhail: "GO - check it". Triggered PROD deploy of T-273 + T-274. Confirm=GO set on both tasks in Task Log.
+2026-04-20 12:45 | ACTION  | Cherry-picked 961bc32 → 9721c6b (T-274 secondary), 0c7c0ae → 3913c85 (T-273 secondary), 414fbeb → dc771cd (PRIMARY row-builder + read-path wraps) onto main. Test_regression.py merge conflict resolved (both T-273 and T-274 tests retained). Pushed main 9721c6b → dc771cd.
+2026-04-20 12:45 | TEST    | scripts/ap_sync_prod.py 9/9 OK. PROD Transactions 164 rows at 2-165. PROD error_log clean 30min post-deploy.
+2026-04-20 12:45 | ACTION  | Task Log T-273 + T-274 → Deploy=DEPLOYED, Branch=main, Confirm=GO preserved, Apolio Comment appended with deploy stamp.
+2026-04-20 12:47 | CHAT    | Mikhail: "ошибка ПРОД - нет подсчета итогов в результате добавления - стандартная схема, уже была реализована" + screenshot showing compact T-254 batch recap "📊 Итог: ✅ Добавлено: 3 🔄 Обновлено: 1 ❌ Отменено: 2 (из 6)".
+2026-04-20 12:48 | ACTION  | Created T-276 (Interface, OPEN): bank-statement add result shows compact recap only — per-item bulk_added_header list missing (UX regression vs pre-T-254). Root-cause hypothesis written: cross-dup queue drain path at bot.py:3664 suppresses the per-item summary from bot.py:4374.
+2026-04-20 12:50 | STATE   | main=dc771cd (T-273+T-274 fully deployed). dev=b00432f. T-273 OPEN DEPLOYED, T-274 OPEN DEPLOYED, T-275 DISCUSSION (spec awaiting review), T-276 OPEN (new PROD bug — per-item list missing).
+2026-04-20 12:50 | PENDING | Mikhail: (a) review T-275 spec in Apolio Comment and respond with GO/defer, (b) set Status=CLOSED on T-273/T-274 once verified on PROD, (c) confirm T-276 priority or assign.
+2026-04-20 12:50 | NEXT    | For T-276: start with live trace on staging — send 6-item statement with 1+ cross-dup → confirm which emit path runs → patch bot.py:3664-3690 to also emit bulk_added_header per-item list.

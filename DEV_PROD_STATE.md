@@ -4,13 +4,13 @@
 
 ---
 
-## Current State (2026-04-20 12:35)
+## Current State (2026-04-20 12:50)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**origin/main:** `2cd9257` — T-272: wrap workbook open in _sheets_retry (data loss fix).
-**Status:** ✅ DEPLOYED on 2026-04-20 11:20 via cherry-pick of dev `2ec22c0` onto main=36db8fa → `2cd9257`. Mikhail Confirm=GO set on T-272, authorized via chat "do READY-GO". sync_prod_after_deploy 9/9 OK (Transactions 161 rows at 2-162 incl. backfilled rows 161+162). error_log clean 45s post-deploy. `/sessions/compassionate-exciting-cray/deploy/apolio-t272-main` clone (/tmp was full, relocated).
-**Recent main history:** `2cd9257` T-272 → `36db8fa` T-271 → `5a30b2d` T-268+T-269+T-270 → `3dcff85` T-267 → `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258 → `7cc46e4` T-257 fixup → `0c51f0e` T-257 → `813256e` T-253 → `7b2325e` T-254+T-255.
-**Post-deploy sync (2026-04-20 11:20):** `scripts/sync_prod_after_deploy.py` 9/9 OK. Transactions sparse layout OK (161 rows at 2-162, gap≤0). FX_Rates 12 rows. No #REF! in Summary.
+**origin/main:** `dc771cd` — T-273+T-274 primary layer (row-builder subcategory + 5 more read-path wraps + integration tests).
+**Status:** ✅ DEPLOYED on 2026-04-20 12:45. Three commits cherry-picked onto main=2cd9257: `9721c6b` (T-274 secondary aliases), `3913c85` (T-273 secondary friendly 429 i18n), `dc771cd` (PRIMARY row-builder + read-path wraps). Mikhail Confirm=GO via chat "GO - check it". scripts/ap_sync_prod.py 9/9 OK (Transactions 164 rows at 2-165, gap≤0). PROD error_log clean 30min post-deploy.
+**Recent main history:** `dc771cd` T-273+T-274 primary → `3913c85` T-273 → `9721c6b` T-274 → `2cd9257` T-272 → `36db8fa` T-271 → `5a30b2d` T-268+T-269+T-270 → `3dcff85` T-267 → `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258.
+**Post-deploy sync (2026-04-20 12:45):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout OK (164 rows at 2-165). FX_Rates 12 rows. Summary no #REF!. CategoryAliases 86 aliases, UserAliases 13.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
 **origin/dev:** `414fbeb` — T-273+T-274 PRIMARY LAYER: bot.py:4314/4528 row-builder carries subcategory; sheets.py 5 more _sheets_retry-wrapped READ sites; 2 integration tests added. Prev: `44652c6` (docs), `0c7c0ae` (T-273 secondary), `961bc32` (T-274 aliases secondary), `2ec22c0` (T-272 — now on main as `2cd9257`).
@@ -19,9 +19,9 @@
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
-| `414fbeb` | T-273+T-274 | PRIMARY: bot.py:4314 batch params dict + bot.py:4528 single-row path carry subcategory. sheets.py: 5 more read-path wraps (read_config/get_dashboard_config/get_categories_with_subs/get_accounts_with_types/get_rows_raw) → 12 total _sheets_retry read sites. Added tests/t273_read_retry_selftest.py (5/5) + tests/t274_plumbing_selftest.py (8/8). Regression 58/58. | READY — awaiting GO |
-| `0c7c0ae` | T-273 | enrich_transaction 429 → i18n friendly msg + error_log persistence + retry budget bumped (sheets.py get_all_values max_attempts=3/delay=5s) — secondary layer | READY — awaiting GO |
-| `961bc32` | T-274 | tools/transactions: car-wash aliases (мойка/мийка/lavaggio/carwash → Fuel) + bare `parking` + bigram pass in _infer_subcategory — secondary layer | READY — awaiting GO |
+| `414fbeb` | T-273+T-274 | PRIMARY: bot.py:4314 batch params dict + bot.py:4528 single-row path carry subcategory. sheets.py: 5 more read-path wraps (read_config/get_dashboard_config/get_categories_with_subs/get_accounts_with_types/get_rows_raw) → 12 total _sheets_retry read sites. Added tests/t273_read_retry_selftest.py (5/5) + tests/t274_plumbing_selftest.py (8/8). Regression 58/58. | DEPLOYED as `dc771cd` on main |
+| `0c7c0ae` | T-273 | enrich_transaction 429 → i18n friendly msg + error_log persistence + retry budget bumped (sheets.py get_all_values max_attempts=3/delay=5s) — secondary layer | DEPLOYED as `3913c85` on main |
+| `961bc32` | T-274 | tools/transactions: car-wash aliases (мойка/мийка/lavaggio/carwash → Fuel) + bare `parking` + bigram pass in _infer_subcategory — secondary layer | DEPLOYED as `9721c6b` on main |
 | `e1c4fa4` | — | docs: DEV_PROD_STATE + SESSION_LOG rotate | no task — docs only |
 | `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
@@ -32,12 +32,13 @@
 | `0be0234` | AP_FILE_NAMING | scripts/ + mcp/sheets_mcp.py renamed ap_* | no linked task — tooling-only |
 | `c9991ad` | T-256 | task_log insert_row(index=2) — new tasks above CLOSED block | DISCUSSION — no Confirm=GO yet |
 
-**OPEN / DISCUSSION tasks in Task Log (as of 2026-04-20 12:35):**
+**OPEN / DISCUSSION tasks in Task Log (as of 2026-04-20 12:50):**
 
 | Task ID | Status | Deploy | Blocker |
 |---------|--------|--------|---------|
-| T-273 | OPEN | READY | on dev as `414fbeb` (PRIMARY) + `0c7c0ae` (secondary). 6 READ sites newly wrapped + friendly 429 i18n + error_log. Integration test 5/5. Awaiting Mikhail GO for PROD cherry-pick. |
-| T-274 | OPEN | READY | on dev as `414fbeb` (PRIMARY row-builder plumbing at bot.py:4314/4528) + `961bc32` (secondary aliases). Integration test 8/8. Awaiting Mikhail GO. |
+| T-273 | OPEN | DEPLOYED | on main as `3913c85` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
+| T-274 | OPEN | DEPLOYED | on main as `9721c6b` (secondary) + `dc771cd` (primary). Awaiting Mikhail resolve-status. |
+| T-276 | OPEN | — | NEW bug 2026-04-20 12:45: bank-statement add result shows only compact T-254 recap — per-item bulk_added_header list missing ("стандартная схема" regression). Hypothesis: cross-dup queue drain path at bot.py:3664 suppresses the bulk_added_header emit from bot.py:4374. Pending investigation. |
 | T-275 | DISCUSSION | — | Agent clarification UX feature. Design spec written into Apolio Comment (2026-04-20 11:55). MVP slice: triggers 1+2, filtered batch, `agent_learning` reuse. Awaiting Mikhail spec review. |
 | T-256 | DISCUSSION | READY | on dev as `c9991ad`. task_log insert_row(index=2). Awaiting Mikhail GO for PROD cherry-pick. |
 | T-262 | OPEN | — | Unblocked by T-261 PROD deploy 2026-04-20. Ready for retest on @ApolioHomeBot. |
