@@ -46,3 +46,4 @@
 2026-04-20 12:35 | PENDING | Mikhail review + Confirm=GO for PROD cherry-pick of 414fbeb (carries T-273+T-274 primary). T-275 spec still DISCUSSION, awaiting Mikhail review of clarification UX design.
 2026-04-20 12:35 | STATE   | dev=414fbeb (T-273+T-274 primary + tests). main=2cd9257 (T-272). T-273 READY, T-274 READY, T-275 DISCUSSION.
 2026-04-20 12:35 | NEXT    | On Mikhail GO → scripts/deploy_to_main.sh T-273 && T-274 → scripts/ap_sync_prod.py → verify error_log clean + live test bank-statement with explicit items[i].subcategory on @ApolioHomeBot.
+2026-04-20 12:38 | ACTION  | Staging verify: error_log clean in last 30min (no crashes post push 414fbeb/865e0e7). conversation_log quiet — no active testing, but import-error check passed (bot process alive on Railway staging).
