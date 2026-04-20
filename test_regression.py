@@ -163,6 +163,21 @@ def test_prompt_delete_check():
     return True
 
 
+@test("1.9b T-265: PATH A mandates aggregate → store_pending_receipt → present_options chain")
+def test_prompt_t265_buttons_after_aggregation():
+    src = (ROOT / "ApolioHome_Prompt.md").read_text()
+    # PATH A line must mention all three tools as a chain
+    path_a_lines = [ln for ln in src.splitlines() if "PATH A" in ln and "aggregate_bank_statement" in ln]
+    assert path_a_lines, "PATH A line with aggregate_bank_statement not found in prompt"
+    path_a = path_a_lines[0]
+    assert "store_pending_receipt" in path_a, "PATH A must chain store_pending_receipt after aggregator"
+    assert "present_options" in path_a, "PATH A must chain present_options after store_pending_receipt"
+    # BATCH TRANSACTIONS section must have T-265 rule
+    assert "T-265" in src, "Prompt must reference T-265 rule"
+    assert "MANDATORY buttons after aggregation" in src, "T-265 rule wording missing"
+    return True
+
+
 @test("1.10 i18n: no raw Russian strings in bot.py outside i18n calls")
 def test_no_raw_russian_in_bot():
     src = (ROOT / "bot.py").read_text()
