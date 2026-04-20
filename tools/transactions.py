@@ -1104,8 +1104,51 @@ async def tool_enrich_transaction(params: dict, session: SessionContext,
     try:
         written_cols = sheets.update_transaction_fields(file_id, tx_id, fields_to_write)
     except Exception as e:
-        logger.error(f"enrich_transaction: batch write failed: {e}")
-        return {"error": f"Sheets write failed: {e}"}
+        # T-273: classify the failure and route through error_log + i18n instead
+        # of leaking raw HttpError JSON to the user. PROD evidence 2026-04-20
+        # 09:45 UTC: 429 ReadRequestsPerMinutePerUser bubbled up here as
+        # 'Sheets write failed: <huge json blob>' — misleading (it was actually
+        # a read on get_all_values inside update_transaction_fields) and not
+        # logged to error_log so post-mortem was blind.
+        import logging as _lg
+        _lg.getLogger(__name__).error(
+            f"enrich_transaction: update_transaction_fields raised: {e}", exc_info=True
+        )
+        # Detect rate-limit / unavailable so the user message is right.
+        _err_str = str(e)
+        _is_429 = "429" in _err_str or "RATE_LIMIT" in _err_str.upper() or "quota" in _err_str.lower()
+        _is_503 = "503" in _err_str or "UNAVAILABLE" in _err_str.upper()
+        # Persist to error_log for post-mortem (sync wrapper — enrich_transaction
+        # is called from a sync code path, db.log_error is async).
+        try:
+            import asyncio as _asyncio
+            import db as _db_err
+            import traceback as _tb
+            _coro = _db_err.log_error(
+                error_type=("sheets_429_read" if _is_429
+                             else "sheets_503" if _is_503
+                             else "sheets_enrich_failed"),
+                context=f"enrich_transaction tx_id={tx_id} file_id={file_id} fields={list(fields_to_write.keys())}",
+                traceback_str=_tb.format_exc(),
+                raw_input=str(fields_to_write)[:500],
+                user_id=getattr(session, "user_id", 0),
+                session_id=getattr(session, "session_id", "") or "",
+            )
+            try:
+                _loop = _asyncio.get_running_loop()
+                _loop.create_task(_coro)
+            except RuntimeError:
+                _asyncio.run(_coro)
+        except Exception as _log_err:
+            _lg.getLogger(__name__).warning(f"[T-273] error_log write failed: {_log_err}")
+        # Return a friendly i18n message — NOT raw exception JSON.
+        try:
+            from i18n import ts as _ts
+            _lang = getattr(session, "lang", "ru") or "ru"
+            _msg = _ts("sheets_busy" if _is_429 else "sheets_unavailable", _lang)
+        except Exception:
+            _msg = "⏳ Google Sheets перегружен. Попробуй через минуту."
+        return {"error": _msg, "error_type": ("sheets_429" if _is_429 else "sheets_unavailable")}
 
     if not written_cols:
         logger.warning(f"enrich_transaction: tx_id {tx_id} not found in {file_id}")

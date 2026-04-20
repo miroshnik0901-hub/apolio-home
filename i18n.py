@@ -391,6 +391,20 @@ ADD_PROMPT: dict[str, str] = {
 # ── System messages (errors, confirmations, prompts) ──────────────────────────
 
 SYS: dict[str, dict[str, str]] = {
+    # T-273: Sheets API rate-limit / transient error friendly messages.
+    # Replaces raw HttpError JSON that was leaking to the user (PROD 2026-04-20 09:45).
+    "sheets_busy": {
+        "ru": "⏳ Google Sheets перегружен (лимит запросов). Попробуй ещё раз через минуту — данные не потеряны.",
+        "uk": "⏳ Google Sheets перевантажено (ліміт запитів). Спробуй ще раз через хвилину — дані не втрачено.",
+        "en": "⏳ Google Sheets is rate-limited. Try again in a minute — data is not lost.",
+        "it": "⏳ Google Sheets è sovraccarico (limite richieste). Riprova tra un minuto — i dati non sono persi.",
+    },
+    "sheets_unavailable": {
+        "ru": "⚠️ Google Sheets временно недоступен. Запись не сохранена. Попробуй ещё раз через минуту.",
+        "uk": "⚠️ Google Sheets тимчасово недоступний. Запис не збережено. Спробуй ще раз через хвилину.",
+        "en": "⚠️ Google Sheets is temporarily unavailable. The record was not saved. Try again in a minute.",
+        "it": "⚠️ Google Sheets è temporaneamente non disponibile. Il record non è stato salvato. Riprova tra un minuto.",
+    },
     "access_denied": {
         "ru": "⛔ Доступ запрещён.",
         "uk": "⛔ Доступ заборонено.",

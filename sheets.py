@@ -561,9 +561,18 @@ class EnvelopeSheets:
 
     def edit_transaction_fields(self, tx_id: str, fields: dict) -> list:
         """T-209: Update multiple fields in ONE read + N writes (was N reads + N writes).
-        Returns list of field names that were successfully updated."""
+        Returns list of field names that were successfully updated.
+
+        T-273: bump retry budget on the get_all_values READ — distinct quota
+        bucket from writes (ReadRequestsPerMinutePerUser, 60/min/user). The
+        default max_attempts=2 base_delay=2.0 gave only 2s before raising,
+        which leaked a raw HttpError JSON to the user via 'Sheets write failed'
+        in tools/transactions.py:enrich_transaction. Match the T-272 _do_append
+        budget (3 attempts, 5s base) so reads survive the typical 30-60s quota
+        refill window.
+        """
         ws = self._ws("Transactions")
-        all_vals = _sheets_retry(ws.get_all_values)
+        all_vals = _sheets_retry(ws.get_all_values, max_attempts=3, base_delay=5.0)
         if not all_vals:
             return []
         headers = all_vals[0]
