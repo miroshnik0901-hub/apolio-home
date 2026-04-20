@@ -34,3 +34,15 @@
 2026-04-20 12:16 | NEXT     | Verify @ApolioHomeTestBot staging deploy (Railway dev logs, no import errors, bot responds) → then prompt Mikhail: GO on T-273+T-274 for PROD + review T-275 spec.
 
 2026-04-20 12:16 | ACTION   | SESSION_LOG rotation: old 17477 bytes → logs/SESSION_LOG_ARCHIVE_2026-04-20_12-16.md. New 4577 bytes with STATE/DECISION/PENDING/NEXT carried over verbatim.
+2026-04-20 12:18 | ACTION   | Post-push staging check: error_log 0 rows last 2h. Full import chain (tools.transactions + sheets + i18n + agent + bot) imports cleanly — no SyntaxError/ImportError. Regression 58/58 earlier. conversation_log shows no activity since push (Mikhail hasn't tested TestBot live yet). Railway dev service: no API token available locally to query deploy logs; absence of crash-errors + clean import chain = dev looks healthy.
+2026-04-20 12:18 | ACTION   | Docs commit 44652c6 on dev (DEV_PROD_STATE + SESSION_LOG rotate). Pushed 0c7c0ae..44652c6.
+2026-04-20 12:35 | CHAT    | Mikhail: "T-275T-274T-273 - не проработаны согласно инструкции" → full re-read of CLAUDE.md + task descriptions → identified missing PRIMARY layers for T-273 (only 1 read wrap vs "all READs") and T-274 (row-builder params dict missing subcategory key).
+2026-04-20 12:35 | ACTION  | bot.py:4314 bank-loop params dict now carries _item_subcategory = item.get("subcategory") or receipt.get("subcategory", ""). bot.py:4528 single-row path carries receipt.get("subcategory", "").
+2026-04-20 12:35 | ACTION  | sheets.py: 5 more _sheets_retry wraps on READ sites (read_config, get_dashboard_config, 2× Transactions fallbacks, get_rows_raw). Total 12 wrapped read sites.
+2026-04-20 12:35 | ACTION  | Added tests/t274_plumbing_selftest.py (8/8 pass) and tests/t273_read_retry_selftest.py (5/5 pass). Uses gspread APIError not googleapiclient HttpError — _sheets_retry catches the former.
+2026-04-20 12:35 | TEST    | L1 py_compile ✓, L2 regression 58/58 ✓, T-273 integration 5/5 ✓, T-274 integration 8/8 ✓.
+2026-04-20 12:35 | ACTION  | Commit 414fbeb on dev, pushed to origin/dev. DEV_PROD_STATE updated. Task Log T-273 + T-274 Apolio Comment rewritten per self-contained rule (WHAT/WHY/FILES/TRIED/TEST/NEXT).
+2026-04-20 12:35 | DECISION| Two-layer fix structure for each task: PRIMARY fixes root cause at row-builder / full read-path coverage. SECONDARY (prior commits) adds alias heuristics / single write-path retry. Both layers ship together on GO.
+2026-04-20 12:35 | PENDING | Mikhail review + Confirm=GO for PROD cherry-pick of 414fbeb (carries T-273+T-274 primary). T-275 spec still DISCUSSION, awaiting Mikhail review of clarification UX design.
+2026-04-20 12:35 | STATE   | dev=414fbeb (T-273+T-274 primary + tests). main=2cd9257 (T-272). T-273 READY, T-274 READY, T-275 DISCUSSION.
+2026-04-20 12:35 | NEXT    | On Mikhail GO → scripts/deploy_to_main.sh T-273 && T-274 → scripts/ap_sync_prod.py → verify error_log clean + live test bank-statement with explicit items[i].subcategory on @ApolioHomeBot.
