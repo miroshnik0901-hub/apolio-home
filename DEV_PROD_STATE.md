@@ -4,23 +4,22 @@
 
 ---
 
-## Current State (2026-04-20)
+## Current State (2026-04-20 11:15)
 
 ### 🟢 MAIN (Production) — @ApolioHomeBot
-**origin/main:** `5a30b2d` — T-268+T-269+T-270: i18n cleanups + Fuel aliases.
-**Status:** ✅ DEPLOYED on 2026-04-20 09:57 via 2-commit cherry-pick chain onto main (T-267 → T-268+T-269+T-270). Mikhail Confirm=GO received ("do GO"). ap_sync_prod.py 9/9 OK. error_log clean 30s post-deploy. FUSE /tmp/apolio-main clone + .env GITHUB_PAT.
-**Recent main history:** `5a30b2d` T-268+T-269+T-270 → `3dcff85` T-267 → `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258 → `7cc46e4` T-257 fixup → `0c51f0e` T-257 → `813256e` T-253 → `7b2325e` T-254+T-255.
-**Post-deploy sync (2026-04-20 09:57):** `scripts/ap_sync_prod.py` 9/9 OK. Transactions sparse layout check hit Google Sheets 429 rate limit (benign — was OK at 09:06). FX_Rates 12 rows. No #REF! in Summary.
+**origin/main:** `36db8fa` — T-271: Mix Markt + IT grocery chains → Groceries subcategory.
+**Status:** ✅ DEPLOYED on 2026-04-20 10:55 via single cherry-pick of dev `063dcb8` onto main=5a30b2d → `36db8fa`. Mikhail Confirm=GO set on T-271 ("сам решай и делай" authorization). sync_prod_after_deploy 9/9 OK. error_log clean 45s post-deploy. FUSE /tmp/apolio-t271 clone.
+**Recent main history:** `36db8fa` T-271 → `5a30b2d` T-268+T-269+T-270 → `3dcff85` T-267 → `3bad49e` T-266 → `52b5e20` T-265 → `56bb895` T-264 → `d8d8dc6` T-261+T-264 prompt/JSON → `7ed1632` T-261 follow-up → `e3e3dd9` T-261 → `4c090e5` T-259+T-260+A-011 → `8f62c26` T-258 → `7cc46e4` T-257 fixup → `0c51f0e` T-257 → `813256e` T-253 → `7b2325e` T-254+T-255.
+**Post-deploy sync (2026-04-20 10:55):** `scripts/sync_prod_after_deploy.py` 9/9 OK. Transactions sparse layout OK (159 rows at 2-160, gap≤0). FX_Rates 12 rows. No #REF! in Summary.
 
 ### 🔵 DEV (Staging) — @ApolioHomeTestBot
-**origin/dev:** `063dcb8` — T-271: Mix Markt + IT grocery chains → Groceries. Previous: `b0c65d1` (docs PROD deploy 2026-04-20 09:57), `e1c4fa4` (docs rotate SESSION_LOG), `72d0ea1` (T-268+T-269+T-270, also on main as `5a30b2d`), `da4d110` (T-267 docs), `c19fc1c` (T-267 code, also on main as `3dcff85`).
+**origin/dev:** `2ec22c0` — T-272: wrap workbook open in _sheets_retry (data loss fix). Previous: `da821ec` (docs T-271), `b0c65d1` (PROD deploy docs 04-20 09:57), `e1c4fa4` (docs), `72d0ea1` (T-268+T-269+T-270).
 
 **Commits on dev not yet represented on main (newest → oldest):**
 
 | Commit | Task | Description | Deploy status |
 |--------|------|-------------|---------------|
-| `063dcb8` | T-271 | Mix Markt + IT grocery chains → Groceries (fallback aliases + prompt examples) | DISCUSSION — READY, awaiting Mikhail GO |
-| `b0c65d1` | — | docs: PROD deploy 2026-04-20 09:57 T-267/T-268/T-269/T-270 | no task — docs only |
+| `2ec22c0` | T-272 | sheets.py add_transaction: wrap workbook+worksheet resolution inside _sheets_retry. Regression §6.7. | Deploy=READY, awaiting Confirm=GO |
 | `e1c4fa4` | — | docs: DEV_PROD_STATE + SESSION_LOG rotate | no task — docs only |
 | `da4d110` | T-267 | docs: SESSION_LOG T-267 implementation | no task — docs only |
 | `6b331ba` | — | SESSION_LOG + DEV_PROD_STATE docs | no task — docs only |
@@ -51,7 +50,8 @@
 | T-268 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
 | T-269 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
 | T-270 | DISCUSSION | DEPLOYED | on main as `5a30b2d` (2026-04-20 09:57). Awaiting Mikhail CLOSE. |
-| T-271 | DISCUSSION | READY | on dev as `063dcb8` (2026-04-20 10:xx). PROD row 159 (MIX MARKT ITALIA SRL) backfilled to Subcategory=Groceries. Awaiting Mikhail Confirm=GO for PROD cherry-pick. |
+| T-271 | DISCUSSION | DEPLOYED | on main as `36db8fa` (2026-04-20 10:55). Awaiting Mikhail CLOSE. |
+| T-272 | DISCUSSION | READY | on dev as `2ec22c0`. Fixes silent data loss (PROD 08:22 UTC — 2 UAH tx lost). Backfill already done (rows 161+162). Awaiting Mikhail Confirm=GO for PROD cherry-pick. |
 | T-019, T-045, T-059, T-060, T-064 | ON HOLD | — | Mikhail's own backlog, not Claude's concern (confirmed 2026-04-19). |
 
 ---
