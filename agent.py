@@ -676,7 +676,14 @@ TOOLS = [
                 "items": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Parsed line items from receipt. Each item may include: name, amount, date, who, type, category.",
+                    "description": (
+                        "Parsed line items from receipt/statement. Each item may include: "
+                        "name, amount, date, who, type, category, **subcategory**. "
+                        "T-274: subcategory MUST be set per item when you can classify the merchant — "
+                        "if you mention a subcategory in your reply text (e.g. 'Парковка', 'Fuel'), "
+                        "the same value MUST appear in items[i].subcategory for that row, otherwise "
+                        "it gets dropped on the row write."
+                    ),
                 },
                 "ai_summary": {"type": "string"},
                 "raw_text": {"type": "string", "description": "Raw OCR text from receipt"},

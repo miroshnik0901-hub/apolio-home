@@ -54,15 +54,47 @@ def _infer_subcategory(note: str, known_subs: list, sheets_inst=None) -> str:
         return None
 
     # Pass 1: original lowercased tokens (covers Cyrillic: паркінг, бар...)
-    for word in note.lower().split():
+    tokens_orig = note.lower().split()
+    for word in tokens_orig:
         result = _check_token(word)
+        if result:
+            return result
+
+    # T-274: Pass 1b: bigram matching for multi-word aliases ("car wash",
+    # "fuel station", "parking lot", "fast food"). Without this, multi-word
+    # alias keys in _CATEGORY_ALIASES are dead because the per-token loop
+    # only sees single words.
+    def _check_phrase(phrase):
+        phrase = phrase.strip()
+        if not phrase:
+            return None
+        alias = _CATEGORY_ALIASES.get(phrase)
+        if alias and alias.lower() in known_lower:
+            return known_lower[alias.lower()]
+        return None
+    import re as _re
+    clean_tokens = [_re.sub(r"[^\w]", "", t, flags=_re.UNICODE) for t in tokens_orig]
+    clean_tokens = [t for t in clean_tokens if t]
+    for i in range(len(clean_tokens) - 1):
+        bigram = f"{clean_tokens[i]} {clean_tokens[i+1]}"
+        result = _check_phrase(bigram)
         if result:
             return result
 
     # Pass 2: ASCII-normalized tokens (covers ò→o, é→e...)
     ascii_note = unicodedata.normalize("NFKD", note.lower()).encode("ascii", "ignore").decode()
-    for word in ascii_note.split():
+    ascii_tokens = ascii_note.split()
+    for word in ascii_tokens:
         result = _check_token(word)
+        if result:
+            return result
+
+    # T-274: Pass 2b: ASCII bigrams
+    ascii_clean = [_re.sub(r"[^\w]", "", t, flags=_re.UNICODE) for t in ascii_tokens]
+    ascii_clean = [t for t in ascii_clean if t]
+    for i in range(len(ascii_clean) - 1):
+        bigram = f"{ascii_clean[i]} {ascii_clean[i+1]}"
+        result = _check_phrase(bigram)
         if result:
             return result
 
@@ -267,6 +299,18 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "tamoil": "Fuel", "q8": "Fuel", "eni": "Fuel",
     "erg": "Fuel", "api": "Fuel", "beyfin": "Fuel", "repsol": "Fuel",
     "азс": "Fuel", "заправочная": "Fuel",
+    # T-274: car-wash aliases. Per Mikhail (2026-04-20): мойка/мийка/lavaggio/
+    # autolavaggio/car wash → Fuel (treated under same Transport budget bucket as
+    # fuel rather than its own subcategory). Evidence: PROD row 162 (CHIERI,
+    # edffad68) was mislabeled because agent showed "Парковка" but real merchant
+    # was "Мойка" and no alias caught it → empty Subcategory.
+    "мойка": "Fuel", "мийка": "Fuel", "автомойка": "Fuel", "автомийка": "Fuel",
+    "lavaggio": "Fuel", "autolavaggio": "Fuel",
+    "carwash": "Fuel", "car wash": "Fuel",
+    # T-274: English 'parking' self-map (we had паркінг/парковка/parking lot but
+    # NOT bare 'parking'). 'parking' alone is the most common token in EN
+    # merchant strings.
+    "parking": "Parking",
     "паркінг": "Parking", "парковка": "Parking", "parking lot": "Parking",
     "метро": "Public Transport", "metro": "Public Transport",
     "bus": "Public Transport", "автобус": "Public Transport",
