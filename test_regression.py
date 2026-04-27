@@ -1221,6 +1221,67 @@ def test_t274_carwash_parking_bigrams():
     return True
 
 
+@test("6.10 T-278: store_pending_receipt schema does NOT accept `who`")
+def test_t278_schema_drops_who():
+    """Photo receipts always belong to the session user. The LLM must not be
+    able to override attribution. Bug class: Maryna's 4 receipts on 2026-04-24
+    written as Mikhail because prompt biased LLM to who='Mikhail'."""
+    import re as _re
+    src = open("agent.py").read()
+    m = _re.search(
+        r'"name":\s*"store_pending_receipt".*?"input_schema".*?"properties":\s*\{(.*?)\n\s{12}\}',
+        src,
+        _re.DOTALL,
+    )
+    assert m, "store_pending_receipt schema block not found"
+    props = "\n".join(
+        line for line in m.group(1).split("\n") if not line.strip().startswith("#")
+    )
+    assert '"who"' not in props, (
+        "store_pending_receipt schema must not contain `who` (T-278). "
+        "Remove from schema and rely on session.user_name in receipt_data."
+    )
+    return True
+
+
+@test("6.11 T-278: agent.py + bot.py no longer trust LLM-supplied who for receipts")
+def test_t278_no_llm_who_in_receipt_paths():
+    src_a = open("agent.py").read()
+    assert 'params.get("who", session.user_name' not in src_a, (
+        "agent.py: LLM-supplied who must NOT flow into receipt_data (T-278)"
+    )
+    assert '"who": session.user_name or ""' in src_a, (
+        "agent.py: receipt_data must explicitly use session.user_name (T-278)"
+    )
+    src_b = open("bot.py").read()
+    forbidden = [
+        '"who": receipt.get("who", session.user_name)',
+        '"who": receipt.get("who") or session.user_name',
+        'item.get("who") or receipt.get("who") or session.user_name',
+        'session.user_name or "Mikhail"',
+    ]
+    for f in forbidden:
+        assert f not in src_b, f"bot.py: forbidden pattern still present (T-278): {f}"
+    return True
+
+
+@test("6.12 T-278: ApolioHome_Prompt.md drops `(Mikhail)` identity hardcode")
+def test_t278_prompt_no_mikhail_hardcode():
+    src = open("ApolioHome_Prompt.md").read()
+    assert "use the session user (Mikhail)" not in src, (
+        "Prompt must not hardcode '(Mikhail)' as session-user fallback (T-278). "
+        "Use OMIT-based rule + bot fills from session.user_name."
+    )
+    # Examples must not bake user names
+    bad_examples = [
+        "Продукты · 85 EUR · Mikhail · сегодня",
+        "Food · 38.50 EUR · Mikhail · 09.04 · TAVOLO N.102",
+    ]
+    for be in bad_examples:
+        assert be not in src, f"Prompt example bakes literal user name (T-278): {be!r}"
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────

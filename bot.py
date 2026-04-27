@@ -1442,7 +1442,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     lang = getattr(session, "lang", "en")
-    name = session.user_name or "Mikhail"
+    # T-278: removed "Mikhail" hardcode fallback. session.user_name is always set
+    # at session creation from Admin/Users (resolved via tg_user.id). If empty,
+    # auth is broken and we shouldn't paper over it with a wrong name.
+    name = session.user_name or ""
     msg = i18n.t("", lang, i18n.START_MSG).format(name=name)
 
     # Show welcome with persistent reply keyboard (stays in input bar)
@@ -3536,8 +3539,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         enrich_params["category"] = receipt["category"]
                     if receipt.get("subcategory"):
                         enrich_params["subcategory"] = receipt["subcategory"]
+                    # T-278: receipt.who collapses to session.user_name (LLM no longer
+                    # supplies it via store_pending_receipt schema). enrich path also
+                    # locks contributor to session user — never override existing tx
+                    # contributor based on who's currently confirming a duplicate.
                     if receipt.get("who"):
-                        enrich_params["who"] = receipt["who"]
+                        enrich_params["who"] = session.user_name
                     if dup_account:
                         enrich_params["account"] = dup_account
                     # T-210: store UAH amount info — but NEVER change Currency_Orig of
@@ -3612,7 +3619,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             # enrichment metadata
                             "category": receipt.get("category", ""),
                             "subcategory": receipt.get("subcategory", ""),
-                            "who": receipt.get("who", ""),
+                            # T-278: parsed_data who = session user; receipt.who is
+                            # now also session user, but pin explicitly to make the
+                            # rule visible at every write site.
+                            "who": session.user_name,
                             "account": dup_account or "",
                         }
                         # T-210: include UAH original amount when enriching from non-EUR bank statement
@@ -3847,7 +3857,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "currency": receipt.get("currency", "EUR"),
                     "category": receipt.get("category", "Food"),
                     "subcategory": receipt.get("subcategory", ""),
-                    "who": receipt.get("who", session.user_name),
+                    # T-278: photo receipt → contributor is the session user, period.
+                    # receipt.get("who") is no longer trusted (LLM cannot supply it
+                    # since store_pending_receipt schema dropped the field).
+                    "who": session.user_name,
                     "date": receipt.get("date", ""),
                     "note": receipt.get("merchant", ""),
                     "account": account,
@@ -4236,9 +4249,12 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 item_amount = abs(item_amount)
             item_date = item.get("date") or receipt.get("date") or ""
             item_cat = item.get("category") or receipt.get("category") or "Other"
-            # T-184: per-item who (e.g. "Maryna" vs "Mikhail" in bank statements);
-            # fall back to receipt-level who, then session user
-            item_who = item.get("who") or receipt.get("who") or session.user_name
+            # T-184 + T-278: per-item who (e.g. "Maryna" vs "Mikhail" in bank
+            # statements). aggregate_bank_statement (T-261, pure Python) sets
+            # items[i].who from sender names parsed in Note. Receipt-level who
+            # was removed from the LLM schema in T-278 — no longer consulted.
+            # Fall back to session user when item carries no per-item override.
+            item_who = item.get("who") or session.user_name
             # T-186: if no explicit who, detect from item note using known user list
             # e.g. "From Maryna Maslo" → "Maryna", "From Mikhail" → "Mikhail"
             if not item.get("who") and _known_users:
@@ -4574,7 +4590,9 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "currency": receipt.get("currency", "EUR"),
             "category": _single_cat,
             "subcategory": receipt.get("subcategory", ""),
-            "who": receipt.get("who") or session.user_name,
+            # T-278: receipt-level who is no longer LLM-supplied (schema dropped it).
+            # Single-row save path collapses to session user.
+            "who": session.user_name,
             "date": receipt.get("date", ""),
             "note": receipt.get("merchant") or "Multiple merchants",
             "account": account,
@@ -4624,7 +4642,8 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     "raw_text": receipt.get("raw_text", ""),
                     "tg_file_id": receipt.get("tg_file_id", ""),
                     "category": _single_cat,
-                    "who": receipt.get("who") or session.user_name,
+                    # T-278: parsed_data also stores session user, not LLM-supplied who.
+                    "who": session.user_name,
                     "account": account,
                 }
                 await agent._tool_save_receipt(_pd_single, session, sheets, auth)

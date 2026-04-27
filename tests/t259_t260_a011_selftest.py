@@ -156,9 +156,14 @@ def test_t260_build_report_html_uses_new_format():
         "new _needs_lbl table present in bot.py",
         '"uk": "потрібно внести"' in src and '"ru": "нужно внести"' in src,
     )
+    # T-269 refactor: bal_contributed moved from local dict to i18n.py.
+    # Test now verifies i18n.bal_contributed carries all 4 languages.
+    with open("i18n.py", "r") as _f:
+        _i18n_src = _f.read()
     assert_true(
-        "new _contributed_lbl table present in bot.py",
-        '"uk": "внесено"' in src and '"it": "versato"' in src,
+        "bal_contributed in i18n.py covers all 4 langs (T-269 refactor of T-260 dict)",
+        '"bal_contributed"' in _i18n_src and '"it": "versato"' in _i18n_src
+        and '"en": "contributed"' in _i18n_src,
     )
     assert_true(
         "uses i18n.ts('bal_overpaid', ...) for credit > 0 branch",

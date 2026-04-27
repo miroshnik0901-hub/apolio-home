@@ -93,7 +93,12 @@ TOOLS = [
                 "category":     {"type": "string"},
                 "subcategory":  {"type": "string"},
                 "who":          {"type": "string",
-                                 "description": "Who made the expense. Use values from get_reference_data."},
+                                 "description": (
+                                     "OMIT unless the user EXPLICITLY named another family member in the message "
+                                     "('Maryna купила...', 'Mikhail spent...'). When omitted, the bot fills `who` "
+                                     "from the session user automatically (T-278). Never default to a literal name "
+                                     "as a fallback — that produces wrong attribution. Use values from get_reference_data."
+                                 )},
                 "account":      {"type": "string",
                                  "description": "Payment account/card. Use values from get_reference_data."},
                 "type":         {"type": "string",
@@ -667,7 +672,13 @@ TOOLS = [
                 "currency": {"type": "string", "default": "EUR"},
                 "category": {"type": "string"},
                 "subcategory": {"type": "string"},
-                "who": {"type": "string"},
+                # T-278: `who` REMOVED from store_pending_receipt schema.
+                # Photos always belong to the session user (the person sending them
+                # via Telegram). The bot fills `who` from session.user_name at write
+                # time. The LLM cannot bias attribution to a hardcoded name anymore.
+                # For per-item attribution in bank statements (e.g. Maryna's Revolut
+                # showing "From Mikhail Miro"), aggregate_bank_statement (T-261, pure
+                # Python) parses sender names from Note text and sets items[].who.
                 "type": {
                     "type": "string",
                     "enum": ["expense", "income", "transfer"],
@@ -2025,7 +2036,10 @@ class ApolioAgent:
             "currency": new_currency,
             "category": params.get("category", ""),
             "subcategory": params.get("subcategory", ""),
-            "who": params.get("who", session.user_name or ""),
+            # T-278: `who` is ALWAYS the session user for photo receipts.
+            # LLM-supplied `who` is intentionally ignored (and the schema no
+            # longer accepts it). The user sending the photo IS the contributor.
+            "who": session.user_name or "",
             "items": params.get("items", []),
             "ai_summary": params.get("ai_summary", ""),
             "raw_text": params.get("raw_text", ""),

@@ -124,6 +124,7 @@ print("\n[L4] BOT BEHAVIOUR (agent.run() — autonomous)")
 try:
     import asyncio, time as _time
     import sys as _sys
+    from pathlib import Path
     _sys.path.insert(0, str(Path(__file__).parent.parent))
     from sheets import SheetsClient as _SC
     from auth import AuthManager as _AM, SessionContext as _SCtx
